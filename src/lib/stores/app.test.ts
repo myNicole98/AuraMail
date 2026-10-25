@@ -772,6 +772,54 @@ describe("tabs", () => {
     expect(app.unreadCountFor(99)).toBe(0);
   });
 
+  it("does not ask for reclassification when a tab is created", async () => {
+    const tab = {
+      id: 1,
+      space_id: 1,
+      name: "People",
+      description: "People I know.",
+      position: 0,
+      removable: true,
+      primary: true,
+      color: "#6da4ff",
+      icon: "inbox"
+    };
+    mocks.createTab.mockResolvedValue(tab);
+    mocks.listTabs.mockResolvedValue([tab]);
+    mocks.listThreads.mockResolvedValue([]);
+
+    const error = await app.createTab(tab.name, tab.description, tab.color, tab.icon);
+
+    expect(error).toBeNull();
+    expect(app.classificationAction).toBeNull();
+    expect(app.classificationNotice).toBeNull();
+  });
+
+  it("does not ask for reclassification when a tab is deleted", async () => {
+    const tab = {
+      id: 1,
+      space_id: 1,
+      name: "People",
+      description: "People I know.",
+      position: 0,
+      removable: true,
+      primary: true,
+      color: "#6da4ff",
+      icon: "inbox"
+    };
+    app.tabs = [tab];
+    app.selectedTabId = tab.id;
+    mocks.deleteTab.mockResolvedValue(undefined);
+    mocks.listTabs.mockResolvedValue([]);
+    mocks.listThreads.mockResolvedValue([]);
+
+    const error = await app.deleteTab(tab.id);
+
+    expect(error).toBeNull();
+    expect(app.classificationAction).toBeNull();
+    expect(app.classificationNotice).toBeNull();
+  });
+
   it("does not ask for reclassification when only the name changes", async () => {
     const tab = {
       id: 1,
@@ -803,7 +851,7 @@ describe("tabs", () => {
     expect(app.classificationAction).toBeNull();
   });
 
-  it("offers reclassification when the description changes", async () => {
+  it("does not ask for reclassification when the description changes", async () => {
     const tab = {
       id: 1,
       space_id: 1,
@@ -822,7 +870,8 @@ describe("tabs", () => {
 
     await app.updateTab(1, tab.name, "People I know.", tab.color, tab.icon);
 
-    expect(app.classificationAction).toBe("reclassify");
+    expect(app.classificationAction).toBeNull();
+    expect(app.classificationNotice).toBeNull();
   });
 
   it("reorders tabs and keeps the backend order", async () => {

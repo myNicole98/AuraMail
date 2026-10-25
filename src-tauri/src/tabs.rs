@@ -71,14 +71,10 @@ fn bump_revision(tx: &rusqlite::Transaction<'_>) -> AppResult<()> {
     Ok(())
 }
 
-fn invalidate(tx: &rusqlite::Transaction<'_>, space_id: i64) -> AppResult<()> {
+fn clear_tab_classifications(tx: &rusqlite::Transaction<'_>, tab_id: i64) -> AppResult<()> {
     tx.execute(
-        "delete from classifications where message_id in (
-            select m.id from messages m
-            join accounts a on a.id = m.account_id
-            where a.space_id = ?1
-         )",
-        params![space_id],
+        "delete from classifications where tab_id = ?1",
+        params![tab_id],
     )?;
     bump_revision(tx)
 }
@@ -223,7 +219,6 @@ pub fn create(
         params![space_id, name, description, position, color, icon, now()],
     )?;
     let id = tx.last_insert_rowid();
-    invalidate(&tx, space_id)?;
     tx.commit()?;
     drop(conn);
     by_id(db, id)
@@ -240,14 +235,14 @@ pub fn update(
 ) -> AppResult<Tab> {
     let (name, description) = clean(name, description)?;
     let mut conn = db.conn.lock().unwrap();
-    let existing: Option<(String, Option<String>, Option<String>)> = conn
+    let existing: Option<(Option<String>, Option<String>)> = conn
         .query_row(
-            "select description, color, icon from tabs where id = ?1 and space_id = ?2",
+            "select color, icon from tabs where id = ?1 and space_id = ?2",
             params![id, space_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    let Some((old_description, old_color, old_icon)) = existing else {
+    let Some((old_color, old_icon)) = existing else {
         return Err(AppError::Message("tab not found".into()));
     };
     let duplicate: bool = conn.query_row(
@@ -262,15 +257,11 @@ pub fn update(
     }
     let color = clean_color(color)?.or(old_color);
     let icon = clean_icon(icon)?.or(old_icon);
-    let definition_changed = old_description != description;
     let tx = conn.transaction()?;
     tx.execute(
         "update tabs set name = ?2, description = ?3, color = ?4, icon = ?5 where id = ?1 and space_id = ?6",
         params![id, name, description, color, icon, space_id],
     )?;
-    if definition_changed {
-        invalidate(&tx, space_id)?;
-    }
     tx.commit()?;
     drop(conn);
     by_id(db, id)
@@ -303,7 +294,7 @@ pub fn delete(db: &Database, space_id: i64, id: i64) -> AppResult<()> {
         }
     }
     let tx = conn.transaction()?;
-    invalidate(&tx, space_id)?;
+    clear_tab_classifications(&tx, id)?;
     tx.execute(
         "delete from tabs where id = ?1 and space_id = ?2",
         params![id, space_id],
@@ -477,19 +468,28 @@ mod tests {
     }
 
     #[test]
-    fn changing_tabs_invalidates_classifications() {
+    fn deleting_a_tab_preserves_classifications_in_other_tabs() {
         let db = Database::open_memory().unwrap();
-        let message_id = seed_message(&db);
-        let tab_id = seed_tab(&db, "Projects");
-        seed_classification(&db, message_id, tab_id);
-        delete(&db, space(&db), tab_id).unwrap();
-        let count: i64 = db
-            .conn
-            .lock()
-            .unwrap()
-            .query_row("select count(*) from classifications", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(count, 0);
+        let removed_message = seed_message(&db);
+        let kept_message = seed_message(&db);
+        let removed_tab = seed_tab(&db, "Projects");
+        let kept_tab = seed_tab(&db, "Receipts");
+        seed_classification(&db, removed_message, removed_tab);
+        seed_classification(&db, kept_message, kept_tab);
+
+        delete(&db, space(&db), removed_tab).unwrap();
+
+        let remaining: Vec<(i64, Option<i64>)> = {
+            let conn = db.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("select message_id, tab_id from classifications order by message_id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap();
+            rows.collect::<Result<_, _>>().unwrap()
+        };
+        assert_eq!(remaining, vec![(kept_message, Some(kept_tab))]);
     }
 
     #[test]
@@ -524,27 +524,37 @@ mod tests {
     }
 
     #[test]
-    fn create_invalidates_cached_classifications() {
+    fn creating_a_tab_preserves_cached_classifications() {
         let db = Database::open_memory().unwrap();
         let message_id = seed_message(&db);
         seed_classification(&db, message_id, 1);
         let before = revision(&db).unwrap();
+
         create(&db, space(&db), "Projects", "Project threads.", None, None).unwrap();
-        let count: i64 = db
+
+        let classification: (i64, Option<i64>) = db
             .conn
             .lock()
             .unwrap()
-            .query_row("select count(*) from classifications", [], |row| row.get(0))
+            .query_row(
+                "select message_id, tab_id from classifications where message_id = ?1",
+                params![message_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
             .unwrap();
-        assert_eq!(count, 0);
-        assert!(revision(&db).unwrap() > before);
+        assert_eq!(classification, (message_id, Some(1)));
+        assert_eq!(revision(&db).unwrap(), before);
     }
 
     #[test]
-    fn update_changes_the_definition_and_clears_cached_classifications() {
+    fn updating_a_tab_preserves_classifications() {
         let db = Database::open_memory().unwrap();
-        let message_id = seed_message(&db);
-        seed_classification(&db, message_id, 1);
+        let updated_message = seed_message(&db);
+        let kept_message = seed_message(&db);
+        let kept_tab = seed_tab(&db, "Projects");
+        seed_classification(&db, updated_message, 1);
+        seed_classification(&db, kept_message, kept_tab);
+
         let tab = update(
             &db,
             space(&db),
@@ -559,13 +569,23 @@ mod tests {
         assert_eq!(tab.description, "Family and friends.");
         assert_eq!(tab.color.as_deref(), Some("#e879b9"));
         assert_eq!(tab.icon.as_deref(), Some("users"));
-        let count: i64 = db
-            .conn
-            .lock()
-            .unwrap()
-            .query_row("select count(*) from classifications", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(count, 0);
+        let remaining: Vec<(i64, Option<i64>)> = {
+            let conn = db.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("select message_id, tab_id from classifications order by message_id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap();
+            rows.collect::<Result<_, _>>().unwrap()
+        };
+        assert_eq!(
+            remaining,
+            vec![
+                (updated_message, Some(1)),
+                (kept_message, Some(kept_tab))
+            ]
+        );
         assert!(update(&db, space(&db), 99, "Missing", "Missing tab", None, None).is_err());
     }
 

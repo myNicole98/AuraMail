@@ -711,11 +711,13 @@ mod tests {
     }
 
     #[test]
-    fn stale_classifications_are_rejected_after_tab_changes() {
+    fn stale_classifications_are_rejected_after_tab_deletion() {
         let db = Database::open_memory().unwrap();
         let message_id = seed_message(&db);
+        let tab = crate::tabs::create(&db, space(&db), "Projects", "Project threads.", None, None)
+            .unwrap();
         let revision = crate::tabs::revision(&db).unwrap();
-        crate::tabs::create(&db, space(&db), "Projects", "Project threads.", None, None).unwrap();
+        crate::tabs::delete(&db, space(&db), tab.id).unwrap();
         let classification = Classification {
             tab_id: Some(1),
             confidence: 0.9,

@@ -602,7 +602,6 @@ class AppStore {
       this.selectedTabId = null;
       await this.refreshTabs();
       await this.reloadMessages();
-      this.offerReclassification();
       this.error = null;
       return null;
     } catch (error) {
@@ -618,7 +617,6 @@ class AppStore {
     icon?: string | null
   ): Promise<string | null> {
     if (!isTauri()) return null;
-    const previous = this.tabs.find((tab) => tab.id === id);
     try {
       await api.updateTab(
         id,
@@ -630,7 +628,6 @@ class AppStore {
       );
       await this.refreshTabs();
       await this.reloadMessages();
-      if (previous?.description !== description) this.offerReclassification();
       this.error = null;
       return null;
     } catch (error) {
@@ -645,7 +642,6 @@ class AppStore {
       if (this.selectedTabId === id) this.selectedTabId = null;
       await this.refreshTabs();
       await this.reloadMessages();
-      this.offerReclassification();
       this.error = null;
       return null;
     } catch (error) {
@@ -1297,13 +1293,6 @@ class AppStore {
       this.error = errorMessage(error);
       return null;
     }
-  }
-
-  private offerReclassification(): void {
-    this.setClassificationNotice(
-      "Tab definitions changed. Cached classifications were cleared — reclassify visible mail.",
-      "reclassify"
-    );
   }
 
   private rememberMessages(key: string, threads: ThreadMessage[]): void {
