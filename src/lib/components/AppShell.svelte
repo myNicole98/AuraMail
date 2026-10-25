@@ -52,6 +52,9 @@
   let onboardingDue = $state(false);
   let splashDone = $state(!isTauri());
   let splashLeaving = $state(false);
+  let splashReducedMotion = $derived(
+    appearance.reduceMotion || loadPreferences().reduce_motion
+  );
   let openFade = $state(false);
   let width = $state(1200);
   type SettingsRequest = { tab: "general" | "account"; accountId: number | null };
@@ -497,7 +500,7 @@
     class="boot-layer"
     in:fade={{ duration: appearance.reduceMotion ? 0 : 500, easing: cubicOut }}
   >
-    <BootSplash leaving={splashLeaving} />
+    <BootSplash leaving={splashLeaving} reducedMotion={splashReducedMotion} />
   </div>
 {:else if onboardingDue}
   <div class="onboarding-layer">
