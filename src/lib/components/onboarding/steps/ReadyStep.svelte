@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, Inbox, Sparkles } from "lucide-svelte";
+  import { BrainCircuit, Check, Inbox } from "lucide-svelte";
   import type { Account } from "../../../types";
   import StepHeader from "../StepHeader.svelte";
 
@@ -34,7 +34,7 @@
     </div>
   {/if}
   <div class="promise">
-    <Sparkles size={14} />
+    <BrainCircuit size={14} />
     <span>Your setup choices are saved.</span>
   </div>
   <div class="actions">

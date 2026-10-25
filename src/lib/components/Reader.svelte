@@ -2,14 +2,14 @@
   import { onMount } from "svelte";
   import {
     ArrowLeft,
+    BrainCircuit,
     ChevronDown,
     Download,
     Forward,
     MoreHorizontal,
     Paperclip,
     Reply,
-    ReplyAll,
-    Sparkles
+    ReplyAll
   } from "lucide-svelte";
   import { api } from "../api";
   import { replyDraftInput } from "../compose";
@@ -376,7 +376,7 @@
           disabled={!message}
           onclick={() => app.toggleAuraRail()}
         >
-          <Sparkles size={15} />
+          <BrainCircuit size={15} />
         </button>
         <div class="reply-split">
           <button

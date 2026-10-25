@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import {
     Bold,
+    BrainCircuit,
     Check,
     ChevronDown,
     ImagePlus,
@@ -15,7 +16,6 @@
     RemoveFormatting,
     PenLine,
     Send,
-    Sparkles,
     Underline,
     X
   } from "lucide-svelte";
@@ -975,7 +975,7 @@
         aiError = null;
       }}
     >
-      {#if aiBusy}<LoaderCircle class="spin" size={15} />{:else}<Sparkles size={15} />{/if}
+      {#if aiBusy}<LoaderCircle class="spin" size={15} />{:else}<BrainCircuit size={15} />{/if}
       AI Draft
     </button>
     <button

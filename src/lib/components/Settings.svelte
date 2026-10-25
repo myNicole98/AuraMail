@@ -2,12 +2,12 @@
   import { onDestroy, onMount, tick } from "svelte";
   import {
     AtSign,
+    BrainCircuit,
     Cog,
     Contrast,
     Palette,
     PenLine,
     SlidersHorizontal,
-    Sparkles,
     X
   } from "lucide-svelte";
   import AccessibilitySettings from "./settings/AccessibilitySettings.svelte";
@@ -41,7 +41,7 @@
     appearance: Palette,
     accessibility: Contrast,
     signatures: PenLine,
-    ai: Sparkles
+    ai: BrainCircuit
   } as const;
 
   let active = $state<SettingsSection>("general");

@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     BookOpen,
+    BrainCircuit,
     Briefcase,
     Code2,
     Folder,
@@ -8,7 +9,6 @@
     Inbox,
     Layers,
     Plane,
-    Sparkles,
     Star,
     UserRound,
     Users
@@ -22,7 +22,7 @@
     inbox: Inbox,
     users: Users,
     star: Star,
-    sparkles: Sparkles,
+    sparkles: BrainCircuit,
     heart: Heart,
     plane: Plane,
     book: BookOpen,

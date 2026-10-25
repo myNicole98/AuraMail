@@ -1,14 +1,14 @@
 <script lang="ts">
   import { cubicOut } from "svelte/easing";
   import {
+    BrainCircuit,
     CalendarClock,
     LoaderCircle,
     MessageSquare,
     PanelRightClose,
     RefreshCw,
     Reply,
-    Send,
-    Sparkles
+    Send
   } from "lucide-svelte";
   import { api } from "../api";
   import { loadPreferences } from "../settings";
@@ -310,7 +310,7 @@
     ondblclick={resetWidth}
   ></div>
   <header class="rail-head">
-    <span class="aura-mark" aria-hidden="true"><Sparkles size={13} /></span>
+    <span class="aura-mark" aria-hidden="true"><BrainCircuit size={13} /></span>
     <strong>Aura</strong>
     <span class="head-spacer"></span>
     <button
@@ -327,7 +327,7 @@
   <div class="rail-body" aria-live="polite">
     {#if !app.aiConfigured}
       <div class="setup">
-        <span class="setup-icon"><Sparkles size={18} /></span>
+        <span class="setup-icon"><BrainCircuit size={18} /></span>
         <h3>Aura AI isn’t configured yet</h3>
         <p>Connect a model to get a thread brief and reply drafts here.</p>
         <button type="button" class="setup-button" onclick={openSettings}>
