@@ -120,6 +120,23 @@ describe("AuraRail", () => {
     expect((railElement as HTMLElement).style.width).toBe("360px");
   });
 
+  it("uses a concise message composer for Aura", async () => {
+    vi.mocked(api.aiAuraRail).mockResolvedValue(rail);
+    render(AuraRail, {
+      props: { detail: detail(), onUseDraft: vi.fn(), onClose: vi.fn() }
+    });
+
+    expect(await screen.findByLabelText("Message Aura")).toHaveAttribute(
+      "placeholder",
+      "Message Aura…"
+    );
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(screen.queryByText("Esc to close")).not.toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText("Ask, or say how you want to reply…")
+    ).not.toBeInTheDocument();
+  });
+
   it("shows a reading status during the first load", async () => {
     const pending = deferred<AiAuraRail>();
     vi.mocked(api.aiAuraRail).mockReturnValueOnce(pending.promise);
@@ -145,7 +162,7 @@ describe("AuraRail", () => {
 
     expect(await screen.findByText("Drafting replies…")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Full package" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Ask Aura" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
     pending.resolve(rail);
     await tick();
   });
@@ -160,13 +177,13 @@ describe("AuraRail", () => {
 
     await screen.findByText("Confirm the 12% discount.");
     await fireEvent.input(
-      screen.getByLabelText("Ask Aura or say how you want to reply"),
+      screen.getByLabelText("Message Aura"),
       { target: { value: "Tell them I can attend." } }
     );
     await fireEvent.click(screen.getByRole("button", { name: "Full package" }));
 
     expect(await screen.findByText("Drafting replies…")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask Aura" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
 
     pending.resolve(rail);
     await tick();
@@ -252,10 +269,10 @@ describe("AuraRail", () => {
 
     await screen.findByText("Confirm the 12% discount.");
     await fireEvent.input(
-      screen.getByLabelText("Ask Aura or say how you want to reply"),
+      screen.getByLabelText("Message Aura"),
       { target: { value: "When is the deadline?" } }
     );
-    await fireEvent.click(screen.getByRole("button", { name: "Ask Aura" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(await screen.findByText("The thread says Thursday.")).toBeInTheDocument();
     expect(
@@ -286,10 +303,10 @@ describe("AuraRail", () => {
 
     await screen.findByText("Confirm the 12% discount.");
     await fireEvent.input(
-      screen.getByLabelText("Ask Aura or say how you want to reply"),
+      screen.getByLabelText("Message Aura"),
       { target: { value: "I want to accept, but ask for the agenda first." } }
     );
-    await fireEvent.click(screen.getByRole("button", { name: "Ask Aura" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(await screen.findByText("Added three options below.")).toBeInTheDocument();
     expect(
@@ -330,10 +347,10 @@ describe("AuraRail", () => {
 
     await screen.findByText("Confirm the 12% discount.");
     await fireEvent.input(
-      screen.getByLabelText("Ask Aura or say how you want to reply"),
+      screen.getByLabelText("Message Aura"),
       { target: { value: "Give me a different angle." } }
     );
-    await fireEvent.click(screen.getByRole("button", { name: "Ask Aura" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(await screen.findByText("Another direct option.")).toBeInTheDocument();
     expect(

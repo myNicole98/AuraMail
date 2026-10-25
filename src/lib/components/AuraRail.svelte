@@ -493,22 +493,21 @@
         <textarea
           bind:value={askInput}
           rows="1"
-          placeholder="Ask, or say how you want to reply…"
-          aria-label="Ask Aura or say how you want to reply"
+          placeholder="Message Aura…"
+          aria-label="Message Aura"
           onkeydown={onAskKeydown}
         ></textarea>
         <button
           type="button"
           class="ask-send"
-          aria-label="Ask Aura"
-          title="Ask Aura"
+          aria-label="Send message"
+          title="Send message"
           disabled={askBusy || loading || !askInput.trim() || !rail}
           onclick={() => void ask()}
         >
-          <Send size={13} />
+          <Send size={15} />
         </button>
       </div>
-      <div class="foot-note">Esc to close</div>
     </footer>
   {/if}
 </aside>
@@ -1004,35 +1003,42 @@
   }
   .rail-foot {
     flex: none;
-    padding: 11px 14px 13px;
+    padding: 11px 14px;
     background: var(--bg-raised);
     border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   }
   .ask {
     display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    min-height: 34px;
-    padding: 4px 6px 4px 10px;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 5px 5px 5px 12px;
     border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
-    border-radius: 7px;
+    border-radius: 10px;
     background: var(--bg);
+    transition:
+      border-color 140ms ease,
+      box-shadow 140ms ease;
   }
   .ask:focus-within {
     border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent);
   }
   .ask textarea {
     flex: 1;
     min-width: 0;
     max-height: 88px;
-    padding: 5px 0;
+    padding: 7px 0;
     border: 0;
     outline: 0;
     resize: none;
     background: transparent;
     color: var(--text);
-    font-size: 11.5px;
+    font-size: 12px;
     line-height: 1.45;
+  }
+  .ask textarea:focus-visible {
+    outline: none;
   }
   .ask textarea::placeholder {
     color: var(--muted);
@@ -1040,21 +1046,33 @@
   .ask-send {
     display: grid;
     place-items: center;
-    width: 22px;
-    height: 22px;
+    align-self: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
     flex: none;
-    border-radius: 5px;
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-    color: var(--accent);
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--bg);
+    line-height: 0;
+    transition:
+      background 140ms ease,
+      color 140ms ease,
+      filter 140ms ease;
+  }
+  .ask-send :global(svg) {
+    display: block;
+  }
+  .ask-send:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+  .ask-send:focus-visible {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
   }
   .ask-send:disabled {
     cursor: default;
-    opacity: 0.4;
-  }
-  .foot-note {
-    margin-top: 7px;
+    background: color-mix(in srgb, var(--muted) 14%, transparent);
     color: var(--muted);
-    font-size: 10px;
   }
   @media (max-width: 1100px) {
     .aura-rail {
