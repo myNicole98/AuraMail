@@ -30,7 +30,16 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
-
+          
+      - name: Verify token
+        env:
+          TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          echo "Token length: ${#TOKEN}"
+          curl -s -o /dev/null -w 'GET /user -> HTTP %{http_code}\n' \
+            -H "Authorization: token $TOKEN" \
+            "${{ github.server_url }}/api/v1/user"
+          
       - name: Build AppImage
         if: steps.meta.outputs.exists == 'false'
         run: bash scripts/ci-appimage.sh
