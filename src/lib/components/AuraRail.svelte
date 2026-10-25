@@ -4,7 +4,6 @@
     CircleHelp,
     FileText,
     LoaderCircle,
-    Lock,
     MessageSquare,
     PanelRightClose,
     RefreshCw,
@@ -363,13 +362,6 @@
         {#if rail.tone}
           <div class="brief-meta">Tone · {rail.tone}</div>
         {/if}
-        <div class="context-row">
-          <span class="lock"><Lock size={11} /></span>
-          <span>
-            This thread · {rail.messageCount}
-            {rail.messageCount === 1 ? "message" : "messages"}
-          </span>
-        </div>
       </section>
 
       {#if rail.question}
@@ -618,7 +610,6 @@
   }
   .brief,
   .question,
-  .context-row,
   .draft {
     animation: aura-content-in 160ms ease-out both;
   }
@@ -662,21 +653,6 @@
     margin-top: 7px;
     color: var(--muted);
     font-size: 10px;
-  }
-  .context-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin: 8px 0 0;
-    padding: 0;
-    color: var(--muted);
-    font-size: 10px;
-  }
-  .lock {
-    display: grid;
-    place-items: center;
-    flex: none;
-    color: var(--success);
   }
   .question {
     margin: 16px 0 0;

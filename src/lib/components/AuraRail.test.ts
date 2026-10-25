@@ -194,7 +194,7 @@ describe("AuraRail", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the brief, context, and answer drafts", async () => {
+  it("renders the brief and answer drafts", async () => {
     vi.mocked(api.aiAuraRail).mockResolvedValue(rail);
     render(AuraRail, {
       props: { detail: detail(), onUseDraft: vi.fn(), onClose: vi.fn() }
@@ -202,7 +202,7 @@ describe("AuraRail", () => {
 
     expect(await screen.findByText("Confirm the 12% discount.")).toBeInTheDocument();
     expect(screen.getByText(rail.summary)).toBeInTheDocument();
-    expect(screen.getByText("This thread · 3 messages")).toBeInTheDocument();
+    expect(screen.queryByText("This thread · 3 messages")).not.toBeInTheDocument();
     expect(screen.getAllByText("Direct").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Warm").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Concise").length).toBeGreaterThan(0);
