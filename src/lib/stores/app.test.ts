@@ -474,6 +474,35 @@ describe("message actions", () => {
     expect(app.messages).toEqual([classified]);
   });
 
+  it("moves every selected message to a folder", async () => {
+    app.messages = [message(1), message(2)];
+    mocks.moveMessageToFolder.mockResolvedValue(undefined);
+    mocks.listThreads.mockResolvedValue([]);
+
+    await app.moveMessagesToFolder([1, 2], 3);
+
+    expect(mocks.moveMessageToFolder).toHaveBeenCalledTimes(2);
+    expect(mocks.moveMessageToFolder).toHaveBeenCalledWith(1, 3);
+    expect(mocks.moveMessageToFolder).toHaveBeenCalledWith(2, 3);
+    expect(app.messages).toEqual([]);
+  });
+
+  it("categorizes every selected message", async () => {
+    app.messages = [message(1), message(2)];
+    mocks.setMessageClassification.mockResolvedValue({
+      tab_id: 2,
+      confidence: 1,
+      model: "manual"
+    });
+    mocks.listThreads.mockResolvedValue([]);
+
+    await app.categorizeMessages([1, 2], 2);
+
+    expect(mocks.setMessageClassification).toHaveBeenCalledTimes(2);
+    expect(mocks.setMessageClassification).toHaveBeenCalledWith(1, 2);
+    expect(mocks.setMessageClassification).toHaveBeenCalledWith(2, 2);
+  });
+
   it("toggles a star from a message row", async () => {
     app.messages = [message(1)];
     mocks.toggleStar.mockResolvedValue({ ...message(1), is_starred: true });

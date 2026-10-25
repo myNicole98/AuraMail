@@ -143,6 +143,39 @@ describe("MessageList context menu", () => {
     expect(compose).toHaveBeenCalledWith(7, "reply-all");
   });
 
+  it("applies context actions to every selected message", async () => {
+    app.messages = [message(7), message(8)];
+    const archive = vi.spyOn(app, "archiveMessages").mockResolvedValue(undefined);
+    const { container } = render(MessageList);
+    const rows = container.querySelectorAll<HTMLButtonElement>(".row-open");
+
+    await fireEvent.click(rows[0]!, { ctrlKey: true });
+    await fireEvent.click(rows[1]!, { ctrlKey: true });
+    await fireEvent.contextMenu(container.querySelectorAll(".row")[0]!);
+    await tick();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+
+    expect(archive).toHaveBeenCalledWith([7, 8]);
+  });
+
+  it("categorizes every selected message from the context menu", async () => {
+    app.messages = [message(7), message(8)];
+    const categorize = vi
+      .spyOn(app, "categorizeMessages")
+      .mockResolvedValue(undefined);
+    const { container } = render(MessageList);
+    const rows = container.querySelectorAll<HTMLButtonElement>(".row-open");
+
+    await fireEvent.click(rows[0]!, { ctrlKey: true });
+    await fireEvent.click(rows[1]!, { ctrlKey: true });
+    await fireEvent.contextMenu(container.querySelectorAll(".row")[0]!);
+    await tick();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Categorize" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Updates" }));
+
+    expect(categorize).toHaveBeenCalledWith([7, 8], 2);
+  });
+
   it("clears the selection as soon as a bulk action starts", async () => {
     app.messages = [message(7), message(8)];
     let resolveAction = () => {};

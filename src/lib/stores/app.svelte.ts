@@ -1133,6 +1133,13 @@ class AppStore {
     );
   }
 
+  async moveMessagesToFolder(ids: number[], folderId: number): Promise<void> {
+    if (!isTauri() || ids.length === 0) return;
+    await this.queueMessageAction(ids, async () => {
+      await Promise.all(ids.map((id) => api.moveMessageToFolder(id, folderId)));
+    });
+  }
+
   async categorizeMessage(messageId: number, tabId: number | null): Promise<void> {
     if (!isTauri()) return;
     try {
@@ -1141,6 +1148,31 @@ class AppStore {
       await this.reloadMessages();
       if (classification.tab_id !== null) this.flashMessage(messageId);
       this.error = null;
+    } catch (error) {
+      this.error = errorMessage(error);
+    }
+  }
+
+  async categorizeMessages(ids: number[], tabId: number | null): Promise<void> {
+    if (!isTauri() || ids.length === 0) return;
+    try {
+      const results = await Promise.allSettled(
+        ids.map((id) => api.setMessageClassification(id, tabId))
+      );
+      const classifiedIds = new Set<number>();
+      for (const [index, result] of results.entries()) {
+        if (result.status === "fulfilled") {
+          classifiedIds.add(ids[index]!);
+          this.applyClassification(ids[index]!, result.value);
+        }
+      }
+      await this.reloadMessages();
+      if (tabId !== null) {
+        for (const id of classifiedIds) this.flashMessage(id);
+      }
+      const failure = results.find((result) => result.status === "rejected");
+      this.error =
+        failure?.status === "rejected" ? errorMessage(failure.reason) : null;
     } catch (error) {
       this.error = errorMessage(error);
     }

@@ -177,6 +177,7 @@
   function runContextAction(action: MailContextAction) {
     const message = contextMenu?.message;
     if (!message) return;
+    const ids = selected.has(message.id) ? [...selected] : [message.id];
     switch (action.type) {
       case "reply":
       case "reply-all":
@@ -184,22 +185,28 @@
         void app.composeMessage(message.id, action.type);
         break;
       case "mark-read":
-        void app.markMessages([message.id], true);
+        void app.markMessages(ids, true);
         break;
       case "mark-unread":
-        void app.markMessages([message.id], false);
+        void app.markMessages(ids, false);
         break;
-      case "move":
-        void app.moveMessageToFolder(message.id, action.folderId);
+      case "move": {
+        const targetIds = ids.filter(
+          (id) =>
+            app.messages.find((candidate) => candidate.id === id)?.account_id ===
+            message.account_id
+        );
+        void app.moveMessagesToFolder(targetIds, action.folderId);
         break;
+      }
       case "categorize":
-        void app.categorizeMessage(message.id, action.tabId);
+        void app.categorizeMessages(ids, action.tabId);
         break;
       case "archive":
-        void app.archiveThread(message.account_id, message.thread_key);
+        void app.archiveMessages(ids);
         break;
       case "delete":
-        void app.deleteMessageById(message.id);
+        void app.deleteMessages(ids);
         break;
     }
   }
