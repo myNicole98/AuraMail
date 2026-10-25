@@ -58,6 +58,12 @@ pub struct SyncFolderStatus {
 
 struct SyncOutcome {
     inserted: Vec<i64>,
+    auto_classify: Vec<i64>,
+}
+
+pub struct SyncResult {
+    pub inserted: Vec<i64>,
+    pub auto_classify: Vec<i64>,
 }
 
 struct FolderSyncGuard<'a> {
@@ -142,12 +148,18 @@ pub fn sync_account(
     secrets: &dyn SecretStore,
     syncing: &Mutex<HashSet<i64>>,
     account_id: i64,
-) -> AppResult<Vec<i64>> {
+) -> AppResult<SyncResult> {
     let Some(account) = find_account(db, account_id)? else {
-        return Ok(Vec::new());
+        return Ok(SyncResult {
+            inserted: Vec::new(),
+            auto_classify: Vec::new(),
+        });
     };
     if !begin_sync(syncing, account_id) {
-        return Ok(Vec::new());
+        return Ok(SyncResult {
+            inserted: Vec::new(),
+            auto_classify: Vec::new(),
+        });
     }
     let _guard = SyncGuard {
         syncing,
@@ -156,9 +168,9 @@ pub fn sync_account(
 
     emit_status(app, account_id, "syncing", None);
     match sync_account_inner(app, db, secrets, &account) {
-        Ok(inserted) => {
+        Ok(result) => {
             emit_status(app, account_id, "idle", None);
-            Ok(inserted)
+            Ok(result)
         }
         Err(error) => {
             let message = error.to_string();
@@ -211,6 +223,14 @@ pub fn schedule_auto_classify(
         )
         .ok();
     });
+}
+
+fn auto_classify_ids(action: SyncAction, inserted: &[i64]) -> Vec<i64> {
+    if matches!(action, SyncAction::Incremental { .. }) {
+        inserted.to_vec()
+    } else {
+        Vec::new()
+    }
 }
 
 const MAX_AUTO_RAIL_PER_SYNC: usize = 3;
@@ -315,7 +335,7 @@ fn sync_account_inner(
     db: &Database,
     secrets: &dyn SecretStore,
     account: &Account,
-) -> AppResult<Vec<i64>> {
+) -> AppResult<SyncResult> {
     let credential = oauth::credential_for(account, secrets)?;
     let mut session = client::open_session(account, &credential)?;
     let remote_folders = client::list_folders(&mut session)?;
@@ -340,9 +360,13 @@ fn sync_account_inner(
     let result = {
         let mut first_error = None;
         let mut inserted = Vec::new();
+        let mut auto_classify = Vec::new();
         for folder in folders {
             match sync_folder(&mut session, app, db, account, &folder, true) {
-                Ok(mut outcome) => inserted.append(&mut outcome.inserted),
+                Ok(mut outcome) => {
+                    inserted.append(&mut outcome.inserted);
+                    auto_classify.append(&mut outcome.auto_classify);
+                }
                 Err(error) => {
                     if first_error.is_none() {
                         first_error = Some(error);
@@ -352,7 +376,10 @@ fn sync_account_inner(
         }
         match first_error {
             Some(error) => Err(error),
-            None => Ok(inserted),
+            None => Ok(SyncResult {
+                inserted,
+                auto_classify,
+            }),
         }
     };
     let _ = session.logout();
@@ -364,7 +391,7 @@ fn sync_inbox_inner(
     db: &Database,
     secrets: &dyn SecretStore,
     account: &Account,
-) -> AppResult<Vec<i64>> {
+) -> AppResult<SyncResult> {
     let credential = oauth::credential_for(account, secrets)?;
     let mut session = client::open_session(account, &credential)?;
     let folders = mail::list_folders(db, Some(account.id), None)?
@@ -374,9 +401,13 @@ fn sync_inbox_inner(
     let result = {
         let mut first_error = None;
         let mut inserted = Vec::new();
+        let mut auto_classify = Vec::new();
         for folder in folders {
             match sync_folder(&mut session, app, db, account, &folder, true) {
-                Ok(mut outcome) => inserted.append(&mut outcome.inserted),
+                Ok(mut outcome) => {
+                    inserted.append(&mut outcome.inserted);
+                    auto_classify.append(&mut outcome.auto_classify);
+                }
                 Err(error) => {
                     if first_error.is_none() {
                         first_error = Some(error);
@@ -386,7 +417,10 @@ fn sync_inbox_inner(
         }
         match first_error {
             Some(error) => Err(error),
-            None => Ok(inserted),
+            None => Ok(SyncResult {
+                inserted,
+                auto_classify,
+            }),
         }
     };
     let _ = session.logout();
@@ -399,21 +433,27 @@ pub fn sync_inbox(
     secrets: &dyn SecretStore,
     syncing: &Mutex<HashSet<i64>>,
     account_id: i64,
-) -> AppResult<Vec<i64>> {
+) -> AppResult<SyncResult> {
     let Some(account) = find_account(db, account_id)? else {
-        return Ok(Vec::new());
+        return Ok(SyncResult {
+            inserted: Vec::new(),
+            auto_classify: Vec::new(),
+        });
     };
     if !begin_sync(syncing, account_id) {
-        return Ok(Vec::new());
+        return Ok(SyncResult {
+            inserted: Vec::new(),
+            auto_classify: Vec::new(),
+        });
     }
     let _guard = SyncGuard {
         syncing,
         account_id,
     };
     match sync_inbox_inner(app, db, secrets, &account) {
-        Ok(inserted) => {
+        Ok(result) => {
             emit_status(app, account_id, "idle", None);
-            Ok(inserted)
+            Ok(result)
         }
         Err(error) => {
             let message = error.to_string();
@@ -444,6 +484,7 @@ fn sync_folder(
     if matches!(action, SyncAction::Noop) && !reconcile {
         return Ok(SyncOutcome {
             inserted: Vec::new(),
+            auto_classify: Vec::new(),
         });
     }
     let _sync_status = FolderSyncGuard::new(app, account.id, folder.id);
@@ -536,7 +577,11 @@ fn sync_folder(
         crate::desktop::notify_new_mail(app, db, account, &inserted);
         crate::desktop::play_new_mail_if_enabled(db);
     }
-    Ok(SyncOutcome { inserted })
+    let auto_classify = auto_classify_ids(action, &inserted);
+    Ok(SyncOutcome {
+        inserted,
+        auto_classify,
+    })
 }
 
 fn build_headers(headers: &[client::FetchedHeader]) -> Vec<mail::MessageHeader> {
@@ -650,9 +695,9 @@ pub fn start_polling(
                                 }
                             })
                             .await;
-                            let (inserted, success) = match result {
-                                Ok(Ok(ids)) => (ids, true),
-                                _ => (Vec::new(), false),
+                            let (inserted, auto_classify, success) = match result {
+                                Ok(Ok(result)) => (result.inserted, result.auto_classify, true),
+                                _ => (Vec::new(), Vec::new(), false),
                             };
                             if full && success {
                                 since_full = 0;
@@ -686,7 +731,7 @@ pub fn start_polling(
                                     Arc::clone(&db),
                                     Arc::clone(&secrets),
                                     account_id,
-                                    inserted,
+                                    auto_classify,
                                 );
                                 schedule_auto_rail(
                                     Arc::clone(&db),
@@ -778,6 +823,19 @@ mod tests {
             space_id,
             10_000 + VOICE_REFRESH_SECS
         ));
+    }
+
+    #[test]
+    fn initial_import_is_not_auto_classified() {
+        assert!(auto_classify_ids(SyncAction::Reset, &[10, 11]).is_empty());
+    }
+
+    #[test]
+    fn incremental_import_is_auto_classified() {
+        assert_eq!(
+            auto_classify_ids(SyncAction::Incremental { from_uid: 10 }, &[11, 12]),
+            vec![11, 12]
+        );
     }
 
     #[test]

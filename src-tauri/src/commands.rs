@@ -1508,12 +1508,27 @@ pub async fn sync_account(
     let secrets = Arc::clone(&state.secrets);
     let syncing = Arc::clone(&state.syncing);
     let sync_app = app.clone();
-    let inserted = tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         sync::sync_account(&sync_app, &db, secrets.as_ref(), &syncing, account_id)
     })
     .await
     .map_err(|_| blocking_error())??;
-    let recent: Vec<i64> = inserted.iter().rev().take(100).rev().copied().collect();
+    let recent: Vec<i64> = result
+        .inserted
+        .iter()
+        .rev()
+        .take(100)
+        .rev()
+        .copied()
+        .collect();
+    let auto_classify: Vec<i64> = result
+        .auto_classify
+        .iter()
+        .rev()
+        .take(100)
+        .rev()
+        .copied()
+        .collect();
     if !recent.is_empty() {
         mail::preload::schedule_preload(
             Arc::clone(&state.db),
@@ -1526,7 +1541,7 @@ pub async fn sync_account(
             Arc::clone(&state.db),
             Arc::clone(&state.secrets),
             account_id,
-            recent,
+            auto_classify,
         );
         if let Ok(space_id) = accounts::space_for_account(&state.db, account_id) {
             sync::schedule_auto_rail(
