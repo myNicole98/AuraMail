@@ -1,0 +1,61 @@
+name: Build AppImage
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+  workflow_dispatch:
+
+jobs:
+  appimage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version and check for existing release
+        id: meta
+        env:
+          TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          VERSION="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -n1)"
+          test -n "$VERSION"
+          API="${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: token $TOKEN" "$API/releases/tags/v$VERSION")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$CODE" = "200" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release v$VERSION already exists, skipping build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          
+      - name: Verify token
+        env:
+          TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          echo "Token length: ${#TOKEN}"
+          curl -s -o /dev/null -w 'GET /user -> HTTP %{http_code}\n' \
+            -H "Authorization: token $TOKEN" \
+            "${{ github.server_url }}/api/v1/user"
+          
+      - name: Build AppImage
+        if: steps.meta.outputs.exists == 'false'
+        run: bash scripts/ci-appimage.sh
+
+      - name: Publish release
+        if: steps.meta.outputs.exists == 'false'
+        env:
+          TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          API="${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
+          ID=$(curl -fsS -X POST "$API/releases" \
+            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"v$VERSION\",\"target_commitish\":\"${{ github.sha }}\",\"name\":\"v$VERSION\"}" \
+            | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+          for f in release/*.AppImage; do
+            curl -fsS -X POST "$API/releases/$ID/assets?name=$(basename "$f")" \
+              -H "Authorization: token $TOKEN" -F "attachment=@$f"
+          done
