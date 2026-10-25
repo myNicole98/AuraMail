@@ -1,0 +1,27 @@
+name: Sync Release to GitHub
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to synchronize"
+        required: true
+        type: string
+  release:
+    types: [published, edited]
+
+jobs:
+  sync-github:
+    runs-on: Runner
+    steps:
+      - name: Run Releases Sync Action
+        uses: https://git.0xmax42.io/actions/releases-sync@main
+        with:
+          gitea_token: ${{ secrets.SYNC_FORGEJO_TOKEN }}
+          gitea_url: https://git.nikkosphere.com
+          gitea_owner: nicole
+          gitea_repo: AuraMail
+          tag_name: ${{ inputs.tag || github.event.release.tag_name }}
+          github_token: ${{ secrets.SYNC_GITHUB_TOKEN }}
+          github_owner: myNicole98
+          github_repo: AuraMail
