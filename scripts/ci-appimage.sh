@@ -51,10 +51,16 @@ test -n "$lib"
 python3 - "$lib" <<'PY'
 import re, sys
 from pathlib import Path
+
 lib = Path(sys.argv[1])
 data = lib.read_bytes()
 new = b"/tmp/auramail-webkit-576f0a7f"
-match = re.search(rb"/usr/[A-Za-z0-9_./-]*webkit2gtk-4\.1", data)
+
+print("strings mentioning webkit2gtk-4.1:")
+for s in sorted(set(re.findall(rb"[ -~]*webkit2gtk-4\.1[ -~]*", data)))[:20]:
+    print("  ", s)
+
+match = re.search(rb"/[A-Za-z0-9_./-]*/webkit2gtk-4\.1(?![A-Za-z0-9_.-])", data)
 if match is None:
     raise SystemExit(f"WebKit process path not found in {lib}")
 old = match.group(0)
