@@ -324,7 +324,7 @@
     {:else if loading && !rail}
       <div class="loading-state">
         <div class="loading-status">
-          <span class="loading-spinner"><LoaderCircle size={13} /></span>
+          <span class="loading-spinner"><LoaderCircle size={14} /></span>
           Reading the thread…
         </div>
         <div class="skeleton" aria-hidden="true">
@@ -955,6 +955,14 @@
   .loading-spinner {
     display: grid;
     place-items: center;
+    width: 14px;
+    height: 14px;
+    flex: none;
+    line-height: 0;
+  }
+  .loading-spinner :global(svg) {
+    display: block;
+    transform-origin: center center;
     animation: aura-spin 900ms linear infinite;
   }
   .skeleton {
