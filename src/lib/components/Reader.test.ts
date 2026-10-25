@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/svelte";
+import { cleanup, render, screen } from "@testing-library/svelte";
 import { tick } from "svelte";
 import Reader from "./Reader.svelte";
 import { app } from "../stores/app.svelte";
@@ -78,6 +78,12 @@ function account(): Account {
   };
 }
 
+const originalAnimate = Object.getOwnPropertyDescriptor(
+  Element.prototype,
+  "animate"
+);
+let animate: ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   localStorage.clear();
   vi.stubGlobal(
@@ -88,6 +94,32 @@ beforeEach(() => {
       unobserve() {}
     }
   );
+  animate = vi.fn(
+    (_keyframes: Keyframe[], options?: number | KeyframeAnimationOptions) => {
+      const duration = typeof options === "number" ? options : Number(options?.duration ?? 0);
+      const animation = {
+        currentTime: 0,
+        effect: {} as AnimationEffect | null,
+        onfinish: null as (() => void) | null,
+        playState: "running",
+        cancel() {
+          animation.playState = "idle";
+          animation.onfinish = null;
+        }
+      };
+      setTimeout(() => {
+        if (animation.playState !== "running") return;
+        animation.playState = "finished";
+        animation.currentTime = duration;
+        animation.onfinish?.();
+      }, duration);
+      return animation as unknown as Animation;
+    }
+  );
+  Object.defineProperty(Element.prototype, "animate", {
+    configurable: true,
+    value: animate
+  });
   app.accounts = [account()];
   app.folders = [];
   app.threadMessages = [];
@@ -103,6 +135,11 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  if (originalAnimate) {
+    Object.defineProperty(Element.prototype, "animate", originalAnimate);
+  } else {
+    delete (Element.prototype as Partial<Element>).animate;
+  }
 });
 
 describe("Reader iframe lifecycle", () => {
@@ -144,6 +181,40 @@ describe("Reader iframe lifecycle", () => {
 
     expect(container.querySelectorAll('iframe[title="Message body"]')).toHaveLength(1);
     expect(container.querySelector('iframe[title="Message body"]')).toBe(first);
+  });
+
+  it("animates the Aura rail when opening and closing", async () => {
+    app.aiConfigured = true;
+    app.auraRailOpen = false;
+    render(Reader);
+    await tick();
+
+    animate.mockClear();
+    app.auraRailOpen = true;
+    await tick();
+
+    expect(animate).toHaveBeenCalled();
+    expect(screen.getByRole("complementary", { name: "Aura" })).toBeInTheDocument();
+
+    animate.mockClear();
+    app.auraRailOpen = false;
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(animate).toHaveBeenCalled();
+    expect(
+      animate.mock.calls.some(([frames]) =>
+        (frames as Keyframe[]).some((frame) => "marginRight" in frame)
+      )
+    ).toBe(true);
+    expect(screen.getByRole("complementary", { name: "Aura" })).toBeInTheDocument();
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await tick();
+
+    expect(
+      screen.queryByRole("complementary", { name: "Aura" })
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the same email document when switching messages", async () => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { cubicOut } from "svelte/easing";
   import {
     CalendarClock,
     LoaderCircle,
@@ -12,6 +13,7 @@
   import { api } from "../api";
   import { loadPreferences } from "../settings";
   import { app } from "../stores/app.svelte";
+  import { appearance } from "../stores/appearance.svelte";
   import type { AiAuraDraft, AiAuraRail, ChatMessage, MessageDetail } from "../types";
 
   type MessageEntry = ChatMessage & { kind: "message" };
@@ -268,6 +270,17 @@
     if (value instanceof Error) return value.message;
     return "Could not open the draft.";
   }
+
+  function railMotion(node: Element) {
+    if (appearance.reduceMotion) return { duration: 0 };
+    const railWidth = node.getBoundingClientRect().width || width;
+    return {
+      duration: 180,
+      easing: cubicOut,
+      css: (t: number) =>
+        `opacity: ${t}; margin-right: ${-(1 - t) * railWidth}px;`
+    };
+  }
 </script>
 
 <aside
@@ -275,6 +288,7 @@
   class:resizing
   style:width={`${width}px`}
   aria-label="Aura"
+  transition:railMotion
 >
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -523,7 +537,6 @@
     flex: none;
     border-left: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
     background: var(--bg);
-    animation: aura-rail-in 180ms cubic-bezier(0.22, 0.8, 0.2, 1) both;
   }
   .aura-rail.resizing {
     user-select: none;
@@ -1048,16 +1061,6 @@
   }
   @keyframes aura-spin {
     to { transform: rotate(360deg); }
-  }
-  @keyframes aura-rail-in {
-    from {
-      opacity: 0;
-      transform: translateX(14px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
   }
   @keyframes aura-content-in {
     from {
