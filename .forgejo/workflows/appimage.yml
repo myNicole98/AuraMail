@@ -1,0 +1,30 @@
+name: Build AppImage
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  appimage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build AppImage
+        run: bash scripts/ci-appimage.sh
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          API="${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
+          TAG="${{ github.ref_name }}"
+          ID=$(curl -fsS -X POST "$API/releases" \
+            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\"}" | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+          for f in release/*.AppImage; do
+            curl -fsS -X POST "$API/releases/$ID/assets?name=$(basename "$f")" \
+              -H "Authorization: token $TOKEN" -F "attachment=@$f"
+          done
