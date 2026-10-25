@@ -1,8 +1,6 @@
 <script lang="ts">
   import {
     CalendarClock,
-    CircleHelp,
-    FileText,
     LoaderCircle,
     MessageSquare,
     PanelRightClose,
@@ -298,6 +296,7 @@
     ondblclick={resetWidth}
   ></div>
   <header class="rail-head">
+    <span class="aura-mark" aria-hidden="true"><Sparkles size={13} /></span>
     <strong>Aura</strong>
     <span class="head-spacer"></span>
     <button
@@ -349,7 +348,6 @@
     {:else if rail}
       <section class="brief">
         <div class="brief-top">
-          <span class="section-icon"><FileText size={12} /></span>
           <span>Summary</span>
           {#if rail.deadline}
             <span class="deadline"><CalendarClock size={10} />{rail.deadline}</span>
@@ -367,7 +365,6 @@
       {#if rail.question}
         <section class="question">
           <div class="question-top">
-            <span class="question-icon"><CircleHelp size={13} /></span>
             Before replying
           </div>
           <p>{rail.question}</p>
@@ -562,12 +559,25 @@
   .rail-head {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
     flex: none;
-    height: 46px;
-    padding: 0 12px 0 14px;
+    height: 48px;
+    padding: 0 10px 0 12px;
     background: var(--bg-raised);
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .aura-mark {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    flex: none;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+  }
+  .aura-mark :global(svg) {
+    display: block;
   }
   .rail-head strong {
     color: var(--text-strong);
@@ -581,12 +591,14 @@
   .rail-icon {
     display: grid;
     place-items: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    flex: none;
+    border-radius: 7px;
     color: var(--muted);
   }
-  .rail-icon:hover {
+  .rail-icon:hover,
+  .rail-icon:focus-visible {
     color: var(--text);
     background: var(--bg-hover);
   }
@@ -594,7 +606,8 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 14px 14px 20px;
+    overscroll-behavior: contain;
+    padding: 12px 14px 18px;
   }
   .rail-label {
     display: flex;
@@ -616,7 +629,14 @@
     animation: aura-content-in 160ms ease-out both;
   }
   .brief {
-    padding: 0 0 14px;
+    padding: 13px 13px 14px;
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    border-radius: 10px;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-raised) 88%, var(--bg)),
+      color-mix(in srgb, var(--bg-raised) 72%, var(--bg))
+    );
   }
   .brief-top {
     display: flex;
@@ -631,36 +651,41 @@
     align-items: center;
     gap: 4px;
     margin-left: auto;
-    padding: 3px 7px;
-    border-radius: 4px;
+    padding: 2px 7px;
+    border-radius: 999px;
     background: var(--bg-hover);
     color: var(--muted);
     font-size: 9.5px;
-    font-weight: 600;
+    font-weight: 650;
   }
   .brief-ask {
-    margin: 7px 0 0;
+    margin: 8px 0 0;
     color: var(--text-strong);
-    font-size: 13px;
+    font-size: 13.5px;
     font-weight: 500;
-    line-height: 1.5;
+    line-height: 1.55;
   }
   .brief-summary {
     margin: 7px 0 0;
     color: var(--muted);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.6;
   }
   .brief-meta {
-    margin-top: 7px;
+    margin-top: 8px;
     color: var(--muted);
-    font-size: 10px;
+    font-size: 10.5px;
   }
   .question {
-    margin: 16px 0 0;
-    padding: 14px 14px 15px;
-    border-radius: 9px;
-    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    margin: 12px 0 0;
+    padding: 13px;
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+    border-radius: 10px;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 9%, var(--bg-raised)),
+      color-mix(in srgb, var(--accent) 5%, var(--bg-raised))
+    );
   }
   .question-top {
     display: flex;
@@ -671,20 +696,15 @@
     font-weight: 650;
     letter-spacing: 0.01em;
   }
-  .question-icon {
-    display: grid;
-    place-items: center;
-    color: var(--accent);
-  }
   .question p {
-    margin: 9px 0 12px;
+    margin: 8px 0 11px;
     color: var(--text-strong);
-    font-size: 14px;
+    font-size: 13.5px;
     font-weight: 500;
-    line-height: 1.5;
+    line-height: 1.55;
   }
   .question .question-help {
-    margin: -3px 0 12px;
+    margin: -2px 0 11px;
     color: var(--muted);
     font-size: 10.5px;
     font-weight: 400;
@@ -692,32 +712,36 @@
   }
   .chips {
     display: flex;
-    flex-wrap: wrap;
-    gap: 7px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
   }
   .chip {
-    min-height: 32px;
-    padding: 7px 12px;
-    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-    border-radius: 7px;
-    background: var(--bg-raised);
+    width: 100%;
+    min-height: 36px;
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
     color: var(--text);
     font-size: 11.5px;
-    font-weight: 600;
-    line-height: 1.4;
+    font-weight: 560;
+    line-height: 1.45;
     text-align: left;
     transition:
       background 140ms ease,
       border-color 140ms ease,
       color 140ms ease;
   }
-  .chip:hover:not(:disabled) {
+  .chip:hover:not(:disabled),
+  .chip:focus-visible:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
     background: var(--bg-hover);
     color: var(--text-strong);
   }
   .chip.on {
-    border-color: transparent;
-    background: color-mix(in srgb, var(--accent) 13%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+    background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised));
     color: var(--accent);
   }
   .chip:disabled {
@@ -729,15 +753,19 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
-    margin: 16px 0 10px;
+    margin: 16px 0 9px;
   }
   .draft-head .rail-label {
     flex: 1;
     margin-bottom: 0;
   }
   .draft-count {
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--bg-hover);
     color: var(--muted);
     font-size: 10.5px;
+    font-weight: 650;
   }
   .draft-empty {
     margin: 5px 0 0;
@@ -750,15 +778,21 @@
     display: block;
     width: 100%;
     margin: 0;
-    padding: 11px 12px;
-    border: 1px solid transparent;
-    border-radius: 9px;
-    background: color-mix(in srgb, var(--tone-color) 6%, transparent);
+    padding: 11px 12px 12px;
+    border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+    border-radius: 10px;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-raised) 88%, var(--bg)),
+      color-mix(in srgb, var(--bg-raised) 72%, var(--bg))
+    );
     text-align: left;
-    transition: background 140ms ease;
+    transition:
+      background 140ms ease,
+      border-color 140ms ease;
   }
   .draft + .draft {
-    margin-top: 10px;
+    margin-top: 8px;
   }
   .draft.direct {
     --tone-color: var(--info);
@@ -769,32 +803,40 @@
   .draft.concise {
     --tone-color: var(--success);
   }
-  .draft:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--tone-color) 12%, transparent);
-  }
+  .draft:hover:not(:disabled),
   .draft:focus-visible:not(:disabled) {
-    background: color-mix(in srgb, var(--tone-color) 12%, transparent);
+    border-color: color-mix(in srgb, var(--tone-color) 36%, var(--border));
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--tone-color) 5%, var(--bg-raised)),
+      color-mix(in srgb, var(--bg-raised) 82%, var(--bg))
+    );
   }
   .draft:disabled {
     cursor: default;
     opacity: 0.68;
   }
   .draft-label {
-    display: block;
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--tone-color) 13%, transparent);
     color: var(--tone-color);
-    font-size: 10.5px;
+    font-size: 9.5px;
     font-weight: 650;
   }
   .draft-text {
     display: block;
-    margin-top: 5px;
+    margin-top: 7px;
     color: var(--text);
-    font-size: 12px;
+    font-size: 12.5px;
     line-height: 1.6;
   }
   .draft-hint {
     display: block;
-    margin-top: 7px;
+    margin-top: 8px;
     color: var(--muted);
     font-size: 9.5px;
     font-weight: 600;
@@ -826,8 +868,9 @@
   .bubble {
     max-width: 88%;
     padding: 8px 10px;
-    border-radius: 8px 8px 8px 2px;
-    background: var(--bg-raised);
+    border: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+    border-radius: 10px 10px 10px 3px;
+    background: color-mix(in srgb, var(--bg-raised) 86%, var(--bg));
     color: var(--text);
     font-size: 11.5px;
     line-height: 1.55;
@@ -835,7 +878,8 @@
     overflow-wrap: anywhere;
   }
   .bubble.user {
-    border-radius: 8px 8px 2px 8px;
+    border-color: color-mix(in srgb, var(--accent) 18%, var(--border));
+    border-radius: 10px 10px 3px 10px;
     background: color-mix(in srgb, var(--accent) 11%, var(--bg-raised));
     color: var(--text-strong);
   }
@@ -871,9 +915,13 @@
   .state-card,
   .setup {
     padding: 15px;
-    border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
-    border-radius: 9px;
-    background: var(--bg-raised);
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    border-radius: 10px;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-raised) 88%, var(--bg)),
+      color-mix(in srgb, var(--bg-raised) 72%, var(--bg))
+    );
   }
   .state-card p,
   .setup p {
@@ -943,8 +991,9 @@
     gap: 7px;
     margin-top: 6px;
     padding: 10px 12px;
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 7%, var(--bg-raised));
     color: var(--text-strong);
     font-size: 11.5px;
     font-weight: 600;
@@ -992,7 +1041,7 @@
   }
   .skeleton-card {
     height: 72px;
-    border-radius: 9px;
+    border-radius: 10px;
   }
   @keyframes shimmer {
     to { background-position: -200% 0; }
@@ -1024,7 +1073,7 @@
     flex: none;
     padding: 11px 14px;
     background: var(--bg-raised);
-    border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   }
   .ask {
     display: flex;
@@ -1032,7 +1081,7 @@
     gap: 8px;
     min-height: 42px;
     padding: 5px 5px 5px 12px;
-    border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
     border-radius: 10px;
     background: var(--bg);
     transition:
