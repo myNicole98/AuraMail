@@ -438,9 +438,11 @@ describe("message actions", () => {
     expect(app.messages).toEqual([]);
   });
 
-  it("categorizes a message immediately and refreshes tab counts", async () => {
+  it("categorizes a message and refreshes tab counts", async () => {
     app.messages = [message(1)];
     app.tabs = [tab(1, "Primary"), tab(2, "Updates")];
+    const classified = { ...message(1), tab_id: 2 };
+    mocks.listThreads.mockResolvedValue([classified]);
     mocks.tabUnreadCounts.mockResolvedValue({
       all: 1,
       tabs: [{ tab_id: 2, unread: 1 }]
@@ -449,9 +451,27 @@ describe("message actions", () => {
     await app.categorizeMessage(1, 2);
 
     expect(mocks.setMessageClassification).toHaveBeenCalledWith(1, 2);
-    expect(app.messages[0].tab_id).toBe(2);
+    expect(mocks.listThreads).toHaveBeenCalled();
+    expect(app.messages).toEqual([classified]);
     expect(app.tabUnreadCounts.tabs[2]).toBe(1);
     expect(app.flashingMessageIds.has(1)).toBe(true);
+  });
+
+  it("shows a manually classified message in the selected tab immediately", async () => {
+    app.selectedTabId = 2;
+    app.messages = [];
+    app.tabs = [tab(1, "Primary"), tab(2, "Updates")];
+    const classified = { ...message(1), tab_id: 2 };
+    mocks.listThreads.mockResolvedValue([classified]);
+    mocks.tabUnreadCounts.mockResolvedValue({
+      all: 1,
+      tabs: [{ tab_id: 2, unread: 1 }]
+    });
+
+    await app.categorizeMessage(1, 2);
+
+    expect(mocks.listThreads).toHaveBeenCalled();
+    expect(app.messages).toEqual([classified]);
   });
 
   it("toggles a star from a message row", async () => {

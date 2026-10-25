@@ -791,6 +791,71 @@ impl Database {
             tx.commit()?;
             conn.execute_batch("pragma foreign_keys = on;")?;
         }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 29 {
+            // A message can exist in Inbox, All Mail, and archive folders. The
+            // UI deduplicates those copies, so classification must be copied
+            // to every copy as well. Reconcile older databases where it was
+            // stored on only one row.
+            conn.execute_batch(
+                "insert into classifications (message_id, tab_id, confidence, model, classified_at)
+                 select m.id, picked.tab_id, picked.confidence, picked.model, picked.classified_at
+                 from messages m
+                 join (
+                   select m.account_id, trim(m.message_id) as message_key,
+                          c.tab_id, c.confidence, c.model, c.classified_at,
+                          row_number() over (
+                            partition by m.account_id, trim(m.message_id)
+                            order by c.classified_at desc, c.message_id desc
+                          ) as rn
+                   from messages m
+                   join classifications c on c.message_id = m.id
+                   where trim(coalesce(m.message_id, '')) <> ''
+                 ) picked
+                   on picked.account_id = m.account_id
+                  and picked.message_key = trim(m.message_id)
+                  and picked.rn = 1
+                 where trim(coalesce(m.message_id, '')) <> ''
+                 on conflict(message_id) do update set
+                   tab_id = excluded.tab_id,
+                   confidence = excluded.confidence,
+                   model = excluded.model,
+                   classified_at = excluded.classified_at;",
+            )?;
+            conn.pragma_update(None, "user_version", 29)?;
+        }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 30 {
+            // The message list is thread-based and can display a copy from a
+            // different folder than the one being viewed. Keep every message in
+            // a thread on the same category so counts and filtered lists agree.
+            conn.execute_batch(
+                "insert into classifications (message_id, tab_id, confidence, model, classified_at)
+                 select m.id, picked.tab_id, picked.confidence, picked.model, picked.classified_at
+                 from messages m
+                 join (
+                   select m.account_id, m.thread_key,
+                          c.tab_id, c.confidence, c.model, c.classified_at,
+                          row_number() over (
+                            partition by m.account_id, m.thread_key
+                            order by c.classified_at desc, c.message_id desc
+                          ) as rn
+                   from messages m
+                   join classifications c on c.message_id = m.id
+                   where trim(coalesce(m.thread_key, '')) <> ''
+                 ) picked
+                   on picked.account_id = m.account_id
+                  and picked.thread_key = m.thread_key
+                  and picked.rn = 1
+                 where trim(coalesce(m.thread_key, '')) <> ''
+                 on conflict(message_id) do update set
+                   tab_id = excluded.tab_id,
+                   confidence = excluded.confidence,
+                   model = excluded.model,
+                   classified_at = excluded.classified_at;",
+            )?;
+            conn.pragma_update(None, "user_version", 30)?;
+        }
         conn.execute_batch(
             "create index if not exists idx_messages_folder_date on messages(folder_id, date desc);
              create index if not exists idx_messages_account_date on messages(account_id, date desc);
@@ -906,7 +971,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 28);
+        assert_eq!(version, 30);
         let tabs: i64 = conn
             .query_row("select count(*) from tabs", [], |row| row.get(0))
             .unwrap();
@@ -939,6 +1004,68 @@ mod tests {
             .query_row("pragma foreign_keys", [], |row| row.get(0))
             .unwrap();
         assert_eq!(foreign_keys, 1);
+    }
+
+    #[test]
+    fn migration_reconciles_duplicate_classifications() {
+        let db = Database::open_memory().unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(
+                "insert into accounts (id, display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, created_at)
+                   values (1, 'A', 'a@example.com', 'a', 'imap', 993, 'tls', 'smtp', 465, 'tls', 120, 0);
+                 insert into folders (id, account_id, path, name, role) values (1, 1, 'INBOX', 'Inbox', 'inbox');
+                 insert into folders (id, account_id, path, name, role) values (2, 1, 'All Mail', 'All Mail', 'all');
+                 insert into messages (id, account_id, folder_id, uid, message_id) values (1, 1, 1, 1, '<duplicate@example.com>');
+                 insert into messages (id, account_id, folder_id, uid, message_id) values (2, 1, 2, 1, '<duplicate@example.com>');
+                 insert into classifications (message_id, tab_id, confidence, model, classified_at) values (1, 2, 0.9, 'manual', 100);
+                 pragma user_version = 28;",
+            )
+            .unwrap();
+        }
+
+        db.migrate().unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        let tab_id: Option<i64> = conn
+            .query_row(
+                "select tab_id from classifications where message_id = 2",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tab_id, Some(2));
+    }
+
+    #[test]
+    fn migration_reconciles_thread_classifications() {
+        let db = Database::open_memory().unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(
+                "insert into accounts (id, display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, created_at)
+                   values (1, 'A', 'a@example.com', 'a', 'imap', 993, 'tls', 'smtp', 465, 'tls', 120, 0);
+                 insert into folders (id, account_id, path, name, role) values (1, 1, 'Trash', 'Trash', 'trash');
+                 insert into folders (id, account_id, path, name, role) values (2, 1, 'Sent', 'Sent', 'sent');
+                 insert into messages (id, account_id, folder_id, uid, thread_key) values (1, 1, 1, 1, 'thread-1');
+                 insert into messages (id, account_id, folder_id, uid, thread_key) values (2, 1, 2, 1, 'thread-1');
+                 insert into classifications (message_id, tab_id, confidence, model, classified_at) values (1, 2, 0.9, 'manual', 100);
+                 pragma user_version = 29;",
+            )
+            .unwrap();
+        }
+
+        db.migrate().unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        let tab_id: Option<i64> = conn
+            .query_row(
+                "select tab_id from classifications where message_id = 2",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tab_id, Some(2));
     }
 
     #[test]
@@ -1000,7 +1127,7 @@ mod tests {
             .unwrap();
         assert_eq!(bodies, 0);
         assert_eq!(cached, 0);
-        assert_eq!(version, 28);
+        assert_eq!(version, 30);
     }
 
     #[test]
@@ -1027,7 +1154,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table, 1);
-        assert_eq!(version, 28);
+        assert_eq!(version, 30);
     }
 
     #[test]
@@ -1054,7 +1181,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(cached, 0);
-        assert_eq!(version, 28);
+        assert_eq!(version, 30);
     }
 
     #[test]
@@ -1097,7 +1224,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 28);
+        assert_eq!(version, 30);
     }
 
     #[test]
@@ -1178,6 +1305,6 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!((auth_type, provider, version), (1, 1, 28));
+        assert_eq!((auth_type, provider, version), (1, 1, 30));
     }
 }

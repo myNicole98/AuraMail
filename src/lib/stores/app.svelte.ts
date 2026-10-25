@@ -1138,7 +1138,7 @@ class AppStore {
     try {
       const classification = await api.setMessageClassification(messageId, tabId);
       this.applyClassification(messageId, classification);
-      await this.refreshTabCounts();
+      await this.reloadMessages();
       if (classification.tab_id !== null) this.flashMessage(messageId);
       this.error = null;
     } catch (error) {

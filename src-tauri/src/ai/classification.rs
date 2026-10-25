@@ -168,16 +168,52 @@ pub fn store(
             "tabs changed during classification".into(),
         ));
     }
-    tx.execute(
-        "insert into classifications (message_id, tab_id, confidence, model, classified_at) values (?1, ?2, ?3, ?4, ?5) on conflict(message_id) do update set tab_id = excluded.tab_id, confidence = excluded.confidence, model = excluded.model, classified_at = excluded.classified_at",
-        params![
-            message_id,
-            classification.tab_id,
-            classification.confidence,
-            classification.model,
-            now(),
-        ],
+    let (account_id, message_key, thread_key): (i64, Option<String>, String) = tx.query_row(
+        "select account_id, message_id, thread_key from messages where id = ?1",
+        params![message_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
+    let mut target_ids = vec![message_id];
+    if let Some(message_key) = message_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let mut stmt = tx.prepare(
+            "select id from messages where account_id = ?1 and trim(message_id) = ?2",
+        )?;
+        let rows = stmt.query_map(params![account_id, message_key], |row| row.get(0))?;
+        for id in rows {
+            let id = id?;
+            if !target_ids.contains(&id) {
+                target_ids.push(id);
+            }
+        }
+    }
+    if !thread_key.trim().is_empty() {
+        let mut stmt =
+            tx.prepare("select id from messages where account_id = ?1 and thread_key = ?2")?;
+        let rows = stmt.query_map(params![account_id, thread_key.trim()], |row| row.get(0))?;
+        for id in rows {
+            let id = id?;
+            if !target_ids.contains(&id) {
+                target_ids.push(id);
+            }
+        }
+    }
+    let classified_at = now();
+    for target_id in target_ids {
+        tx.execute(
+            "insert into classifications (message_id, tab_id, confidence, model, classified_at) values (?1, ?2, ?3, ?4, ?5) on conflict(message_id) do update set tab_id = excluded.tab_id, confidence = excluded.confidence, model = excluded.model, classified_at = excluded.classified_at",
+            params![
+                target_id,
+                classification.tab_id,
+                classification.confidence,
+                classification.model,
+                classified_at,
+            ],
+        )?;
+    }
     tx.commit()?;
     Ok(())
 }
@@ -475,6 +511,150 @@ mod tests {
         let message_id = seed_message(&db);
         assert!(set_manual(&db, message_id, Some(999)).is_err());
         assert!(super::cached(&db, message_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn manual_classification_updates_duplicate_copies_and_their_tab() {
+        let db = Database::open_memory().unwrap();
+        let (first, second, second_folder) = seed_duplicate_messages(&db);
+        let tab_id = crate::tabs::list(&db, space(&db)).unwrap()[1].id;
+
+        set_manual(&db, first, Some(tab_id)).unwrap();
+
+        assert_eq!(
+            super::cached(&db, first).unwrap().map(|value| value.tab_id),
+            Some(Some(tab_id))
+        );
+        assert_eq!(
+            super::cached(&db, second).unwrap().map(|value| value.tab_id),
+            Some(Some(tab_id))
+        );
+        let threads = crate::mail::list_threads(
+            &db,
+            &crate::mail::MessageQuery {
+                folder_id: Some(second_folder),
+                tab_id: Some(tab_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!threads.is_empty());
+    }
+
+    #[test]
+    fn clearing_one_duplicate_copy_clears_all_copies() {
+        let db = Database::open_memory().unwrap();
+        let (first, second, _) = seed_duplicate_messages(&db);
+        let tab_id = crate::tabs::list(&db, space(&db)).unwrap()[1].id;
+        set_manual(&db, first, Some(tab_id)).unwrap();
+
+        set_manual(&db, second, None).unwrap();
+
+        assert_eq!(
+            super::cached(&db, first).unwrap().map(|value| value.tab_id),
+            Some(None)
+        );
+        assert_eq!(
+            super::cached(&db, second).unwrap().map(|value| value.tab_id),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn manual_classification_updates_the_whole_thread_and_sent_view() {
+        let db = Database::open_memory().unwrap();
+        let (displayed, sent) = seed_thread_messages(&db);
+        let tab_id = crate::tabs::list(&db, space(&db)).unwrap()[1].id;
+
+        set_manual(&db, displayed, Some(tab_id)).unwrap();
+
+        assert_eq!(
+            super::cached(&db, sent).unwrap().map(|value| value.tab_id),
+            Some(Some(tab_id))
+        );
+        let threads = crate::mail::list_threads(
+            &db,
+            &crate::mail::MessageQuery {
+                unified: Some("sent".into()),
+                tab_id: Some(tab_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!threads.is_empty());
+    }
+
+    fn seed_thread_messages(db: &Database) -> (i64, i64) {
+        let space_id = space(db);
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "insert into accounts (display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, space_id, created_at) values ('Me', 'me@example.com', 'me@example.com', 'imap.example.com', 993, 'tls', 'smtp.example.com', 465, 'tls', ?1, 0)",
+            params![space_id],
+        )
+        .unwrap();
+        let account_id = conn.last_insert_rowid();
+        conn.execute(
+            "insert into folders (account_id, path, name, role) values (?1, 'Trash', 'Trash', 'trash')",
+            params![account_id],
+        )
+        .unwrap();
+        let trash_id = conn.last_insert_rowid();
+        conn.execute(
+            "insert into folders (account_id, path, name, role) values (?1, 'Sent', 'Sent', 'sent')",
+            params![account_id],
+        )
+        .unwrap();
+        let sent_id = conn.last_insert_rowid();
+        conn.execute(
+            "insert into messages (account_id, folder_id, uid, message_id, thread_key, from_addr, from_name, subject, snippet, body_cached) values (?1, ?2, 1, '<displayed@example.com>', 'thread-1', 'ada@example.com', 'Ada', 'Displayed', 'short snippet', 0)",
+            params![account_id, trash_id],
+        )
+        .unwrap();
+        let displayed = conn.last_insert_rowid();
+        conn.execute(
+            "insert into messages (account_id, folder_id, uid, message_id, thread_key, from_addr, from_name, subject, snippet, body_cached) values (?1, ?2, 1, '<sent@example.com>', 'thread-1', 'me@example.com', 'Me', 'Sent copy', 'short snippet', 0)",
+            params![account_id, sent_id],
+        )
+        .unwrap();
+        let sent = conn.last_insert_rowid();
+        (displayed, sent)
+    }
+
+    fn seed_duplicate_messages(db: &Database) -> (i64, i64, i64) {
+        let space_id = space(db);
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "insert into accounts (display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, space_id, created_at) values ('Me', 'me@example.com', 'me@example.com', 'imap.example.com', 993, 'tls', 'smtp.example.com', 465, 'tls', ?1, 0)",
+            params![space_id],
+        )
+        .unwrap();
+        let account_id = conn.last_insert_rowid();
+        conn.execute(
+            "insert into folders (account_id, path, name, role) values (?1, 'INBOX', 'Inbox', 'inbox')",
+            params![account_id],
+        )
+        .unwrap();
+        let inbox_id = conn.last_insert_rowid();
+        conn.execute(
+            "insert into folders (account_id, path, name, role) values (?1, 'All Mail', 'All Mail', 'all')",
+            params![account_id],
+        )
+        .unwrap();
+        let all_id = conn.last_insert_rowid();
+        let message_id = "<duplicate@example.com>";
+        conn.execute(
+            "insert into messages (account_id, folder_id, uid, message_id, from_addr, from_name, subject, snippet, body_cached) values (?1, ?2, 1, ?3, 'ada@example.com', 'Ada', 'Duplicate', 'short snippet', 0)",
+            params![account_id, inbox_id, message_id],
+        )
+        .unwrap();
+        let first = conn.last_insert_rowid();
+        conn.execute(
+            "insert into messages (account_id, folder_id, uid, message_id, from_addr, from_name, subject, snippet, body_cached) values (?1, ?2, 1, ?3, 'ada@example.com', 'Ada', 'Duplicate', 'short snippet', 0)",
+            params![account_id, all_id, message_id],
+        )
+        .unwrap();
+        let second = conn.last_insert_rowid();
+        (first, second, all_id)
     }
 
     #[tokio::test]
