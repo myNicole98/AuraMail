@@ -12,7 +12,7 @@ on:
 
 jobs:
   sync-github:
-    runs-on: Runner
+    runs-on: ubuntu-24.04
     steps:
       - name: Run Releases Sync Action
         uses: https://git.0xmax42.io/actions/releases-sync@main
