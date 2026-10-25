@@ -55,19 +55,20 @@ from pathlib import Path
 lib = Path(sys.argv[1])
 data = lib.read_bytes()
 new = b"/tmp/auramail-webkit-576f0a7f"
+pattern = re.compile(rb"(?:[A-Za-z0-9_.-]*/)+webkit2gtk-4\.1(?![A-Za-z0-9_.-])")
 
-print("strings mentioning webkit2gtk-4.1:")
-for s in sorted(set(re.findall(rb"[ -~]*webkit2gtk-4\.1[ -~]*", data)))[:20]:
-    print("  ", s)
+def repl(m):
+    old = m.group(0)
+    if len(new) > len(old):
+        raise SystemExit(f"Replacement path is longer than {old!r}")
+    print(f"patching {old!r}")
+    return new + b"\0" * (len(old) - len(new))
 
-match = re.search(rb"/[A-Za-z0-9_./-]*/webkit2gtk-4\.1(?![A-Za-z0-9_.-])", data)
-if match is None:
+patched, n = pattern.subn(repl, data)
+if n == 0:
     raise SystemExit(f"WebKit process path not found in {lib}")
-old = match.group(0)
-if len(new) > len(old):
-    raise SystemExit(f"Replacement path is longer than {old!r}")
-lib.write_bytes(data.replace(old, new + b"\0" * (len(old) - len(new))))
-print(f"patched {old!r} -> {new!r}")
+lib.write_bytes(patched)
+print(f"patched {n} occurrence(s)")
 PY
 
 cat > /tmp/AppDir/AppRun <<'RUN'
@@ -81,6 +82,8 @@ export XDG_DATA_DIRS="$this_dir/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr
 export GSETTINGS_SCHEMA_DIR="$this_dir/usr/share/glib-2.0/schemas:${GSETTINGS_SCHEMA_DIR:-}"
 if [ -d "$this_dir/usr/lib/x86_64-linux-gnu/gio/modules" ]; then
   export GIO_EXTRA_MODULES="$this_dir/usr/lib/x86_64-linux-gnu/gio/modules"
+else
+  unset GIO_EXTRA_MODULES
 fi
 webkit_dir="$this_dir/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"
 webkit_link="/tmp/auramail-webkit-576f0a7f"
