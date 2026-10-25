@@ -371,6 +371,9 @@
             Before replying
           </div>
           <p>{rail.question}</p>
+          <p class="question-help" role="note">
+            Aura only drafts replies. It can't send, archive, or change your mail.
+          </p>
           {#if rail.options.length > 0}
             <div class="chips">
               {#each rail.options as option, index (index)}
@@ -410,7 +413,7 @@
           </div>
         {:else if rail.drafts.length === 0}
           <p class="draft-empty">
-            Answer above, or describe your reply below.
+            Choose a reply option above, or tell Aura what to say below.
           </p>
         {:else}
           {#each rail.drafts as draft, index (index)}
@@ -680,6 +683,13 @@
     font-weight: 500;
     line-height: 1.5;
   }
+  .question .question-help {
+    margin: -3px 0 12px;
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 400;
+    line-height: 1.5;
+  }
   .chips {
     display: flex;
     flex-wrap: wrap;
@@ -694,7 +704,8 @@
     color: var(--text);
     font-size: 11.5px;
     font-weight: 600;
-    line-height: 1.25;
+    line-height: 1.4;
+    text-align: left;
     transition:
       background 140ms ease,
       border-color 140ms ease,

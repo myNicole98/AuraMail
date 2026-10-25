@@ -200,7 +200,12 @@ describe("AuraRail", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Answer above, or describe your reply below."
+        "Aura only drafts replies. It can't send, archive, or change your mail."
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Choose a reply option above, or tell Aura what to say below."
       )
     ).toBeInTheDocument();
     expect(

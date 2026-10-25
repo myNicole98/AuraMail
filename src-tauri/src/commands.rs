@@ -925,6 +925,12 @@ pub async fn ai_reply(
     Ok(AiDraft { text })
 }
 
+const RAIL_CACHE_VERSION: &str = "reply-only-v1";
+
+fn aura_rail_cache_model(model: &str) -> String {
+    format!("{model}::{RAIL_CACHE_VERSION}")
+}
+
 enum PreparedRail {
     Cached(AiAuraRail),
     Generate {
@@ -966,10 +972,11 @@ pub(crate) async fn generate_aura_rail(
         let full_body = effective_full_body(&cache_db, space_id, requested_full_body)?;
         let config = AiConfig::load(&cache_db, space_id)?;
         if cacheable {
+            let cache_model = aura_rail_cache_model(&config.model);
             if let Some(cached) = ai::rail_cache::load(
                 &cache_db,
                 message_id,
-                &config.model,
+                &cache_model,
                 full_body,
                 latest_id,
                 latest_date,
@@ -1025,7 +1032,7 @@ pub(crate) async fn generate_aura_rail(
                 ai::rail_cache::store(
                     &db,
                     message_id,
-                    &model,
+                    &aura_rail_cache_model(&model),
                     full_body,
                     latest_id,
                     latest_date,
