@@ -1,5 +1,5 @@
 <h3 align="center">
-  <img src="resources/logo/aura_mail_logo.svg" height="400" width="400" /><br>
+  <img src="resources/logo/aura_mail_logo.svg" height="300" /><br>
   <img src="assets/screenshots/main.png" />
 </h3>
 
