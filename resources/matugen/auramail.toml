@@ -1,0 +1,4 @@
+# When XDG_CONFIG_HOME is set, replace ~/.config with its value.
+[templates.auramail]
+input_path = '~/.config/auramail/theme_template.json'
+output_path = '~/.config/auramail/theme.json'

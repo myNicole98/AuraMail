@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window capabilities",
+  "windows": [
+    "main",
+    "compose-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:webview:allow-set-webview-zoom",
+    "opener:default"
+  ]
+}

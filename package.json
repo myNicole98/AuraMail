@@ -1,0 +1,30 @@
+{
+  "name": "auramail",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "lucide-svelte": "^0.468.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5",
+    "@tauri-apps/cli": "^2",
+    "@testing-library/jest-dom": "^6",
+    "@testing-library/svelte": "^5",
+    "jsdom": "^25",
+    "svelte": "^5",
+    "svelte-check": "^4",
+    "typescript": "^5.7",
+    "vite": "^6",
+    "vitest": "^3"
+  }
+}
