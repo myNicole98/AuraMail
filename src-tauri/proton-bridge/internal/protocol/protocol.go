@@ -83,7 +83,6 @@ func EncodeEvent(w io.Writer, ev Event) error {
 	}
 
 	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
 	if err := enc.Encode(ev); err != nil {
 		return fmt.Errorf("protocol: encode event: %w", err)
 	}

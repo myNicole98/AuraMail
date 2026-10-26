@@ -24,7 +24,14 @@ import (
 const AppealURL = "https://proton.me/support/appeal-abuse"
 
 // AccessLimitedMessage explains a terminal access_limited event.
-const AccessLimitedMessage = "Proton temporarily limited API access for this account. Do not retry automatically."
+const AccessLimitedMessage = "Proton temporarily limited API access for this account. Use the official Proton app and try again later."
+
+const (
+	wrongCredentialsMessage = "Proton rejected the email address or password."
+	totpRejectedMessage     = "That verification code was not accepted. Try the current code."
+	mailboxPasswordMessage  = "The mailbox password was not accepted. Try again."
+	genericAuthMessage      = "Proton sign-in failed. Check your connection and try again."
+)
 
 const (
 	verifyBaseURL = "https://verify.proton.me/"
@@ -84,10 +91,11 @@ func (f *Flow) Start(ctx context.Context, creds protocol.Credentials) (protocol.
 		return f.eventError("password is required")
 	}
 
-	f.username = creds.Username
+	username := strings.TrimSpace(creds.Username)
+	f.username = username
 	f.loginPassword = creds.Password
 
-	info, err := f.client.AuthInfo(creds.Username)
+	info, err := f.client.AuthInfo(username)
 	if err != nil {
 		return f.mapError(err)
 	}
@@ -150,10 +158,15 @@ func (f *Flow) requireCaptcha(details protonmail.HumanVerificationDetails) (prot
 	f.challenge = &details
 	f.state = stateCaptcha
 
+	// Advertise only CAPTCHA; keep the original challenge for the API retry.
+	advertised := protonmail.HumanVerificationDetails{
+		Methods: []string{captchaMethod},
+		Token:   details.Token,
+	}
 	return protocol.Event{
 		Event:   protocol.EventCaptchaRequired,
-		URL:     verificationURL(details),
-		Methods: append([]string(nil), details.Methods...),
+		URL:     verificationURL(advertised),
+		Methods: advertised.Methods,
 	}, nil
 }
 
@@ -173,12 +186,17 @@ func (f *Flow) continueCaptcha(ctx context.Context, resp protocol.Response) (pro
 }
 
 func (f *Flow) continueTOTP(resp protocol.Response) (protocol.Event, error) {
-	if strings.TrimSpace(resp.TOTP) == "" {
+	code := strings.TrimSpace(resp.TOTP)
+	if code == "" {
 		return f.eventError("TOTP code is required")
 	}
 
-	scope, err := f.client.AuthTOTP(resp.TOTP)
+	scope, err := f.client.AuthTOTP(code)
 	if err != nil {
+		var apiErr *protonmail.APIError
+		if errors.As(err, &apiErr) && apiErr.Code != 2028 {
+			return f.eventError(totpRejectedMessage)
+		}
 		return f.mapError(err)
 	}
 	f.session.Scope = scope
@@ -223,7 +241,7 @@ func (f *Flow) finish(mailboxPassword string) (protocol.Event, error) {
 	}
 
 	if _, err := f.client.Unlock(f.session, salts, mailboxPassword); err != nil {
-		return f.mapError(err)
+		return f.mapUnlockError(err)
 	}
 
 	login, email, displayName, err := f.client.Identity()
@@ -233,7 +251,7 @@ func (f *Flow) finish(mailboxPassword string) (protocol.Event, error) {
 
 	secretKey, bridgePassword, err := auth.GeneratePassword()
 	if err != nil {
-		return f.fail("failed to generate the bridge password: " + err.Error())
+		return f.fail("Could not generate the bridge password. Try again.")
 	}
 
 	account := strings.TrimSpace(login)
@@ -248,7 +266,7 @@ func (f *Flow) finish(mailboxPassword string) (protocol.Event, error) {
 		KeySalts:        salts,
 	}
 	if err := auth.EncryptAndSave(cached, account, secretKey); err != nil {
-		return f.fail("failed to save the Proton credentials: " + err.Error())
+		return f.fail("Could not save the Proton credentials. Check disk space and permissions, then try again.")
 	}
 
 	f.state = stateDone
@@ -264,28 +282,34 @@ func (f *Flow) finish(mailboxPassword string) (protocol.Event, error) {
 func (f *Flow) mapError(err error) (protocol.Event, error) {
 	var apiErr *protonmail.APIError
 	if errors.As(err, &apiErr) {
-		if apiErr.Code == 2028 {
-			// 2028 is terminal and must not be retried.
-			f.state = stateDone
-			message := AccessLimitedMessage
-			if detail := strings.TrimSpace(apiErr.Message); detail != "" {
-				message = fmt.Sprintf("%s (%s)", message, detail)
-			}
-			return protocol.Event{
-				Event:         protocol.EventAccessLimited,
-				Message:       message,
-				AppealURL:     AppealURL,
-				LoginUsername: f.username,
-			}, nil
+		switch apiErr.Code {
+		case 2028:
+			return f.accessLimited()
+		case 8002:
+			return f.fail(wrongCredentialsMessage)
 		}
-
-		if apiErr.Message != "" {
-			return f.fail(fmt.Sprintf("Proton API error %d: %s", apiErr.Code, apiErr.Message))
-		}
-		return f.fail(fmt.Sprintf("Proton API error %d", apiErr.Code))
 	}
 
-	return f.fail(err.Error())
+	return f.fail(genericAuthMessage)
+}
+
+func (f *Flow) mapUnlockError(err error) (protocol.Event, error) {
+	var apiErr *protonmail.APIError
+	if errors.As(err, &apiErr) && apiErr.Code == 2028 {
+		return f.accessLimited()
+	}
+
+	return f.fail(mailboxPasswordMessage)
+}
+
+func (f *Flow) accessLimited() (protocol.Event, error) {
+	f.state = stateDone
+	return protocol.Event{
+		Event:         protocol.EventAccessLimited,
+		Message:       AccessLimitedMessage,
+		AppealURL:     AppealURL,
+		LoginUsername: f.username,
+	}, nil
 }
 
 // eventError reports a caller error without abandoning a pending step.
