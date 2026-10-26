@@ -177,11 +177,30 @@ func (mbox *Mailbox) Sync(messages []*protonmail.Message) error {
 	})
 }
 
-// Reconcile removes API-ID to UID entries not in the complete remote set.
-func (mbox *Mailbox) Reconcile(apiIDs []string) error {
-	keep := make(map[string]struct{}, len(apiIDs))
-	for _, apiID := range apiIDs {
-		keep[apiID] = struct{}{}
+// APIIDs returns the mailbox's current API ID to UID mappings.
+func (mbox *Mailbox) APIIDs() (apiIDs []string, err error) {
+	err = mbox.u.db.View(func(tx *bolt.Tx) error {
+		b, err := mbox.bucket(tx)
+		if err != nil {
+			return err
+		}
+		return b.ForEach(func(k, v []byte) error {
+			apiIDs = append(apiIDs, string(v))
+			return nil
+		})
+	})
+	return
+}
+
+// Reconcile removes pre-sync API-ID to UID entries absent from the remote set.
+func (mbox *Mailbox) Reconcile(existingAPIIDs, remoteAPIIDs []string) error {
+	existing := make(map[string]struct{}, len(existingAPIIDs))
+	for _, apiID := range existingAPIIDs {
+		existing[apiID] = struct{}{}
+	}
+	remote := make(map[string]struct{}, len(remoteAPIIDs))
+	for _, apiID := range remoteAPIIDs {
+		remote[apiID] = struct{}{}
 	}
 
 	return mbox.u.db.Update(func(tx *bolt.Tx) error {
@@ -193,9 +212,14 @@ func (mbox *Mailbox) Reconcile(apiIDs []string) error {
 		var stale [][]byte
 		c := b.Cursor()
 		for k, v := c.First(); k != nil; k, v = c.Next() {
-			if _, ok := keep[string(v)]; !ok {
-				stale = append(stale, append([]byte(nil), k...))
+			apiID := string(v)
+			if _, ok := existing[apiID]; !ok {
+				continue
 			}
+			if _, ok := remote[apiID]; ok {
+				continue
+			}
+			stale = append(stale, append([]byte(nil), k...))
 		}
 		for _, k := range stale {
 			if err := b.Delete(k); err != nil {

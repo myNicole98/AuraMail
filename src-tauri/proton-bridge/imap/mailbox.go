@@ -114,6 +114,11 @@ func (mbox *mailbox) Check() error {
 func (mbox *mailbox) sync() error {
 	log.Printf("Synchronizing mailbox %v...", mbox.name)
 
+	existingAPIIDs, err := mbox.db.APIIDs()
+	if err != nil {
+		return err
+	}
+
 	filter := &protonmail.MessageFilter{
 		PageSize: 150,
 		Label:    mbox.label,
@@ -122,6 +127,8 @@ func (mbox *mailbox) sync() error {
 	}
 
 	total := -1
+	expectedTotal := -1
+	listingStable := true
 	var apiIDs []string
 	for {
 		offset := filter.PageSize * filter.Page
@@ -136,6 +143,12 @@ func (mbox *mailbox) sync() error {
 			return err
 		}
 
+		if expectedTotal < 0 {
+			expectedTotal = total
+		} else if total != expectedTotal {
+			listingStable = false
+		}
+
 		if err := mbox.db.Sync(page); err != nil {
 			return err
 		}
@@ -147,8 +160,12 @@ func (mbox *mailbox) sync() error {
 		filter.Page++
 	}
 
-	if err := mbox.db.Reconcile(apiIDs); err != nil {
-		return err
+	if listingStable {
+		if err := mbox.db.Reconcile(existingAPIIDs, apiIDs); err != nil {
+			return err
+		}
+	} else {
+		log.Printf("Skipping mailbox %v reconciliation: remote listing changed during sync", mbox.name)
 	}
 
 	log.Printf("Synchronizing mailbox %v: done.", mbox.name)

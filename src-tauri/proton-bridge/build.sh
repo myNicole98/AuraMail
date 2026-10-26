@@ -24,8 +24,10 @@
 #   IMAP session renumbered UIDs; forcing a full resync now increments
 #   UIDVALIDITY instead.
 #   imap/mailbox.go: after paging the full mailbox, reconcile the UID map
-#   against the remote API IDs so messages deleted while offline disappear
-#   without renumbering survivors.
+#   against a stable remote API ID set so messages deleted while offline
+#   disappear without renumbering survivors. Only mappings present before the
+#   sync are pruned, and moving listings (page totals differ) skip
+#   reconciliation until the next sync.
 #   imap/mailbox.go: expose the persisted UIDVALIDITY. MOVE remains a
 #   label/unlabel operation and never falls back to COPY + STORE + EXPUNGE.
 #
