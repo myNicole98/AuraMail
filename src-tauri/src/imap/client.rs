@@ -15,6 +15,9 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// Raw messages above this size are refused so opening mail cannot exhaust memory.
 const MAX_MESSAGE_BYTES: u64 = 60 * 1024 * 1024;
 
+const MAX_IMAP_LINE: usize = 64 * 1024;
+const STARTTLS_TAG: &[u8] = b"auramail1";
+
 #[derive(Debug)]
 pub enum ImapStream {
     Tls(TlsStream<TcpStream>),
@@ -572,22 +575,8 @@ fn connect_client(
             client
         }
         MailSecurity::StartTls => {
-            let mut stream = tcp;
-            read_imap_line(&mut stream)
-                .map_err(|_| AppError::Message("IMAP connection failed".into()))?;
-            stream
-                .write_all(b"a1 STARTTLS\r\n")
+            let stream = starttls_exchange(tcp)
                 .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?;
-            loop {
-                let line = read_imap_line(&mut stream)
-                    .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?;
-                if line.starts_with(b"a1 ") {
-                    if line.starts_with(b"a1 OK") {
-                        break;
-                    }
-                    return Err(AppError::Message("IMAP TLS handshake failed".into()));
-                }
-            }
             let stream = tls
                 .connect(host, stream)
                 .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?;
@@ -595,6 +584,33 @@ fn connect_client(
         }
     };
     Ok(client)
+}
+
+fn starttls_exchange(mut stream: TcpStream) -> io::Result<TcpStream> {
+    read_imap_line(&mut stream)?;
+    stream.write_all(b"auramail1 STARTTLS\r\n")?;
+    loop {
+        let line = read_imap_line(&mut stream)?;
+        if line.starts_with(b"*") {
+            continue;
+        }
+        let Some(status) = line
+            .strip_prefix(STARTTLS_TAG)
+            .and_then(|rest| rest.strip_prefix(b" "))
+        else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected IMAP STARTTLS response",
+            ));
+        };
+        if status == b"OK" || status.starts_with(b"OK ") {
+            return Ok(stream);
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "IMAP STARTTLS rejected",
+        ));
+    }
 }
 
 fn read_imap_line(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
@@ -607,9 +623,18 @@ fn read_imap_line(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
                 "IMAP connection closed",
             ));
         }
-        line.push(byte[0]);
         if byte[0] == b'\n' {
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
             return Ok(line);
+        }
+        line.push(byte[0]);
+        if line.len() > MAX_IMAP_LINE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "IMAP line is too long",
+            ));
         }
     }
 }
@@ -726,7 +751,7 @@ mod tests {
     use super::*;
     use crate::accounts::{AccountAuth, MailSecurity};
     use imap::Authenticator;
-    use std::io::{Read, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::thread;
 
@@ -891,6 +916,56 @@ mod tests {
         stream.read_exact(&mut response).unwrap();
         assert_eq!(&response, b"pong");
         handle.join().unwrap();
+    }
+
+    fn fake_imap_server(response: &'static str) -> (u16, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = thread::spawn(move || {
+            let (mut peer, _) = listener.accept().unwrap();
+            peer.write_all(b"* OK IMAP4rev1 ready\r\n").unwrap();
+            let mut reader = BufReader::new(peer.try_clone().unwrap());
+            let mut command = String::new();
+            reader.read_line(&mut command).unwrap();
+            let tag = std::str::from_utf8(STARTTLS_TAG).unwrap();
+            assert!(
+                command.starts_with(&format!("{tag} ")) && command.ends_with(" STARTTLS\r\n"),
+                "unexpected command: {command:?}"
+            );
+            let command_tag = command.split(' ').next().unwrap();
+            peer.write_all(format!("{command_tag} {response}\r\n").as_bytes())
+                .unwrap();
+            if response.starts_with("OK") {
+                let mut ping = String::new();
+                reader.read_line(&mut ping).unwrap();
+                assert_eq!(ping, "ping\r\n");
+                peer.write_all(b"pong\r\n").unwrap();
+            }
+        });
+        (port, handle)
+    }
+
+    #[test]
+    fn starttls_exchange_accepts_an_ok_response() {
+        let (port, handle) = fake_imap_server("OK STARTTLS completed");
+        let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let mut stream = starttls_exchange(stream).unwrap();
+        stream.write_all(b"ping\r\n").unwrap();
+        assert_eq!(read_imap_line(&mut stream).unwrap(), b"pong".to_vec());
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn starttls_exchange_rejects_no_bad_and_malformed_responses() {
+        for response in ["NO STARTTLS unavailable", "BAD unexpected command", "WHAT"] {
+            let (port, handle) = fake_imap_server(response);
+            let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            assert!(
+                starttls_exchange(stream).is_err(),
+                "expected {response:?} to be rejected"
+            );
+            handle.join().unwrap();
+        }
     }
 
     #[test]
