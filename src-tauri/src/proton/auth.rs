@@ -57,7 +57,11 @@ pub enum ProtonAuthResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "status", rename_all = "camelCase")]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 #[allow(clippy::large_enum_variant)]
 pub enum ProtonAuthStatus {
     NeedsTotp {
@@ -1287,6 +1291,37 @@ mod tests {
             username: username.into(),
             password: "proton-password".into(),
         }
+    }
+
+    #[test]
+    fn serializes_statuses_with_camel_case_keys() {
+        let totp = serde_json::to_value(ProtonAuthStatus::NeedsTotp {
+            login_id: "login-1".into(),
+            error: None,
+        })
+        .unwrap();
+        assert_eq!(
+            totp,
+            serde_json::json!({
+                "status": "needsTotp",
+                "loginId": "login-1",
+                "error": null
+            })
+        );
+
+        let limited = serde_json::to_value(ProtonAuthStatus::AccessLimited {
+            message: "Access limited".into(),
+            appeal_url: "https://proton.me/support/appeal-abuse".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            limited,
+            serde_json::json!({
+                "status": "accessLimited",
+                "message": "Access limited",
+                "appealUrl": "https://proton.me/support/appeal-abuse"
+            })
+        );
     }
 
     #[test]

@@ -83,10 +83,12 @@
     {/if}
   </div>
 
-  <button type="button" class="provider-button" onclick={() => onProton?.()}>
-    <span class="provider-mark proton" aria-hidden="true">P</span>
-    <span class="provider-name">Proton</span>
-  </button>
+  {#if onProton}
+    <button type="button" class="provider-button" onclick={onProton}>
+      <span class="provider-mark proton" aria-hidden="true">P</span>
+      <span class="provider-name">Proton</span>
+    </button>
+  {/if}
 
   <button type="button" class="provider-button" onclick={onManual}>
     <span class="provider-mark" aria-hidden="true">@</span>
