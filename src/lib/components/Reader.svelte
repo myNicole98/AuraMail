@@ -635,6 +635,7 @@
     position: relative;
     display: flex;
     flex-direction: row;
+    container-type: inline-size;
     min-width: 0;
     height: 100%;
     overflow: hidden;

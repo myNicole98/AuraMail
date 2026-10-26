@@ -533,6 +533,7 @@
     flex-direction: column;
     width: 360px;
     min-width: 0;
+    max-width: 100%;
     height: 100%;
     flex: none;
     border-left: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
@@ -617,7 +618,9 @@
   }
   .rail-body {
     flex: 1;
+    min-width: 0;
     min-height: 0;
+    overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 12px 14px 18px;
@@ -1074,6 +1077,7 @@
   }
   .rail-foot {
     flex: none;
+    min-width: 0;
     padding: 11px 14px;
     background: var(--bg-raised);
     border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
@@ -1146,6 +1150,17 @@
     color: var(--muted);
   }
   @media (max-width: 1100px) {
+    .aura-rail {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 6;
+      max-width: 92%;
+      box-shadow: -8px 0 24px color-mix(in srgb, #000 22%, transparent);
+    }
+  }
+  @container (max-width: 760px) {
     .aura-rail {
       position: absolute;
       top: 0;
