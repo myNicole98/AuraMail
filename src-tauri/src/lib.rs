@@ -16,6 +16,7 @@ mod session;
 mod mail;
 mod mail_auth;
 mod oauth;
+mod proton;
 mod secrets;
 mod smtp;
 mod spaces;
