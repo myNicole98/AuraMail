@@ -5,6 +5,7 @@
   import { validateAccountForm, type AccountForm } from "../../settings";
   import type { Account, AccountInput } from "../../types";
   import OAuthSignIn from "./OAuthSignIn.svelte";
+  import ProtonSignIn from "./ProtonSignIn.svelte";
   import ProviderChooser from "./ProviderChooser.svelte";
   import ThemedSelect from "../ThemedSelect.svelte";
 
@@ -22,16 +23,18 @@
     onConnected: (account: Account) => void;
   } = $props();
 
-  let override = $state<"chooser" | "google" | "microsoft" | "manual" | null>(
-    null
-  );
+  let override = $state<
+    "chooser" | "google" | "microsoft" | "proton" | "manual" | null
+  >(null);
   const view = $derived(
     override ??
       (mode === "add"
         ? "chooser"
-        : account?.oauth_provider === "microsoft"
-          ? "microsoft"
-          : "google")
+        : account?.auth_type === "proton"
+          ? "proton"
+          : account?.oauth_provider === "microsoft"
+            ? "microsoft"
+            : "google")
   );
   let panel = $state<HTMLElement | null>(null);
   let previousFocus: HTMLElement | null = null;
@@ -69,6 +72,10 @@
 
   function openManual(): void {
     override = "manual";
+  }
+
+  function openProton(): void {
+    override = "proton";
   }
 
   function cancelOAuth(): void {
@@ -230,6 +237,7 @@
       <ProviderChooser
         onGoogle={openGoogle}
         onMicrosoft={openMicrosoft}
+        onProton={openProton}
         onManual={openManual}
       />
     {:else if view === "google"}
@@ -244,6 +252,14 @@
     {:else if view === "microsoft"}
       <OAuthSignIn
         provider="microsoft"
+        {mode}
+        {account}
+        {spaceId}
+        onCancel={cancelOAuth}
+        onConnected={onConnected}
+      />
+    {:else if view === "proton"}
+      <ProtonSignIn
         {mode}
         {account}
         {spaceId}

@@ -1,5 +1,13 @@
 <script lang="ts">
-  import type { Account } from "../../types";
+  import { onDestroy, untrack } from "svelte";
+  import { api } from "../../api";
+  import { activeSpaceId } from "../../spaces";
+  import type {
+    Account,
+    ProtonAuthResponse,
+    ProtonAuthStart,
+    ProtonAuthStatus
+  } from "../../types";
 
   let {
     mode,
@@ -14,16 +22,336 @@
     onCancel: () => void;
     onConnected: (account: Account) => void;
   } = $props();
+
+  type Step =
+    | "credentials"
+    | "totp"
+    | "mailboxPassword"
+    | "verification"
+    | "accessLimited";
+
+  let step = $state<Step>("credentials");
+  let username = $state(
+    untrack(() => (mode === "reconnect" && account ? account.username : ""))
+  );
+  let password = $state("");
+  let code = $state("");
+  let mailboxPassword = $state("");
+  let loginId = $state<string | null>(null);
+  let verificationUrl = $state("");
+  let accessMessage = $state("");
+  let appealUrl = $state("");
+  let error = $state<string | null>(null);
+  let pending = $state(false);
+  let completed = $state(false);
+
+  const missingAccount = $derived(mode === "reconnect" && !account);
+  const statusText = $derived(
+    step === "totp"
+      ? "Enter the two-factor authentication code for your Proton account."
+      : step === "mailboxPassword"
+        ? "Enter your Proton mailbox password."
+        : step === "verification"
+          ? "Complete the verification step in your browser."
+          : "Sign in with your Proton account."
+  );
+
+  function errorMessage(value: unknown): string {
+    if (typeof value === "string") return value;
+    if (value instanceof Error) return value.message;
+    return "Something went wrong. Try again.";
+  }
+
+  function openUrl(url: string): void {
+    if (!url) return;
+    void api.openExternal(url).catch(() => {});
+  }
+
+  function applyStatus(status: ProtonAuthStatus): void {
+    if (status.status === "complete") {
+      if (completed) return;
+      completed = true;
+      loginId = null;
+      password = "";
+      code = "";
+      mailboxPassword = "";
+      error = null;
+      onConnected(status.account);
+      return;
+    }
+
+    if (status.status === "accessLimited") {
+      step = "accessLimited";
+      accessMessage = status.message;
+      appealUrl = status.appealUrl;
+      loginId = null;
+      password = "";
+      code = "";
+      mailboxPassword = "";
+      error = null;
+      return;
+    }
+
+    loginId = status.loginId;
+    error = status.error;
+    password = "";
+    if (status.status === "needsTotp") {
+      if (step !== "totp") code = "";
+      step = "totp";
+    } else if (status.status === "needsMailboxPassword") {
+      if (step !== "mailboxPassword") mailboxPassword = "";
+      step = "mailboxPassword";
+    } else {
+      step = "verification";
+      verificationUrl = status.url;
+    }
+  }
+
+  async function submitCredentials(): Promise<void> {
+    if (pending || completed) return;
+    const user = username.trim();
+    if (!user || !password) {
+      error = "Enter your Proton email and password.";
+      return;
+    }
+    pending = true;
+    error = null;
+    try {
+      const request: ProtonAuthStart =
+        mode === "reconnect" && account
+          ? {
+              mode: "reconnect",
+              accountId: account.id,
+              username: user,
+              password
+            }
+          : {
+              mode: "add",
+              spaceId: spaceId ?? activeSpaceId() ?? 1,
+              username: user,
+              password
+            };
+      applyStatus(await api.startProtonLogin(request));
+    } catch (caught) {
+      error = errorMessage(caught);
+    } finally {
+      pending = false;
+    }
+  }
+
+  async function continueLogin(response: ProtonAuthResponse): Promise<void> {
+    const id = loginId;
+    if (!id || pending || completed) return;
+    pending = true;
+    error = null;
+    try {
+      applyStatus(await api.continueProtonLogin(id, response));
+    } catch (caught) {
+      error = errorMessage(caught);
+    } finally {
+      pending = false;
+    }
+  }
+
+  function submitTotp(): void {
+    if (!code.trim()) return;
+    void continueLogin({ type: "totp", value: code.trim() });
+  }
+
+  function submitMailboxPassword(): void {
+    if (!mailboxPassword) return;
+    void continueLogin({ type: "mailboxPassword", value: mailboxPassword });
+  }
+
+  function submitVerificationDone(): void {
+    void continueLogin({ type: "verificationDone" });
+  }
+
+  function cancel(): void {
+    const id = loginId;
+    loginId = null;
+    if (id && !completed) void api.cancelProtonLogin(id).catch(() => {});
+    onCancel();
+  }
+
+  onDestroy(() => {
+    if (loginId && !completed) void api.cancelProtonLogin(loginId).catch(() => {});
+  });
 </script>
 
-<!-- Placeholder shell. Task 7 replaces this body with the Proton login state machine. -->
 <div class="proton-signin" data-testid="proton-signin">
-  <p class="proton-status" role="status">
-    {mode === "reconnect"
-      ? "Proton reconnect is coming soon."
-      : "Proton sign-in is coming soon."}
-  </p>
-  <button type="button" class="ghost" onclick={onCancel}>Cancel</button>
+  <div class="provider-mark proton" aria-hidden="true">P</div>
+
+  {#if missingAccount}
+    <p class="proton-status" role="status" aria-live="polite">
+      Select a Proton account to reconnect.
+    </p>
+    <div class="proton-actions">
+      <button type="button" class="proton-button ghost" onclick={cancel}>
+        Cancel
+      </button>
+    </div>
+  {:else if step === "accessLimited"}
+    <p class="proton-error" role="alert" aria-live="assertive">{accessMessage}</p>
+    <div class="proton-actions">
+      <button
+        type="button"
+        class="proton-button ghost"
+        onclick={() => openUrl(appealUrl)}
+      >
+        Appeal access limitation
+      </button>
+      <button type="button" class="proton-button ghost" onclick={cancel}>
+        Cancel
+      </button>
+    </div>
+  {:else if completed}
+    <p class="proton-status" role="status" aria-live="polite">Connected.</p>
+  {:else}
+    <p class="proton-status" role="status" aria-live="polite">{statusText}</p>
+    {#if error}
+      <p class="proton-error" role="alert" aria-live="assertive">{error}</p>
+    {/if}
+
+    {#if step === "credentials"}
+      <form
+        class="proton-form"
+        onsubmit={(event) => {
+          event.preventDefault();
+          void submitCredentials();
+        }}
+      >
+        <label class="proton-field">
+          <span>Email</span>
+          <input
+            type="email"
+            bind:value={username}
+            autocomplete="username"
+            autocapitalize="none"
+            spellcheck="false"
+            disabled={pending}
+          />
+        </label>
+        <p class="proton-hint">Use your Proton email or login username.</p>
+        <label class="proton-field">
+          <span>Password</span>
+          <input
+            type="password"
+            bind:value={password}
+            autocomplete="new-password"
+            disabled={pending}
+          />
+        </label>
+        <div class="proton-actions">
+          <button type="button" class="proton-button ghost" onclick={cancel}>
+            Cancel
+          </button>
+          <button type="submit" class="proton-button primary" disabled={pending}>
+            {pending ? "Signing in…" : "Sign in"}
+          </button>
+        </div>
+      </form>
+    {:else if step === "totp"}
+      <form
+        class="proton-form"
+        onsubmit={(event) => {
+          event.preventDefault();
+          submitTotp();
+        }}
+      >
+        <label class="proton-field">
+          <span>Authentication code</span>
+          <input
+            bind:value={code}
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            disabled={pending}
+          />
+        </label>
+        <div class="proton-actions">
+          <button type="button" class="proton-button ghost" onclick={cancel}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="proton-button primary"
+            disabled={pending || !code.trim()}
+          >
+            {pending ? "Verifying…" : "Continue"}
+          </button>
+        </div>
+      </form>
+    {:else if step === "mailboxPassword"}
+      <form
+        class="proton-form"
+        onsubmit={(event) => {
+          event.preventDefault();
+          submitMailboxPassword();
+        }}
+      >
+        <label class="proton-field">
+          <span>Mailbox password</span>
+          <input
+            type="password"
+            bind:value={mailboxPassword}
+            autocomplete="new-password"
+            disabled={pending}
+          />
+        </label>
+        <p class="proton-hint">
+          This is the password that unlocks your Proton mailbox encryption.
+        </p>
+        <div class="proton-actions">
+          <button type="button" class="proton-button ghost" onclick={cancel}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="proton-button primary"
+            disabled={pending || !mailboxPassword}
+          >
+            {pending ? "Verifying…" : "Continue"}
+          </button>
+        </div>
+      </form>
+    {:else if step === "verification"}
+      <div class="proton-verification">
+        <label class="proton-field">
+          <span>Verification link</span>
+          <input
+            class="proton-link"
+            aria-label="Proton verification link"
+            readonly
+            value={verificationUrl}
+            onfocus={(event) => event.currentTarget.select()}
+          />
+        </label>
+        <p class="proton-hint">
+          Open the link, complete the check, then come back here.
+        </p>
+        <button
+          type="button"
+          class="proton-button ghost"
+          onclick={() => openUrl(verificationUrl)}
+        >
+          Open verification page
+        </button>
+        <div class="proton-actions">
+          <button type="button" class="proton-button ghost" onclick={cancel}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="proton-button primary"
+            disabled={pending}
+            onclick={submitVerificationDone}
+          >
+            {pending ? "Checking…" : "I've completed verification"}
+          </button>
+        </div>
+      </div>
+    {/if}
+  {/if}
 </div>
 
 <style>
@@ -33,19 +361,100 @@
     align-items: center;
     gap: 12px;
     padding: 8px 2px;
-    text-align: center;
+  }
+  .provider-mark {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: #6d4aff;
+    color: #fff;
+    font-size: 19px;
+    font-weight: 700;
   }
   .proton-status {
     margin: 0;
     color: var(--text);
     font-size: 12px;
+    text-align: center;
   }
-  .ghost {
-    padding: 8px 15px;
-    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-    border-radius: 8px;
+  .proton-error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 11.5px;
+    text-align: center;
+  }
+  .proton-form,
+  .proton-verification {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+  .proton-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
     color: var(--muted);
+    font-size: 10px;
+    text-align: left;
+  }
+  .proton-field input {
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 11.5px;
+  }
+  .proton-field input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .proton-field input:disabled {
+    opacity: 0.65;
+  }
+  .proton-field input.proton-link {
+    font-size: 9.5px;
+  }
+  .proton-hint {
+    margin: 0;
+    color: var(--muted);
+    font-size: 10px;
+    text-align: left;
+  }
+  .proton-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding-top: 2px;
+  }
+  .proton-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 15px;
+    border-radius: 8px;
     font-size: 11px;
     font-weight: 650;
+  }
+  .proton-button.primary {
+    background: var(--accent);
+    color: var(--bg);
+  }
+  .proton-button.ghost {
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    color: var(--muted);
+  }
+  .proton-button.ghost:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
+  .proton-button:disabled {
+    cursor: default;
+    opacity: 0.6;
   }
 </style>
