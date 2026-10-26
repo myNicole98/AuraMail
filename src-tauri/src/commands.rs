@@ -1389,6 +1389,18 @@ pub async fn update_account(
             .into_iter()
             .find(|account| account.id == id)
             .ok_or_else(|| AppError::Message("account not found".into()))?;
+        if existing.auth_type == AccountAuth::Proton {
+            return accounts::update_proton_profile(
+                &db,
+                id,
+                &input.display_name,
+                &input.color,
+                &input.signature,
+                &input.signature_fields,
+                input.signature_on_new,
+                input.space_id,
+            );
+        }
         if existing.auth_type == AccountAuth::OAuth {
             let updated = accounts::update_profile(
                 &db,

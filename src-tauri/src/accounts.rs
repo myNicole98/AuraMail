@@ -209,17 +209,64 @@ impl OAuthAccountInput {
     }
 }
 
+#[derive(Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct ProtonAccountInput {
+    #[serde(default)]
+    pub display_name: String,
+    pub email: String,
+    pub username: String,
+    pub bridge_password: String,
+    pub imap_host: String,
+    pub imap_port: u16,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    #[serde(default)]
+    pub color: String,
+    #[serde(default)]
+    pub signature: String,
+    #[serde(default)]
+    pub signature_fields: SignatureFields,
+    pub space_id: i64,
+}
+
+impl ProtonAccountInput {
+    #[allow(dead_code)]
+    pub fn validate(&self) -> AppResult<()> {
+        for (name, value) in [
+            ("email", &self.email),
+            ("username", &self.username),
+            ("bridge password", &self.bridge_password),
+            ("IMAP host", &self.imap_host),
+            ("SMTP host", &self.smtp_host),
+        ] {
+            if value.trim().is_empty() {
+                return Err(AppError::Message(format!("{name} is required")));
+            }
+        }
+        if self.imap_port == 0 {
+            return Err(AppError::Message("IMAP port is required".into()));
+        }
+        if self.smtp_port == 0 {
+            return Err(AppError::Message("SMTP port is required".into()));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AccountAuth {
     #[default]
     Password,
     OAuth,
+    Proton,
 }
 
 fn parse_auth_type(value: &str) -> AccountAuth {
     match value {
         "oauth" => AccountAuth::OAuth,
+        "proton" => AccountAuth::Proton,
         _ => AccountAuth::Password,
     }
 }
@@ -462,6 +509,94 @@ pub fn create_oauth(
     })
 }
 
+#[allow(dead_code)]
+pub fn create_proton(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    input: ProtonAccountInput,
+) -> AppResult<Account> {
+    input.validate()?;
+    if find_by_email_ci(db, &input.email)?.is_some() {
+        return Err(AppError::Message("account already exists".into()));
+    }
+    let created_at = db::now();
+    let sync_interval_secs = sync_interval(db)?;
+    let color = account_color(&input.color);
+    let display_name = display_name_or_email(&input.display_name, &input.email);
+    let signature_fields = serde_json::to_string(&input.signature_fields)?;
+    let space_id = input.space_id;
+    spaces::by_id(db, space_id)?;
+
+    let (id, position) = {
+        let conn = db.conn.lock().unwrap();
+        let position: i64 = conn.query_row(
+            "select coalesce(max(position) + 1, 0) from accounts where space_id = ?1",
+            rusqlite::params![space_id],
+            |row| row.get(0),
+        )?;
+        let inserted = conn.execute(
+            "insert into accounts (display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, color, signature, signature_fields, signature_on_new, auth_type, oauth_provider, space_id, position, created_at) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            rusqlite::params![
+                display_name.clone(),
+                input.email,
+                input.username,
+                input.imap_host,
+                input.imap_port,
+                "plain",
+                input.smtp_host,
+                input.smtp_port,
+                "plain",
+                sync_interval_secs,
+                color.clone(),
+                input.signature,
+                signature_fields,
+                true,
+                "proton",
+                "",
+                space_id,
+                position,
+                created_at,
+            ],
+        );
+        if let Err(err) = inserted {
+            if is_unique_violation(&err) {
+                return Err(AppError::Message("account already exists".into()));
+            }
+            return Err(err.into());
+        }
+        (conn.last_insert_rowid(), position)
+    };
+
+    if let Err(err) = secrets.set(&account_key(id), &input.bridge_password) {
+        let conn = db.conn.lock().unwrap();
+        let _ = conn.execute("delete from accounts where id = ?1", rusqlite::params![id]);
+        return Err(err);
+    }
+
+    Ok(Account {
+        id,
+        display_name,
+        email: input.email,
+        username: input.username,
+        imap_host: input.imap_host,
+        imap_port: input.imap_port,
+        imap_security: "plain".into(),
+        smtp_host: input.smtp_host,
+        smtp_port: input.smtp_port,
+        smtp_security: "plain".into(),
+        color,
+        signature: input.signature,
+        signature_fields: input.signature_fields,
+        signature_on_new: true,
+        auth_type: AccountAuth::Proton,
+        oauth_provider: String::new(),
+        space_id,
+        position,
+        sync_interval_secs,
+        created_at,
+    })
+}
+
 pub fn update(
     db: &Database,
     secrets: &dyn SecretStore,
@@ -564,6 +699,34 @@ pub fn update_profile(
         .find(|account| account.id == id)
         .ok_or_else(|| AppError::Message("account not found".into()))?;
     Ok(account)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn update_proton_profile(
+    db: &Database,
+    id: i64,
+    display_name: &str,
+    color: &str,
+    signature: &str,
+    signature_fields: &SignatureFields,
+    signature_on_new: bool,
+    space_id: i64,
+) -> AppResult<Account> {
+    spaces::by_id(db, space_id)?;
+    let account = update_profile(
+        db,
+        id,
+        display_name,
+        color,
+        signature,
+        signature_fields,
+        signature_on_new,
+    )?;
+    if account.space_id == space_id {
+        Ok(account)
+    } else {
+        move_to_space(db, id, space_id)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1045,6 +1208,23 @@ mod tests {
         }
     }
 
+    fn proton_input(email: &str, space_id: i64) -> ProtonAccountInput {
+        ProtonAccountInput {
+            display_name: "Proton".into(),
+            email: email.into(),
+            username: email.into(),
+            bridge_password: "bridge-pass".into(),
+            imap_host: "127.0.0.1".into(),
+            imap_port: 1143,
+            smtp_host: "127.0.0.1".into(),
+            smtp_port: 1025,
+            color: "lavender".into(),
+            signature: "Sent from Proton".into(),
+            signature_fields: SignatureFields::default(),
+            space_id,
+        }
+    }
+
     #[test]
     fn parses_autoconfig_and_known_providers() {
         let xml = r#"<clientConfig><emailProvider>
@@ -1399,5 +1579,129 @@ mod tests {
         assert_eq!(reordered[0].position, 0);
         assert_eq!(reordered[1].position, 1);
         assert!(accounts::reorder(&db, personal.id, &[second.id]).is_err());
+    }
+
+    #[test]
+    fn parses_proton_auth_type() {
+        assert_eq!(super::parse_auth_type("proton"), AccountAuth::Proton);
+        assert_eq!(super::parse_auth_type("password"), AccountAuth::Password);
+        assert_eq!(super::parse_auth_type("oauth"), AccountAuth::OAuth);
+    }
+
+    #[test]
+    fn proton_account_serializes_auth_type_as_proton() {
+        let db = Database::open_memory().unwrap();
+        let secrets = MemoryStore::default();
+        let account =
+            accounts::create_proton(&db, &secrets, proton_input("me@proton.me", 1)).unwrap();
+
+        let serialized = serde_json::to_value(&account).unwrap();
+        assert_eq!(serialized["auth_type"], "proton");
+    }
+
+    #[test]
+    fn creates_a_proton_account_with_plaintext_bridge_settings() {
+        let db = Database::open_memory().unwrap();
+        let secrets = MemoryStore::default();
+        let account =
+            accounts::create_proton(&db, &secrets, proton_input("me@proton.me", 1)).unwrap();
+
+        assert_eq!(account.auth_type, AccountAuth::Proton);
+        assert_eq!(account.imap_security, "plain");
+        assert_eq!(account.smtp_security, "plain");
+        assert_eq!(
+            secrets.get(&account_key(account.id)).unwrap(),
+            "bridge-pass"
+        );
+
+        let stored: (String, String, String) = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "select auth_type, imap_security, smtp_security from accounts where id = ?1",
+                rusqlite::params![account.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(stored, ("proton".into(), "plain".into(), "plain".into()));
+    }
+
+    #[test]
+    fn proton_duplicate_email_is_case_insensitive() {
+        let db = Database::open_memory().unwrap();
+        let secrets = MemoryStore::default();
+        accounts::create_proton(&db, &secrets, proton_input("Me@Proton.me", 1)).unwrap();
+
+        let error =
+            accounts::create_proton(&db, &secrets, proton_input("me@proton.me", 1)).unwrap_err();
+        assert_eq!(error.to_string(), "account already exists");
+        assert_eq!(accounts::list(&db).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn proton_secret_failure_removes_inserted_row() {
+        let db = Database::open_memory().unwrap();
+        let result = accounts::create_proton(&db, &FailingStore, proton_input("me@proton.me", 1));
+
+        assert!(result.is_err());
+        assert!(accounts::list(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn updates_only_the_proton_profile_and_space() {
+        let db = Database::open_memory().unwrap();
+        let secrets = MemoryStore::default();
+        let personal = spaces::ensure_default(&db).unwrap();
+        let work = spaces::create(&db, "Work").unwrap();
+        let account =
+            accounts::create_proton(&db, &secrets, proton_input("me@proton.me", personal.id))
+                .unwrap();
+
+        let mut fields = SignatureFields::default();
+        fields.profession = "Engineer".into();
+        let updated = accounts::update_proton_profile(
+            &db,
+            account.id,
+            "Renamed",
+            "success",
+            "— new signature",
+            &fields,
+            false,
+            work.id,
+        )
+        .unwrap();
+
+        assert_eq!(updated.display_name, "Renamed");
+        assert_eq!(updated.color, "success");
+        assert_eq!(updated.signature, "— new signature");
+        assert_eq!(updated.signature_fields.profession, "Engineer");
+        assert!(!updated.signature_on_new);
+        assert_eq!(updated.space_id, work.id);
+        assert_eq!(updated.email, account.email);
+        assert_eq!(updated.username, account.username);
+        assert_eq!(updated.imap_host, account.imap_host);
+        assert_eq!(updated.imap_port, account.imap_port);
+        assert_eq!(updated.imap_security, "plain");
+        assert_eq!(updated.smtp_host, account.smtp_host);
+        assert_eq!(updated.smtp_port, account.smtp_port);
+        assert_eq!(updated.smtp_security, "plain");
+        assert_eq!(updated.auth_type, AccountAuth::Proton);
+        assert_eq!(
+            secrets.get(&account_key(account.id)).unwrap(),
+            "bridge-pass"
+        );
+    }
+
+    #[test]
+    fn manual_accounts_still_reject_plain_security() {
+        let mut manual = input();
+        manual.imap_security = "plain".into();
+        assert!(manual.validate().is_err());
+        assert!(manual.validate_update().is_err());
+
+        manual.imap_security = "tls".into();
+        manual.smtp_security = "plain".into();
+        assert!(manual.validate().is_err());
     }
 }

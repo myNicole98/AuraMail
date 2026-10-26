@@ -31,6 +31,9 @@ pub fn credential_for(
             let config = OAuthClientConfig::for_account(&account.oauth_provider)?;
             credential_for_with_config(account, secrets, &config)
         }
+        AccountAuth::Proton => Err(AppError::Message(
+            "Proton bridge is not available yet".into(),
+        )),
     }
 }
 
@@ -44,6 +47,9 @@ pub fn credential_for_with_config(
             secrets.get(&account_key(account.id))?,
         )),
         AccountAuth::OAuth => oauth_credential(account, secrets, config),
+        AccountAuth::Proton => Err(AppError::Message(
+            "Proton bridge is not available yet".into(),
+        )),
     }
 }
 
