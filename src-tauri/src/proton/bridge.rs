@@ -16,6 +16,7 @@ use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::secrets::SecretStore;
 
+use super::auth::ProtonAuthSessions;
 use super::ports::{self, BridgePorts};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -69,6 +70,7 @@ pub struct ProtonBridge {
     pub(crate) secrets: Arc<dyn SecretStore>,
     pub(crate) config_dir: PathBuf,
     pub(crate) sidecar: PathBuf,
+    pub(crate) auth: ProtonAuthSessions,
     shared: Arc<Shared>,
     start_lock: Mutex<()>,
 }
@@ -86,6 +88,7 @@ impl ProtonBridge {
             secrets,
             config_dir,
             sidecar,
+            auth: ProtonAuthSessions::new(),
             shared: Arc::new(Shared {
                 events,
                 state: Mutex::new(State::default()),
@@ -96,7 +99,12 @@ impl ProtonBridge {
 
     pub fn start_if_needed(&self) -> AppResult<Option<BridgePorts>> {
         let _guard = lock(&self.start_lock);
-        self.start_inner()
+        self.start_inner(false)
+    }
+
+    pub(crate) fn start_if_needed_for_auth(&self) -> AppResult<Option<BridgePorts>> {
+        let _guard = lock(&self.start_lock);
+        self.start_inner(true)
     }
 
     pub fn stop(&self) {
@@ -107,7 +115,13 @@ impl ProtonBridge {
     pub fn restart(&self) -> AppResult<()> {
         let _guard = lock(&self.start_lock);
         self.stop_inner();
-        self.start_inner().map(|_| ())
+        self.start_inner(false).map(|_| ())
+    }
+
+    pub(crate) fn restart_for_auth(&self) -> AppResult<()> {
+        let _guard = lock(&self.start_lock);
+        self.stop_inner();
+        self.start_inner(true).map(|_| ())
     }
 
     pub fn is_running(&self) -> bool {
@@ -126,7 +140,7 @@ impl ProtonBridge {
         lock(&self.shared.state).access_limited.clone()
     }
 
-    fn start_inner(&self) -> AppResult<Option<BridgePorts>> {
+    fn start_inner(&self, auth_bypass: bool) -> AppResult<Option<BridgePorts>> {
         let proton_accounts = self.proton_accounts()?;
         if proton_accounts.is_empty() {
             self.stop_inner();
@@ -135,7 +149,7 @@ impl ProtonBridge {
         if let Some(ports) = self.running_ports() {
             return Ok(Some(ports));
         }
-        if auth_lock_held(&self.config_dir)? {
+        if !auth_bypass && (self.auth.in_progress() || auth_lock_held(&self.config_dir)?) {
             return Err(AppError::Message("Proton sign-in in progress".into()));
         }
 
@@ -289,6 +303,27 @@ impl ProtonBridge {
         })?;
 
         self.stop();
+        let result = remove_auth_entry(&dir.join("auth.json"), username);
+        let _ = FileExt::unlock(&lock);
+        result
+    }
+
+    pub(crate) fn remove_stored_auth(&self, username: &str) -> AppResult<()> {
+        let dir = self.config_dir.join("hydroxide");
+        ensure_private_dir(&dir)?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(dir.join("auth.lock"))?;
+        lock.try_lock_exclusive().map_err(|error| {
+            if error.kind() == ErrorKind::WouldBlock {
+                AppError::Message("Proton sign-in in progress".into())
+            } else {
+                AppError::Io(error)
+            }
+        })?;
         let result = remove_auth_entry(&dir.join("auth.json"), username);
         let _ = FileExt::unlock(&lock);
         result

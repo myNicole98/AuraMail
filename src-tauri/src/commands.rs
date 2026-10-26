@@ -25,6 +25,7 @@ use crate::mail::{
 };
 use crate::mail_auth::MailCredential;
 use crate::oauth;
+use crate::proton::{ProtonAuthResponse, ProtonAuthStart, ProtonAuthStatus};
 use crate::secrets::{SecretStore, AI_KEY};
 use crate::smtp::{self, validate_smtp};
 use crate::spaces::{self, Space, SpaceDeleteAction};
@@ -1479,6 +1480,33 @@ pub async fn delete_account(state: State<'_, AppState>, id: i64) -> AppResult<()
     })
     .await
     .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
+pub async fn start_proton_login(request: ProtonAuthStart) -> AppResult<ProtonAuthStatus> {
+    let bridge = crate::proton::runtime::current()?;
+    tauri::async_runtime::spawn_blocking(move || bridge.start_login(request))
+        .await
+        .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
+pub async fn continue_proton_login(
+    login_id: String,
+    response: ProtonAuthResponse,
+) -> AppResult<ProtonAuthStatus> {
+    let bridge = crate::proton::runtime::current()?;
+    tauri::async_runtime::spawn_blocking(move || bridge.continue_login(&login_id, response))
+        .await
+        .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
+pub async fn cancel_proton_login(login_id: String) -> AppResult<()> {
+    let bridge = crate::proton::runtime::current()?;
+    tauri::async_runtime::spawn_blocking(move || bridge.cancel_login(&login_id))
+        .await
+        .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]

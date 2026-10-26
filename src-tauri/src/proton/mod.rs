@@ -1,12 +1,14 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+pub mod auth;
 pub mod bridge;
 pub mod ports;
 pub mod runtime;
 
 use tauri::{AppHandle, Emitter};
 
+pub use auth::{ProtonAuthResponse, ProtonAuthStart, ProtonAuthStatus};
 pub use bridge::{sidecar_path, ProtonAccessLimited, ProtonBridge, ProtonEvents};
 pub use ports::BridgePorts;
 
