@@ -181,7 +181,7 @@ type session struct {
 var ErrUnauthorized = errors.New("Invalid username or password")
 
 type Manager struct {
-	newClient func() *protonmail.Client
+	newClient func(username string) *protonmail.Client
 	sessions  map[string]*session
 }
 
@@ -220,7 +220,7 @@ func (m *Manager) Auth(username, password string) (*protonmail.Client, openpgp.E
 			return nil, nil, err
 		}
 
-		c := m.newClient()
+		c := m.newClient(username)
 		c.ReAuth = func() error {
 			if _, err := authenticate(c, &cachedAuth, username); err != nil {
 				return err
@@ -254,7 +254,7 @@ func (m *Manager) Auth(username, password string) (*protonmail.Client, openpgp.E
 	return s.c, s.privateKeys, nil
 }
 
-func NewManager(newClient func() *protonmail.Client) *Manager {
+func NewManager(newClient func(username string) *protonmail.Client) *Manager {
 	return &Manager{
 		newClient: newClient,
 		sessions:  make(map[string]*session),

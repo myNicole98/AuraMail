@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"codeberg.org/emersion/hydroxide/internal/authflow"
 	"codeberg.org/emersion/hydroxide/internal/protocol"
 	"codeberg.org/emersion/hydroxide/internal/realauth"
+	"codeberg.org/emersion/hydroxide/internal/serve"
 	"codeberg.org/emersion/hydroxide/internal/version"
 )
 
@@ -148,10 +150,36 @@ func emitAuthError(stdout, stderr io.Writer, message string) int {
 	return 1
 }
 
-// runServe is a placeholder for the IMAP/SMTP serve mode.
+// runServe starts the loopback IMAP and SMTP bridge.
 func runServe(args []string, stdout, stderr io.Writer) int {
-	fmt.Fprintln(stderr, "serve: not implemented yet")
-	return 1
+	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	imapPort := flags.Int("imap-port", 1143, "loopback IMAP port")
+	smtpPort := flags.Int("smtp-port", 1025, "loopback SMTP port")
+
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "serve: unexpected arguments")
+		return 2
+	}
+	if *imapPort < 0 || *imapPort > 65535 || *smtpPort < 0 || *smtpPort > 65535 {
+		fmt.Fprintln(stderr, "serve: ports must be between 0 and 65535")
+		return 2
+	}
+
+	err := serve.Run(context.Background(), serve.Config{
+		IMAPPort: *imapPort,
+		SMTPPort: *smtpPort,
+		Stdin:    os.Stdin,
+		Stdout:   stdout,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "serve: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // runLogout is a placeholder for removing a stored auth entry.

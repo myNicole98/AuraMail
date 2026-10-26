@@ -27,7 +27,7 @@ func (r *Receiver) receiveEvents() {
 	for {
 		event, err := r.c.GetEvent(last)
 		if err != nil {
-			log.Println("cannot receive event:", err)
+			log.Println("cannot receive event")
 			select {
 			case <-t.C:
 			case <-r.poll:
