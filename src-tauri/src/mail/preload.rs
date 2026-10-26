@@ -9,7 +9,6 @@ use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::imap::client;
 use crate::mail::{self, parse, render, MessageDetail};
-use crate::oauth;
 use crate::secrets::SecretStore;
 use crate::spaces;
 
@@ -61,7 +60,7 @@ pub fn load_detail(
     let account = account_by_id(db, message.account_id)?;
     let folder = mail::folder_by_id(db, message.folder_id)?
         .ok_or_else(|| AppError::Message("folder not found".into()))?;
-    let credential = oauth::credential_for(&account, secrets)?;
+    let credential = crate::mail_auth::credential_for(&account, secrets)?;
     let raw = client::fetch_message(&account, &credential, &folder.path, message.uid)?;
     let mut parsed = parse::parse_message(&raw);
     if let Some(html) = parsed.html_body.take() {

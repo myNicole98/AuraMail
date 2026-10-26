@@ -12,7 +12,6 @@ use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::imap::client;
 use crate::mail::{self, parse};
-use crate::oauth;
 use crate::secrets::SecretStore;
 
 const MAX_SYNC_BACKOFF_SECS: u64 = 15 * 60;
@@ -336,7 +335,7 @@ fn sync_account_inner(
     secrets: &dyn SecretStore,
     account: &Account,
 ) -> AppResult<SyncResult> {
-    let credential = oauth::credential_for(account, secrets)?;
+    let credential = crate::mail_auth::credential_for(account, secrets)?;
     let mut session = client::open_session(account, &credential)?;
     let remote_folders = client::list_folders(&mut session)?;
     let remote_paths: Vec<String> = remote_folders
@@ -392,7 +391,7 @@ fn sync_inbox_inner(
     secrets: &dyn SecretStore,
     account: &Account,
 ) -> AppResult<SyncResult> {
-    let credential = oauth::credential_for(account, secrets)?;
+    let credential = crate::mail_auth::credential_for(account, secrets)?;
     let mut session = client::open_session(account, &credential)?;
     let folders = mail::list_folders(db, Some(account.id), None)?
         .into_iter()

@@ -230,6 +230,10 @@ impl ProtonBridge {
         }
     }
 
+    pub(crate) fn has_proton_accounts(&self) -> AppResult<bool> {
+        Ok(!self.proton_accounts()?.is_empty())
+    }
+
     fn proton_accounts(&self) -> AppResult<Vec<Account>> {
         Ok(accounts::list(&self.db)?
             .into_iter()

@@ -210,7 +210,6 @@ impl OAuthAccountInput {
 }
 
 #[derive(Clone, Deserialize)]
-#[allow(dead_code)]
 pub struct ProtonAccountInput {
     #[serde(default)]
     pub display_name: String,
@@ -231,7 +230,6 @@ pub struct ProtonAccountInput {
 }
 
 impl ProtonAccountInput {
-    #[allow(dead_code)]
     pub fn validate(&self) -> AppResult<()> {
         for (name, value) in [
             ("email", &self.email),
@@ -509,7 +507,6 @@ pub fn create_oauth(
     })
 }
 
-#[allow(dead_code)]
 pub fn create_proton(
     db: &Database,
     secrets: &dyn SecretStore,

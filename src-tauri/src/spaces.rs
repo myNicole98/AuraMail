@@ -217,7 +217,13 @@ pub fn delete(
     }
     match action {
         SpaceDeleteAction::DeleteAccounts => {
-            for account in accounts::list_for_space(db, id)? {
+            let accounts = accounts::list_for_space(db, id)?;
+            let proton_usernames = accounts
+                .iter()
+                .filter(|account| account.auth_type == AccountAuth::Proton)
+                .map(|account| account.username.clone())
+                .collect::<Vec<_>>();
+            for account in accounts {
                 let refresh_token = if account.auth_type == AccountAuth::OAuth {
                     oauth::account::oauth_refresh_token(&account, secrets)
                 } else {
@@ -227,6 +233,10 @@ pub fn delete(
                 if let Some(token) = refresh_token {
                     oauth::account::revoke_account_token(&account, &token);
                 }
+            }
+            if !proton_usernames.is_empty() {
+                crate::proton::runtime::forget_accounts(&proton_usernames)?;
+                crate::proton::runtime::reconcile()?;
             }
         }
         SpaceDeleteAction::Migrate { target_space_id } => {

@@ -246,7 +246,7 @@ fn fetch_attachment_bytes(
     }
 
     let (message, folder, account) = message_context(db, attachment.message_id)?;
-    let credential = oauth::credential_for(&account, secrets)?;
+    let credential = crate::mail_auth::credential_for(&account, secrets)?;
     let raw = client::fetch_message(&account, &credential, &folder.path, message.uid)?;
     let parsed = parse::parse_message(&raw);
     let contents = attachment_position(&parsed.attachments, &attachment)
@@ -1428,7 +1428,7 @@ pub async fn update_account(
             || input.smtp_security != existing.smtp_security;
         if connection_changed {
             let credential = if input.password.trim().is_empty() {
-                oauth::credential_for(&existing, secrets.as_ref())?
+                crate::mail_auth::credential_for(&existing, secrets.as_ref())?
             } else {
                 MailCredential::Password(input.password.clone())
             };
@@ -1460,23 +1460,38 @@ pub async fn discover_account_settings(username: String) -> AppResult<accounts::
     accounts::discover(&username).await
 }
 
+fn delete_account_record(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    id: i64,
+) -> AppResult<()> {
+    let account = accounts::list(db)?
+        .into_iter()
+        .find(|account| account.id == id)
+        .ok_or_else(|| AppError::Message("account not found".into()))?;
+    let refresh_token = oauth::account::oauth_refresh_token(&account, secrets);
+    accounts::delete(db, secrets, id)?;
+    match account.auth_type {
+        AccountAuth::OAuth => {
+            if let Some(token) = refresh_token {
+                oauth::account::revoke_account_token(&account, &token);
+            }
+        }
+        AccountAuth::Proton => {
+            crate::proton::runtime::forget_account(&account.username)?;
+            crate::proton::runtime::reconcile()?;
+        }
+        AccountAuth::Password => {}
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn delete_account(state: State<'_, AppState>, id: i64) -> AppResult<()> {
     let db = Arc::clone(&state.db);
     let secrets = Arc::clone(&state.secrets);
     tauri::async_runtime::spawn_blocking(move || {
-        let account = accounts::list(&db)?
-            .into_iter()
-            .find(|account| account.id == id)
-            .ok_or_else(|| AppError::Message("account not found".into()))?;
-        let refresh_token = oauth::account::oauth_refresh_token(&account, secrets.as_ref());
-        accounts::delete(&db, secrets.as_ref(), id)?;
-        if account.auth_type == AccountAuth::OAuth {
-            if let Some(token) = refresh_token {
-                oauth::account::revoke_account_token(&account, &token);
-            }
-        }
-        Ok(())
+        delete_account_record(&db, secrets.as_ref(), id)
     })
     .await
     .map_err(|_| blocking_error())?
@@ -1845,7 +1860,7 @@ pub async fn mark_read(
     let secrets = Arc::clone(&state.secrets);
     tauri::async_runtime::spawn_blocking(move || {
         let (message, folder, account) = message_context(&db, message_id)?;
-        let credential = oauth::credential_for(&account, secrets.as_ref())?;
+        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         client::set_seen(&account, &credential, &folder.path, message.uid, read)?;
         mail::set_message_seen(&db, message_id, read)
     })
@@ -1859,7 +1874,7 @@ pub async fn toggle_star(state: State<'_, AppState>, message_id: i64) -> AppResu
     let secrets = Arc::clone(&state.secrets);
     tauri::async_runtime::spawn_blocking(move || {
         let (message, folder, account) = message_context(&db, message_id)?;
-        let credential = oauth::credential_for(&account, secrets.as_ref())?;
+        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         let starred = !message.is_starred;
         client::set_starred(&account, &credential, &folder.path, message.uid, starred)?;
         mail::set_message_starred(&db, message_id, starred)
@@ -1874,7 +1889,7 @@ pub async fn trash_message(state: State<'_, AppState>, message_id: i64) -> AppRe
     let secrets = Arc::clone(&state.secrets);
     tauri::async_runtime::spawn_blocking(move || {
         let (message, folder, account) = message_context(&db, message_id)?;
-        let credential = oauth::credential_for(&account, secrets.as_ref())?;
+        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         let trash = trash_destination(&folder.role, mail::trash_folder_path(&db, account.id)?)?;
         client::move_to_trash(&account, &credential, &folder.path, message.uid, &trash)?;
         mail::remove_message(&db, message_id)
@@ -1896,7 +1911,7 @@ pub async fn move_message_to_folder(
         let target = mail::folder_by_id(&db, folder_id)?
             .ok_or_else(|| AppError::Message("target folder not found".into()))?;
         validate_move_target(&folder, &target)?;
-        let credential = oauth::credential_for(&account, secrets.as_ref())?;
+        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         client::move_to_folder(&account, &credential, &folder.path, message.uid, &target.path)?;
         mail::remove_message(&db, message_id)
     })
@@ -1935,7 +1950,7 @@ pub async fn fill_message_snippets(
             if items.is_empty() {
                 continue;
             }
-            let Ok(credential) = oauth::credential_for(&account, secrets.as_ref()) else {
+            let Ok(credential) = crate::mail_auth::credential_for(&account, secrets.as_ref()) else {
                 continue;
             };
             let Ok(mut session) = client::open_session(&account, &credential) else {
@@ -1992,7 +2007,7 @@ pub async fn archive_message(state: State<'_, AppState>, message_id: i64) -> App
     let secrets = Arc::clone(&state.secrets);
     tauri::async_runtime::spawn_blocking(move || {
         let (message, folder, account) = message_context(&db, message_id)?;
-        let credential = oauth::credential_for(&account, secrets.as_ref())?;
+        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         let archive = mail::archive_folder_path(&db, account.id)?;
         let all = mail::all_folder_path(&db, account.id)?;
         client::archive(
@@ -2023,7 +2038,7 @@ pub async fn archive_thread(
             return Ok(());
         }
         let account = account_by_id(&db, account_id)?;
-        let credential = oauth::credential_for(&account, secrets.as_ref())?;
+        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         let archive = mail::archive_folder_path(&db, account_id)?;
         let all = mail::all_folder_path(&db, account_id)?;
         for message_id in ids {
@@ -2051,7 +2066,7 @@ pub async fn delete_message(state: State<'_, AppState>, message_id: i64) -> AppR
     tauri::async_runtime::spawn_blocking(move || {
         let (message, folder, account) = message_context(&db, message_id)?;
         ensure_trash_delete(&folder.role)?;
-        let credential = oauth::credential_for(&account, secrets.as_ref())?;
+        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         client::delete_permanently(&account, &credential, &folder.path, message.uid)?;
         mail::remove_message(&db, message_id)
     })
@@ -2069,7 +2084,7 @@ pub async fn send_message(
     let secrets = Arc::clone(&state.secrets);
     tauri::async_runtime::spawn_blocking(move || {
         let account = account_by_id(&db, input.account_id)?;
-        let credential = oauth::credential_for(&account, secrets.as_ref())?;
+        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         smtp::send(&account, &credential, &input)?;
         crate::desktop::play_sent_if_enabled(&db);
         if let Some(draft_id) = draft_id {
@@ -2329,13 +2344,23 @@ pub fn reload_theme(app: AppHandle) -> AppResult<Option<Base16Palette>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        attachment_position, cached_attachment, effective_full_body, ensure_trash_delete,
-        error_kind, parse_color_scheme, parse_dms_mode, preview_data_url, previewable_image,
-        reply_mail_context, trash_destination, validate_move_target, voice_samples,
+        attachment_position, cached_attachment, delete_account_record, effective_full_body,
+        ensure_trash_delete, error_kind, parse_color_scheme, parse_dms_mode, preview_data_url,
+        previewable_image, reply_mail_context, trash_destination, validate_move_target,
+        voice_samples,
     };
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    use tempfile::TempDir;
+
+    use crate::accounts::{self, Account, AccountInput, ProtonAccountInput, SignatureFields};
     use crate::db::Database;
     use crate::error::AppError;
     use crate::mail::{parse, Attachment, Message, MessageDetail};
+    use crate::proton::{runtime, ProtonAccessLimited, ProtonBridge, ProtonEvents};
+    use crate::secrets::{MemoryStore, SecretStore};
+    use crate::spaces::{self, SpaceDeleteAction};
 
     #[test]
     fn parses_system_color_scheme() {
@@ -2596,6 +2621,214 @@ mod tests {
             preview_data_url("image/png", b"abc"),
             "data:image/png;base64,YWJj"
         );
+    }
+
+    struct NoEvents;
+
+    impl ProtonEvents for NoEvents {
+        fn access_limited(&self, _status: ProtonAccessLimited) {}
+    }
+
+    struct ProtonFixture {
+        dir: TempDir,
+        db: Arc<Database>,
+        secrets: Arc<MemoryStore>,
+    }
+
+    impl ProtonFixture {
+        fn new() -> Self {
+            Self {
+                dir: tempfile::tempdir().unwrap(),
+                db: Arc::new(Database::open_memory().unwrap()),
+                secrets: Arc::new(MemoryStore::default()),
+            }
+        }
+
+        fn config_dir(&self) -> PathBuf {
+            self.dir.path().join("proton-bridge")
+        }
+
+        fn install(&self) -> Arc<ProtonBridge> {
+            let bridge = Arc::new(ProtonBridge::new(
+                Arc::new(NoEvents),
+                Arc::clone(&self.db),
+                Arc::clone(&self.secrets) as Arc<dyn SecretStore>,
+                self.config_dir(),
+                sidecar(),
+            ));
+            runtime::install(Arc::clone(&bridge));
+            bridge
+        }
+
+        fn add_proton(&self, email: &str, space_id: i64) -> Account {
+            let ports = crate::proton::ports::free_pair().unwrap();
+            accounts::create_proton(
+                &self.db,
+                self.secrets.as_ref(),
+                ProtonAccountInput {
+                    display_name: "Proton".into(),
+                    email: email.into(),
+                    username: email.into(),
+                    bridge_password: "bridge-password".into(),
+                    imap_host: "127.0.0.1".into(),
+                    imap_port: ports.imap,
+                    smtp_host: "127.0.0.1".into(),
+                    smtp_port: ports.smtp,
+                    color: "lavender".into(),
+                    signature: String::new(),
+                    signature_fields: SignatureFields::default(),
+                    space_id,
+                },
+            )
+            .unwrap()
+        }
+
+        fn add_password(&self, email: &str, space_id: i64) -> Account {
+            accounts::create(
+                &self.db,
+                self.secrets.as_ref(),
+                AccountInput {
+                    display_name: "Manual".into(),
+                    email: email.into(),
+                    username: email.into(),
+                    password: "p@ss".into(),
+                    imap_host: "imap.example.com".into(),
+                    imap_port: 993,
+                    imap_security: "tls".into(),
+                    smtp_host: "smtp.example.com".into(),
+                    smtp_port: 465,
+                    smtp_security: "tls".into(),
+                    color: "accent".into(),
+                    signature: String::new(),
+                    signature_fields: SignatureFields::default(),
+                    signature_on_new: true,
+                    space_id,
+                },
+            )
+            .unwrap()
+        }
+
+        fn write_auth(&self, entries: serde_json::Value) {
+            let hydroxide = self.config_dir().join("hydroxide");
+            std::fs::create_dir_all(&hydroxide).unwrap();
+            std::fs::write(hydroxide.join("auth.json"), entries.to_string()).unwrap();
+        }
+
+        fn auth_entries(&self) -> serde_json::Value {
+            let path = self.config_dir().join("hydroxide/auth.json");
+            match std::fs::read_to_string(path) {
+                Ok(contents) => serde_json::from_str(&contents).unwrap(),
+                Err(_) => serde_json::json!({}),
+            }
+        }
+
+        fn generation(&self) -> Option<String> {
+            std::fs::read_to_string(self.config_dir().join("sidecar-generation")).ok()
+        }
+    }
+
+    fn sidecar() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".local-tests/proton-bridge/fake-sidecar.sh")
+    }
+
+    #[test]
+    fn deleting_a_proton_account_forgets_its_auth_and_stops_the_bridge() {
+        let _guard = runtime::test_guard();
+        let fixture = ProtonFixture::new();
+        let bridge = fixture.install();
+        let space_id = crate::spaces::default_id(&fixture.db).unwrap();
+        let account = fixture.add_proton("me@proton.me", space_id);
+        fixture.write_auth(serde_json::json!({
+            "me@proton.me": "first",
+            "other@proton.me": "second",
+        }));
+        bridge.start_if_needed().unwrap().unwrap();
+
+        delete_account_record(&fixture.db, fixture.secrets.as_ref(), account.id).unwrap();
+
+        assert!(!bridge.is_running());
+        let entries = fixture.auth_entries();
+        assert_eq!(entries.get("me@proton.me"), None);
+        assert_eq!(entries["other@proton.me"], "second");
+        assert!(accounts::list(&fixture.db).unwrap().is_empty());
+        runtime::stop();
+    }
+
+    #[test]
+    fn deleting_a_non_last_proton_account_restarts_the_bridge() {
+        let _guard = runtime::test_guard();
+        let fixture = ProtonFixture::new();
+        let bridge = fixture.install();
+        let space_id = crate::spaces::default_id(&fixture.db).unwrap();
+        let first = fixture.add_proton("one@proton.me", space_id);
+        fixture.add_proton("two@proton.me", space_id);
+        fixture.write_auth(serde_json::json!({
+            "one@proton.me": "first",
+            "two@proton.me": "second",
+        }));
+        bridge.start_if_needed().unwrap().unwrap();
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+
+        delete_account_record(&fixture.db, fixture.secrets.as_ref(), first.id).unwrap();
+
+        assert!(bridge.is_running());
+        assert_eq!(fixture.generation().as_deref(), Some("2"));
+        let entries = fixture.auth_entries();
+        assert_eq!(entries.get("one@proton.me"), None);
+        assert_eq!(entries["two@proton.me"], "second");
+        runtime::stop();
+    }
+
+    #[test]
+    fn deleting_a_non_proton_account_leaves_the_bridge_running() {
+        let _guard = runtime::test_guard();
+        let fixture = ProtonFixture::new();
+        let bridge = fixture.install();
+        let space_id = crate::spaces::default_id(&fixture.db).unwrap();
+        fixture.add_proton("me@proton.me", space_id);
+        let manual = fixture.add_password("me@example.com", space_id);
+        bridge.start_if_needed().unwrap().unwrap();
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+
+        delete_account_record(&fixture.db, fixture.secrets.as_ref(), manual.id).unwrap();
+
+        assert!(bridge.is_running());
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+        assert_eq!(accounts::list(&fixture.db).unwrap().len(), 1);
+        runtime::stop();
+    }
+
+    #[test]
+    fn deleting_a_space_forgets_every_proton_account_once() {
+        let _guard = runtime::test_guard();
+        let fixture = ProtonFixture::new();
+        let bridge = fixture.install();
+        let work = spaces::create(&fixture.db, "Work").unwrap();
+        fixture.add_proton("one@proton.me", work.id);
+        fixture.add_proton("two@proton.me", work.id);
+        fixture.write_auth(serde_json::json!({
+            "one@proton.me": "first",
+            "two@proton.me": "second",
+        }));
+        bridge.start_if_needed().unwrap().unwrap();
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+
+        spaces::delete(
+            &fixture.db,
+            fixture.secrets.as_ref(),
+            work.id,
+            SpaceDeleteAction::DeleteAccounts,
+        )
+        .unwrap();
+
+        assert!(!bridge.is_running());
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+        assert_eq!(fixture.auth_entries(), serde_json::json!({}));
+        assert!(accounts::list(&fixture.db).unwrap().is_empty());
+        runtime::stop();
     }
 
 }

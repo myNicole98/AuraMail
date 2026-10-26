@@ -68,6 +68,23 @@ pub fn run() {
                 syncing: Arc::clone(&syncing),
                 oauth_flow: Arc::clone(&oauth_flow),
             });
+
+            let proton_dir = data_dir.join("proton-bridge");
+            let proton_sidecar = proton::sidecar_path().unwrap_or_else(|error| {
+                // Keep the bridge installed so Proton commands report a clear
+                // "unavailable in this build" error instead of silently
+                // disappearing from the app.
+                eprintln!("{error}");
+                proton_dir.join("auramail-proton-bridge-unavailable")
+            });
+            proton::runtime::install(Arc::new(proton::ProtonBridge::new(
+                Arc::new(proton::TauriProtonEvents::new(app.handle().clone())),
+                Arc::clone(&database),
+                Arc::clone(&secrets),
+                proton_dir,
+                proton_sidecar,
+            )));
+
             desktop::install_notification_actions(app.handle());
             if let Err(error) = theme::ensure_config(app.handle()) {
                 eprintln!("theme config initialization failed: {error}");
@@ -90,6 +107,9 @@ pub fn run() {
                         eprintln!("theme watcher failed to start: {error}");
                     }
                 }
+            }
+            if let Err(error) = proton::runtime::start_if_needed(&database) {
+                eprintln!("Proton bridge failed to start: {error}");
             }
             imap::sync::start_polling(app.handle().clone(), Arc::clone(&database), secrets, syncing);
             #[cfg(target_os = "linux")]
@@ -227,6 +247,11 @@ pub fn run() {
             commands::reload_theme,
             commands::open_external
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running AuraMail");
+        .build(tauri::generate_context!())
+        .expect("error while running AuraMail")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                proton::runtime::stop();
+            }
+        });
 }
