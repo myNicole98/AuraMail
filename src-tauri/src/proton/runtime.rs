@@ -78,6 +78,7 @@ pub fn reconcile() -> AppResult<()> {
     if bridge.has_proton_accounts()? {
         bridge.restart()
     } else {
+        bridge.shutdown_auth();
         bridge.stop();
         Ok(())
     }

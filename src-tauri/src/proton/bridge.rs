@@ -438,7 +438,7 @@ fn auth_lock_held(config_dir: &Path) -> AppResult<bool> {
     }
 }
 
-fn remove_auth_entry(path: &Path, username: &str) -> AppResult<()> {
+pub(crate) fn remove_auth_entry(path: &Path, username: &str) -> AppResult<()> {
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),

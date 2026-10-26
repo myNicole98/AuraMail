@@ -750,7 +750,16 @@ impl ProtonBridge {
             }
             Err(error) => {
                 if let Some(account_id) = rollback.created_account {
+                    let username = account_by_id(self, account_id)
+                        .ok()
+                        .map(|account| account.username);
                     let _ = accounts::delete(self.db.as_ref(), self.secrets.as_ref(), account_id);
+                    if let Some(username) = username {
+                        // The session still owns the auth lock here, so remove
+                        // the entry directly. The later snapshot restore keeps
+                        // its existing rollback semantics.
+                        let _ = super::bridge::remove_auth_entry(&session.auth_file, &username);
+                    }
                 }
                 self.fail_session(session, error)
             }

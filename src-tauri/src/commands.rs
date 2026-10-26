@@ -1469,6 +1469,11 @@ fn delete_account_record(
         .into_iter()
         .find(|account| account.id == id)
         .ok_or_else(|| AppError::Message("account not found".into()))?;
+    if account.auth_type == AccountAuth::Proton {
+        // Fail before mutating the database or keyring if a sign-in owns the
+        // auth lock; the account must stay intact for a retry.
+        crate::proton::runtime::forget_account(&account.username)?;
+    }
     let refresh_token = oauth::account::oauth_refresh_token(&account, secrets);
     accounts::delete(db, secrets, id)?;
     match account.auth_type {
@@ -1478,8 +1483,9 @@ fn delete_account_record(
             }
         }
         AccountAuth::Proton => {
-            crate::proton::runtime::forget_account(&account.username)?;
-            crate::proton::runtime::reconcile()?;
+            if let Err(error) = crate::proton::runtime::reconcile() {
+                eprintln!("Proton bridge reconcile failed after account deletion: {error}");
+            }
         }
         AccountAuth::Password => {}
     }
@@ -2359,7 +2365,7 @@ mod tests {
     use crate::error::AppError;
     use crate::mail::{parse, Attachment, Message, MessageDetail};
     use crate::proton::{runtime, ProtonAccessLimited, ProtonBridge, ProtonEvents};
-    use crate::secrets::{MemoryStore, SecretStore};
+    use crate::secrets::{account_key, MemoryStore, SecretStore};
     use crate::spaces::{self, SpaceDeleteAction};
 
     #[test]
@@ -2734,6 +2740,22 @@ mod tests {
             .join(".local-tests/proton-bridge/fake-sidecar.sh")
     }
 
+    fn hold_auth_lock(fixture: &ProtonFixture) -> std::fs::File {
+        use fs2::FileExt;
+
+        let hydroxide = fixture.config_dir().join("hydroxide");
+        std::fs::create_dir_all(&hydroxide).unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(hydroxide.join("auth.lock"))
+            .unwrap();
+        lock.lock_exclusive().unwrap();
+        lock
+    }
+
     #[test]
     fn deleting_a_proton_account_forgets_its_auth_and_stops_the_bridge() {
         let _guard = runtime::test_guard();
@@ -2783,6 +2805,28 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_proton_account_aborts_while_sign_in_holds_the_auth_lock() {
+        let _guard = runtime::test_guard();
+        let fixture = ProtonFixture::new();
+        fixture.install();
+        let space_id = crate::spaces::default_id(&fixture.db).unwrap();
+        let account = fixture.add_proton("me@proton.me", space_id);
+        let lock = hold_auth_lock(&fixture);
+
+        let error =
+            delete_account_record(&fixture.db, fixture.secrets.as_ref(), account.id).unwrap_err();
+
+        assert_eq!(error.to_string(), "Proton sign-in in progress");
+        assert_eq!(accounts::list(&fixture.db).unwrap().len(), 1);
+        assert_eq!(
+            fixture.secrets.get(&account_key(account.id)).unwrap(),
+            "bridge-password"
+        );
+        fs2::FileExt::unlock(&lock).unwrap();
+        runtime::stop();
+    }
+
+    #[test]
     fn deleting_a_non_proton_account_leaves_the_bridge_running() {
         let _guard = runtime::test_guard();
         let fixture = ProtonFixture::new();
@@ -2828,6 +2872,94 @@ mod tests {
         assert_eq!(fixture.generation().as_deref(), Some("1"));
         assert_eq!(fixture.auth_entries(), serde_json::json!({}));
         assert!(accounts::list(&fixture.db).unwrap().is_empty());
+        runtime::stop();
+    }
+
+    #[test]
+    fn deleting_a_space_aborts_while_sign_in_holds_the_auth_lock() {
+        let _guard = runtime::test_guard();
+        let fixture = ProtonFixture::new();
+        fixture.install();
+        let work = spaces::create(&fixture.db, "Work").unwrap();
+        let account = fixture.add_proton("me@proton.me", work.id);
+        let lock = hold_auth_lock(&fixture);
+
+        let error = spaces::delete(
+            &fixture.db,
+            fixture.secrets.as_ref(),
+            work.id,
+            SpaceDeleteAction::DeleteAccounts,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "Proton sign-in in progress");
+        assert!(spaces::by_id(&fixture.db, work.id).is_ok());
+        assert_eq!(accounts::list(&fixture.db).unwrap().len(), 1);
+        assert_eq!(
+            fixture.secrets.get(&account_key(account.id)).unwrap(),
+            "bridge-password"
+        );
+        fs2::FileExt::unlock(&lock).unwrap();
+        runtime::stop();
+    }
+
+    #[test]
+    fn deleting_a_space_with_other_proton_accounts_restarts_the_bridge() {
+        let _guard = runtime::test_guard();
+        let fixture = ProtonFixture::new();
+        let bridge = fixture.install();
+        let personal = crate::spaces::default_id(&fixture.db).unwrap();
+        let work = spaces::create(&fixture.db, "Work").unwrap();
+        fixture.add_proton("personal@proton.me", personal);
+        fixture.add_proton("work@proton.me", work.id);
+        fixture.write_auth(serde_json::json!({
+            "personal@proton.me": "personal-secret",
+            "work@proton.me": "work-secret",
+        }));
+        bridge.start_if_needed().unwrap().unwrap();
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+
+        spaces::delete(
+            &fixture.db,
+            fixture.secrets.as_ref(),
+            work.id,
+            SpaceDeleteAction::DeleteAccounts,
+        )
+        .unwrap();
+
+        assert!(bridge.is_running());
+        assert_eq!(fixture.generation().as_deref(), Some("2"));
+        assert_eq!(
+            fixture.auth_entries(),
+            serde_json::json!({"personal@proton.me": "personal-secret"})
+        );
+        assert_eq!(accounts::list(&fixture.db).unwrap().len(), 1);
+        runtime::stop();
+    }
+
+    #[test]
+    fn deleting_a_non_proton_space_leaves_the_bridge_running() {
+        let _guard = runtime::test_guard();
+        let fixture = ProtonFixture::new();
+        let bridge = fixture.install();
+        let personal = crate::spaces::default_id(&fixture.db).unwrap();
+        let work = spaces::create(&fixture.db, "Work").unwrap();
+        fixture.add_proton("personal@proton.me", personal);
+        fixture.add_password("work@example.com", work.id);
+        bridge.start_if_needed().unwrap().unwrap();
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+
+        spaces::delete(
+            &fixture.db,
+            fixture.secrets.as_ref(),
+            work.id,
+            SpaceDeleteAction::DeleteAccounts,
+        )
+        .unwrap();
+
+        assert!(bridge.is_running());
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+        assert_eq!(accounts::list(&fixture.db).unwrap().len(), 1);
         runtime::stop();
     }
 

@@ -223,6 +223,10 @@ pub fn delete(
                 .filter(|account| account.auth_type == AccountAuth::Proton)
                 .map(|account| account.username.clone())
                 .collect::<Vec<_>>();
+            if !proton_usernames.is_empty() {
+                // Fail before deleting rows if a sign-in owns the auth lock.
+                crate::proton::runtime::forget_accounts(&proton_usernames)?;
+            }
             for account in accounts {
                 let refresh_token = if account.auth_type == AccountAuth::OAuth {
                     oauth::account::oauth_refresh_token(&account, secrets)
@@ -235,8 +239,9 @@ pub fn delete(
                 }
             }
             if !proton_usernames.is_empty() {
-                crate::proton::runtime::forget_accounts(&proton_usernames)?;
-                crate::proton::runtime::reconcile()?;
+                if let Err(error) = crate::proton::runtime::reconcile() {
+                    eprintln!("Proton bridge reconcile failed after space deletion: {error}");
+                }
             }
         }
         SpaceDeleteAction::Migrate { target_space_id } => {
