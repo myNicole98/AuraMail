@@ -30,6 +30,8 @@ out="$script_dir/dist/auramail-proton-bridge"
 mkdir -p "$script_dir/dist"
 
 export CGO_ENABLED=0
+export GOOS=linux
+export GOARCH=amd64
 
 # Compile every vendored package so a broken patch fails the build, even when
 # the wrapper does not import every package yet.

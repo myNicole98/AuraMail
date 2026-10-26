@@ -21,7 +21,6 @@ type LabelType int
 
 const (
 	LabelMessage LabelType = 1
-	LabelContact LabelType = 2
 )
 
 type Label struct {
