@@ -39,11 +39,14 @@
   let mailboxPassword = $state("");
   let loginId = $state<string | null>(null);
   let verificationUrl = $state("");
+  let verificationMethods = $state<string[]>([]);
   let accessMessage = $state("");
   let appealUrl = $state("");
   let error = $state<string | null>(null);
+  let browserError = $state<string | null>(null);
   let pending = $state(false);
   let completed = $state(false);
+  let disposed = false;
 
   const missingAccount = $derived(mode === "reconnect" && !account);
   const statusText = $derived(
@@ -64,10 +67,28 @@
 
   function openUrl(url: string): void {
     if (!url) return;
-    void api.openExternal(url).catch(() => {});
+    browserError = null;
+    void (async () => {
+      try {
+        await api.openExternal(url);
+      } catch {
+        browserError = "Could not open the browser.";
+      }
+    })();
+  }
+
+  function cancelSession(id: string | null): void {
+    if (id && !completed) void api.cancelProtonLogin(id).catch(() => {});
+  }
+
+  function cancelReturned(status: ProtonAuthStatus): void {
+    if ("loginId" in status) cancelSession(status.loginId);
   }
 
   function applyStatus(status: ProtonAuthStatus): void {
+    if (disposed) return;
+    browserError = null;
+
     if (status.status === "complete") {
       if (completed) return;
       completed = true;
@@ -95,15 +116,16 @@
     loginId = status.loginId;
     error = status.error;
     password = "";
+    if (status.status !== "needsTotp") code = "";
+    if (status.status !== "needsMailboxPassword") mailboxPassword = "";
     if (status.status === "needsTotp") {
-      if (step !== "totp") code = "";
       step = "totp";
     } else if (status.status === "needsMailboxPassword") {
-      if (step !== "mailboxPassword") mailboxPassword = "";
       step = "mailboxPassword";
     } else {
       step = "verification";
       verificationUrl = status.url;
+      verificationMethods = status.methods;
     }
   }
 
@@ -131,9 +153,14 @@
               username: user,
               password
             };
-      applyStatus(await api.startProtonLogin(request));
+      const status = await api.startProtonLogin(request);
+      if (disposed) {
+        cancelReturned(status);
+        return;
+      }
+      applyStatus(status);
     } catch (caught) {
-      error = errorMessage(caught);
+      if (!disposed) error = errorMessage(caught);
     } finally {
       pending = false;
     }
@@ -145,9 +172,14 @@
     pending = true;
     error = null;
     try {
-      applyStatus(await api.continueProtonLogin(id, response));
+      const status = await api.continueProtonLogin(id, response);
+      if (disposed) {
+        cancelReturned(status);
+        return;
+      }
+      applyStatus(status);
     } catch (caught) {
-      error = errorMessage(caught);
+      if (!disposed) error = errorMessage(caught);
     } finally {
       pending = false;
     }
@@ -168,14 +200,18 @@
   }
 
   function cancel(): void {
+    disposed = true;
     const id = loginId;
     loginId = null;
-    if (id && !completed) void api.cancelProtonLogin(id).catch(() => {});
+    cancelSession(id);
     onCancel();
   }
 
   onDestroy(() => {
-    if (loginId && !completed) void api.cancelProtonLogin(loginId).catch(() => {});
+    disposed = true;
+    const id = loginId;
+    loginId = null;
+    cancelSession(id);
   });
 </script>
 
@@ -183,7 +219,7 @@
   <div class="provider-mark proton" aria-hidden="true">P</div>
 
   {#if missingAccount}
-    <p class="proton-status" role="status" aria-live="polite">
+    <p class="proton-status" role="status">
       Select a Proton account to reconnect.
     </p>
     <div class="proton-actions">
@@ -192,25 +228,31 @@
       </button>
     </div>
   {:else if step === "accessLimited"}
-    <p class="proton-error" role="alert" aria-live="assertive">{accessMessage}</p>
+    <p class="proton-error" role="alert">{accessMessage}</p>
+    {#if browserError}
+      <p class="proton-error" role="alert">{browserError}</p>
+    {/if}
+    <a
+      class="proton-appeal"
+      href={appealUrl}
+      onclick={(event) => {
+        event.preventDefault();
+        openUrl(appealUrl);
+      }}
+    >
+      Appeal access limitation
+    </a>
     <div class="proton-actions">
-      <button
-        type="button"
-        class="proton-button ghost"
-        onclick={() => openUrl(appealUrl)}
-      >
-        Appeal access limitation
-      </button>
       <button type="button" class="proton-button ghost" onclick={cancel}>
         Cancel
       </button>
     </div>
   {:else if completed}
-    <p class="proton-status" role="status" aria-live="polite">Connected.</p>
+    <p class="proton-status" role="status">Connected.</p>
   {:else}
-    <p class="proton-status" role="status" aria-live="polite">{statusText}</p>
+    <p class="proton-status" role="status">{statusText}</p>
     {#if error}
-      <p class="proton-error" role="alert" aria-live="assertive">{error}</p>
+      <p class="proton-error" role="alert">{error}</p>
     {/if}
 
     {#if step === "credentials"}
@@ -238,7 +280,7 @@
           <input
             type="password"
             bind:value={password}
-            autocomplete="new-password"
+            autocomplete="current-password"
             disabled={pending}
           />
         </label>
@@ -266,6 +308,7 @@
             inputmode="numeric"
             autocomplete="one-time-code"
             disabled={pending}
+            oninput={() => (error = null)}
           />
         </label>
         <div class="proton-actions">
@@ -296,6 +339,7 @@
             bind:value={mailboxPassword}
             autocomplete="new-password"
             disabled={pending}
+            oninput={() => (error = null)}
           />
         </label>
         <p class="proton-hint">
@@ -328,6 +372,9 @@
         </label>
         <p class="proton-hint">
           Open the link, complete the check, then come back here.
+          {#if verificationMethods.length > 0}
+            Available methods: {verificationMethods.join(", ")}.
+          {/if}
         </p>
         <button
           type="button"
@@ -336,6 +383,9 @@
         >
           Open verification page
         </button>
+        {#if browserError}
+          <p class="proton-error" role="alert">{browserError}</p>
+        {/if}
         <div class="proton-actions">
           <button type="button" class="proton-button ghost" onclick={cancel}>
             Cancel
@@ -424,6 +474,16 @@
     color: var(--muted);
     font-size: 10px;
     text-align: left;
+  }
+  .proton-appeal {
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 650;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .proton-appeal:hover {
+    color: var(--text-strong);
   }
   .proton-actions {
     display: flex;
