@@ -19,6 +19,15 @@
 #   Proton error text is never written to stderr.
 #   auth/auth.go: create and chmod the encrypted auth file as 0600. Upstream
 #   uses os.Create, which leaves new files at 0644.
+#   imap/database: persist per-mailbox UIDVALIDITY and UIDNEXT in bbolt and
+#   allocate message UIDs from that metadata. The upstream cache reset on every
+#   IMAP session renumbered UIDs; forcing a full resync now increments
+#   UIDVALIDITY instead.
+#   imap/mailbox.go: after paging the full mailbox, reconcile the UID map
+#   against the remote API IDs so messages deleted while offline disappear
+#   without renumbering survivors.
+#   imap/mailbox.go: expose the persisted UIDVALIDITY. MOVE remains a
+#   label/unlabel operation and never falls back to COPY + STORE + EXPUNGE.
 #
 # Builds only read these local files. They never clone, pull, or otherwise
 # fetch upstream Hydroxide. Updating the snapshot is a deliberate re-vendoring

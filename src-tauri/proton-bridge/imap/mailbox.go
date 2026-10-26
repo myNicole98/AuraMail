@@ -88,7 +88,11 @@ func (mbox *mailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, error
 			}
 			status.UidNext = uidNext
 		case imap.StatusUidValidity:
-			status.UidValidity = 1
+			uidValidity, err := mbox.db.UidValidity()
+			if err != nil {
+				return nil, err
+			}
+			status.UidValidity = uidValidity
 		case imap.StatusRecent:
 			status.Recent = 0
 		case imap.StatusUnseen:
@@ -110,11 +114,6 @@ func (mbox *mailbox) Check() error {
 func (mbox *mailbox) sync() error {
 	log.Printf("Synchronizing mailbox %v...", mbox.name)
 
-	// TODO: don't do this without incrementing UIDVALIDITY
-	if err := mbox.db.Reset(); err != nil {
-		return err
-	}
-
 	filter := &protonmail.MessageFilter{
 		PageSize: 150,
 		Label:    mbox.label,
@@ -123,6 +122,7 @@ func (mbox *mailbox) sync() error {
 	}
 
 	total := -1
+	var apiIDs []string
 	for {
 		offset := filter.PageSize * filter.Page
 		if total >= 0 && offset > total {
@@ -140,7 +140,15 @@ func (mbox *mailbox) sync() error {
 			return err
 		}
 
+		for _, msg := range page {
+			apiIDs = append(apiIDs, msg.ID)
+		}
+
 		filter.Page++
+	}
+
+	if err := mbox.db.Reconcile(apiIDs); err != nil {
+		return err
 	}
 
 	log.Printf("Synchronizing mailbox %v: done.", mbox.name)

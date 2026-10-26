@@ -63,7 +63,10 @@ func (u *User) Mailbox(labelID string) (*Mailbox, error) {
 		if err != nil {
 			return err
 		}
-		_, err = b.CreateBucketIfNotExists([]byte(labelID))
+		if _, err := b.CreateBucketIfNotExists([]byte(labelID)); err != nil {
+			return err
+		}
+		_, err = ensureMailboxMetadata(tx, labelID)
 		return err
 	})
 	if err != nil {
@@ -116,7 +119,7 @@ func (u *User) CreateMessage(msg *protonmail.Message) (seqNums map[string]uint32
 				return err
 			}
 
-			seqNum, err := mailboxCreateMessage(mbox, msg.ID)
+			seqNum, err := mailboxCreateMessage(tx, mbox, labelID, msg.ID)
 			if err != nil {
 				return err
 			}
@@ -154,7 +157,7 @@ func (u *User) UpdateMessage(apiID string, update *protonmail.EventMessageUpdate
 				return err
 			}
 
-			seqNum, err := mailboxCreateMessage(mbox, apiID)
+			seqNum, err := mailboxCreateMessage(tx, mbox, labelID, apiID)
 			if err != nil {
 				return err
 			}
