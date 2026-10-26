@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run --config .local-tests/vitest.config.ts",
     "tauri": "tauri"
   },
   "dependencies": {
