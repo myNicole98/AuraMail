@@ -6,10 +6,12 @@
   let {
     onGoogle,
     onMicrosoft,
+    onProton,
     onManual
   }: {
     onGoogle: () => void;
     onMicrosoft: () => void;
+    onProton?: () => void;
     onManual: () => void;
   } = $props();
 
@@ -81,6 +83,11 @@
     {/if}
   </div>
 
+  <button type="button" class="provider-button" onclick={() => onProton?.()}>
+    <span class="provider-mark proton" aria-hidden="true">P</span>
+    <span class="provider-name">Proton</span>
+  </button>
+
   <button type="button" class="provider-button" onclick={onManual}>
     <span class="provider-mark" aria-hidden="true">@</span>
     <span class="provider-name">IMAP/SMTP</span>
@@ -135,6 +142,10 @@
   }
   .provider-mark.google {
     background: #fff;
+  }
+  .provider-mark.proton {
+    background: #6d4aff;
+    color: #fff;
   }
   .provider-logo {
     width: 18px;

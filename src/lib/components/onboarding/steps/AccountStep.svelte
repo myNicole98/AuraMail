@@ -10,6 +10,7 @@
   import { errorMessage } from "../../settings/errors";
   import OAuthSignIn from "../../account/OAuthSignIn.svelte";
   import ProviderChooser from "../../account/ProviderChooser.svelte";
+  import ProtonSignIn from "../../account/ProtonSignIn.svelte";
   import StepHeader from "../StepHeader.svelte";
 
   let {
@@ -22,7 +23,9 @@
     onSkip: () => void;
   } = $props();
 
-  let mode = $state<"choose" | "manual" | "google" | "microsoft">("choose");
+  let mode = $state<"choose" | "manual" | "google" | "microsoft" | "proton">(
+    "choose"
+  );
   const defaultSpaceId = $derived(
     app.spaces.find((space) => space.name.toLowerCase() === "default")?.id ??
       activeSpaceId() ??
@@ -149,6 +152,10 @@
     mode = "microsoft";
   }
 
+  function chooseProton() {
+    mode = "proton";
+  }
+
   function chooseProvider() {
     mode = "choose";
   }
@@ -171,6 +178,7 @@
     <ProviderChooser
       onGoogle={chooseGoogle}
       onMicrosoft={chooseMicrosoft}
+      onProton={chooseProton}
       onManual={chooseManual}
     />
     <div class="actions">
@@ -192,6 +200,13 @@
       <span class="spacer"></span>
       <button class="ghost" type="button" onclick={chooseProvider}>Change method</button>
     </div>
+  {:else if mode === "proton"}
+    <ProtonSignIn
+      mode="add"
+      spaceId={defaultSpaceId}
+      onCancel={chooseProvider}
+      onConnected={onOAuthConnected}
+    />
   {:else}
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <div class="form-grid">

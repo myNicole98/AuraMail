@@ -34,6 +34,9 @@ import type {
   MessageQuery,
   MessageSnippet,
   OAuthUiStatus,
+  ProtonAuthResponse,
+  ProtonAuthStart,
+  ProtonAuthStatus,
   Space,
   SpaceUnread,
   Tab,
@@ -86,6 +89,12 @@ export const api = {
   reconnectMicrosoftAccount: (id: number) =>
     invoke<Account>("reconnect_microsoft_account", { id }),
   cancelMicrosoftOAuth: () => invoke<void>("cancel_microsoft_oauth"),
+  startProtonLogin: (request: ProtonAuthStart) =>
+    invoke<ProtonAuthStatus>("start_proton_login", { request }),
+  continueProtonLogin: (loginId: string, response: ProtonAuthResponse) =>
+    invoke<ProtonAuthStatus>("continue_proton_login", { loginId, response }),
+  cancelProtonLogin: (loginId: string) =>
+    invoke<void>("cancel_proton_login", { loginId }),
   setSyncInterval: (seconds: number) =>
     invoke<Account[]>("set_sync_interval", { seconds }),
   getFastSyncInterval: () => invoke<number>("get_fast_sync_interval"),

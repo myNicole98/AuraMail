@@ -83,7 +83,7 @@ export type Account = {
   signature: string;
   signature_fields: SignatureFields;
   signature_on_new: boolean;
-  auth_type: "password" | "oauth";
+  auth_type: "password" | "oauth" | "proton";
   oauth_provider: string;
   space_id: number;
   position: number;
@@ -382,6 +382,35 @@ export type OAuthUiStatus = {
   phase: "waiting" | "connecting";
   url?: string | null;
 };
+
+export type ProtonAuthStart =
+  | { mode: "add"; spaceId: number; username: string; password: string }
+  | { mode: "reconnect"; accountId: number; username: string; password: string };
+
+export type ProtonAuthResponse =
+  | { type: "totp"; value: string }
+  | { type: "mailboxPassword"; value: string }
+  | { type: "verificationDone" }
+  | { type: "captchaToken"; value: string };
+
+export type ProtonAccessLimited = {
+  status: "accessLimited";
+  message: string;
+  appealUrl: string;
+};
+
+export type ProtonAuthStatus =
+  | { status: "needsTotp"; loginId: string; error: string | null }
+  | { status: "needsMailboxPassword"; loginId: string; error: string | null }
+  | {
+      status: "needsVerification";
+      loginId: string;
+      url: string;
+      methods: string[];
+      error: string | null;
+    }
+  | ProtonAccessLimited
+  | { status: "complete"; account: Account };
 
 export type SyncFolderStatus = {
   accountId: number;
