@@ -9,7 +9,7 @@
       devShells.${system}.default = pkgs.mkShell {
         packages = with pkgs; [
           rustc cargo rustfmt clippy
-          nodejs_22 pkg-config openssl
+          nodejs_22 pkg-config openssl go
           gtk3 webkitgtk_4_1 libsoup_3 glib cairo pango
           gdk-pixbuf atk librsvg glib-networking
           gsettings-desktop-schemas libayatana-appindicator
