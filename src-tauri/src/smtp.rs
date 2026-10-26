@@ -4,9 +4,10 @@ use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{SmtpTransport, Transport};
 
-use crate::accounts::{Account, MailSecurity};
+use crate::accounts::{Account, AccountAuth, MailSecurity};
 use crate::compose::{self, ComposeInput};
 use crate::error::{AppError, AppResult};
+use crate::imap::client::proton_host_allowed;
 use crate::mail_auth::MailCredential;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -48,6 +49,65 @@ fn transport(
     Ok(builder.build())
 }
 
+/// Proton Bridge accepts plaintext only on loopback, so no TLS is negotiated.
+pub fn proton_smtp_transport(
+    host: &str,
+    port: u16,
+    username: &str,
+    credential: &MailCredential,
+    timeout: Duration,
+) -> AppResult<SmtpTransport> {
+    if host.trim().is_empty() {
+        return Err(AppError::Message("SMTP host is required".into()));
+    }
+    if port == 0 {
+        return Err(AppError::Message("SMTP port is required".into()));
+    }
+    if !proton_host_allowed(host) {
+        return Err(AppError::Message(
+            "Proton Bridge must be reached over loopback".into(),
+        ));
+    }
+
+    let mut builder = SmtpTransport::builder_dangerous(host)
+        .port(port)
+        .tls(Tls::None)
+        .credentials(Credentials::new(
+            username.into(),
+            credential.secret().into(),
+        ))
+        .timeout(Some(timeout));
+    if let Some(mechanisms) = smtp_mechanisms(credential) {
+        builder = builder.authentication(mechanisms);
+    }
+    Ok(builder.build())
+}
+
+fn account_transport(
+    account: &Account,
+    credential: &MailCredential,
+    timeout: Duration,
+) -> AppResult<SmtpTransport> {
+    if account.auth_type == AccountAuth::Proton {
+        return proton_smtp_transport(
+            &account.smtp_host,
+            account.smtp_port,
+            &account.username,
+            credential,
+            timeout,
+        );
+    }
+    let security = MailSecurity::parse(&account.smtp_security)?;
+    transport(
+        &account.smtp_host,
+        account.smtp_port,
+        security,
+        &account.username,
+        credential,
+        timeout,
+    )
+}
+
 pub fn validate_smtp(
     host: &str,
     port: u16,
@@ -55,8 +115,25 @@ pub fn validate_smtp(
     username: &str,
     credential: &MailCredential,
 ) -> AppResult<()> {
-    let transport = transport(host, port, security, username, credential, TIMEOUT)?;
+    check_transport(transport(
+        host, port, security, username, credential, TIMEOUT,
+    )?)
+}
 
+/// Validates a Proton Bridge SMTP endpoint over plaintext loopback.
+#[allow(dead_code)]
+pub fn validate_proton_smtp(
+    host: &str,
+    port: u16,
+    username: &str,
+    credential: &MailCredential,
+) -> AppResult<()> {
+    check_transport(proton_smtp_transport(
+        host, port, username, credential, TIMEOUT,
+    )?)
+}
+
+fn check_transport(transport: SmtpTransport) -> AppResult<()> {
     match transport.test_connection() {
         Ok(true) => Ok(()),
         Ok(false) => Err(AppError::Message("SMTP connection failed".into())),
@@ -70,15 +147,7 @@ pub fn send(
     input: &ComposeInput,
 ) -> AppResult<()> {
     let message = compose::build(input, &account.email)?;
-    let security = MailSecurity::parse(&account.smtp_security)?;
-    let transport = transport(
-        &account.smtp_host,
-        account.smtp_port,
-        security,
-        &account.username,
-        credential,
-        SEND_TIMEOUT,
-    )?;
+    let transport = account_transport(account, credential, SEND_TIMEOUT)?;
     transport.send(&message).map_err(safe_smtp_error)?;
     Ok(())
 }
@@ -145,6 +214,15 @@ mod tests {
             sync_interval_secs: 120,
             created_at: 0,
         }
+    }
+
+    fn proton_account() -> Account {
+        let mut proton = account();
+        proton.auth_type = crate::accounts::AccountAuth::Proton;
+        proton.smtp_host = "127.0.0.1".into();
+        proton.smtp_port = 1025;
+        proton.smtp_security = "plain".into();
+        proton
     }
 
     fn input() -> ComposeInput {
@@ -222,5 +300,58 @@ mod tests {
         );
         let password = MailCredential::Password("secret".into());
         assert_eq!(smtp_mechanisms(&password), None);
+    }
+
+    #[test]
+    fn proton_smtp_transport_accepts_only_loopback_hosts() {
+        let credential = MailCredential::Password("bridge-pass".into());
+        for host in ["127.0.0.1", "::1", "localhost"] {
+            assert!(
+                proton_smtp_transport(host, 1025, "me@example.com", &credential, TIMEOUT).is_ok(),
+                "expected {host} to be accepted"
+            );
+        }
+        let error = proton_smtp_transport(
+            "smtp.example.com",
+            1025,
+            "me@example.com",
+            &credential,
+            TIMEOUT,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Proton Bridge must be reached over loopback"
+        );
+        assert!(proton_smtp_transport("", 1025, "me@example.com", &credential, TIMEOUT).is_err());
+        assert!(
+            proton_smtp_transport("127.0.0.1", 0, "me@example.com", &credential, TIMEOUT).is_err()
+        );
+    }
+
+    #[test]
+    fn selects_the_proton_transport_only_for_proton_accounts() {
+        let credential = MailCredential::Password("bridge-pass".into());
+        assert!(account_transport(&proton_account(), &credential, TIMEOUT).is_ok());
+
+        let mut manual = account();
+        manual.smtp_security = "plain".into();
+        let error = account_transport(&manual, &credential, TIMEOUT).unwrap_err();
+        assert_eq!(error.to_string(), "security must be tls or starttls");
+
+        assert!(account_transport(&account(), &credential, TIMEOUT).is_ok());
+    }
+
+    #[test]
+    fn proton_smtp_validation_refuses_non_loopback_before_connecting() {
+        let credential = MailCredential::Password("bridge-pass".into());
+        let error = validate_proton_smtp("smtp.example.com", 1025, "me@example.com", &credential)
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Proton Bridge must be reached over loopback"
+        );
+        assert!(validate_proton_smtp("", 1025, "me@example.com", &credential).is_err());
+        assert!(validate_proton_smtp("127.0.0.1", 0, "me@example.com", &credential).is_err());
     }
 }

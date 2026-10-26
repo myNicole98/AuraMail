@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
@@ -6,7 +6,7 @@ use imap::types::NameAttribute;
 use native_tls::{TlsConnector, TlsStream};
 use serde::Serialize;
 
-use crate::accounts::{Account, MailSecurity};
+use crate::accounts::{Account, AccountAuth, MailSecurity};
 use crate::error::{AppError, AppResult};
 use crate::mail_auth::MailCredential;
 
@@ -15,7 +15,59 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// Raw messages above this size are refused so opening mail cannot exhaust memory.
 const MAX_MESSAGE_BYTES: u64 = 60 * 1024 * 1024;
 
-pub(crate) type ImapSession = imap::Session<TlsStream<TcpStream>>;
+#[derive(Debug)]
+pub enum ImapStream {
+    Tls(TlsStream<TcpStream>),
+    Plain(TcpStream),
+}
+
+impl Read for ImapStream {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Tls(stream) => stream.read(buffer),
+            Self::Plain(stream) => stream.read(buffer),
+        }
+    }
+}
+
+impl Write for ImapStream {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Tls(stream) => stream.write(buffer),
+            Self::Plain(stream) => stream.write(buffer),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Tls(stream) => stream.flush(),
+            Self::Plain(stream) => stream.flush(),
+        }
+    }
+}
+
+pub type ImapSession = imap::Session<ImapStream>;
+
+/// Proton Bridge only listens on the local machine; plaintext never leaves it.
+pub fn proton_host_allowed(host: &str) -> bool {
+    let host = host.trim();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    host == "127.0.0.1" || host == "::1" || host.eq_ignore_ascii_case("localhost")
+}
+
+pub fn proton_move_command(uid: u32, target: &str) -> String {
+    format!("UID MOVE {uid} {}", quoted(target))
+}
+
+pub fn proton_delete_command(uid: u32) -> [String; 2] {
+    [
+        format!("UID STORE {uid} +FLAGS (\\Deleted)"),
+        "EXPUNGE".to_string(),
+    ]
+}
 
 struct OAuth2Authenticator<'a> {
     user: &'a str,
@@ -61,6 +113,35 @@ pub fn validate_imap(
     username: &str,
     credential: &MailCredential,
 ) -> AppResult<()> {
+    validate_with(
+        host,
+        port,
+        AccountAuth::Password,
+        Some(security),
+        username,
+        credential,
+    )
+}
+
+/// Validates a Proton Bridge endpoint over plaintext loopback.
+#[allow(dead_code)]
+pub fn validate_proton_imap(
+    host: &str,
+    port: u16,
+    username: &str,
+    credential: &MailCredential,
+) -> AppResult<()> {
+    validate_with(host, port, AccountAuth::Proton, None, username, credential)
+}
+
+fn validate_with(
+    host: &str,
+    port: u16,
+    auth_type: AccountAuth,
+    security: Option<MailSecurity>,
+    username: &str,
+    credential: &MailCredential,
+) -> AppResult<()> {
     if host.trim().is_empty() {
         return Err(AppError::Message("IMAP host is required".into()));
     }
@@ -68,47 +149,8 @@ pub fn validate_imap(
         return Err(AppError::Message("IMAP port is required".into()));
     }
 
-    let tcp = connect_tcp(host, port)?;
-    let tls = TlsConnector::builder()
-        .build()
-        .map_err(|_| AppError::Message("IMAP TLS configuration failed".into()))?;
-
-    let client = match security {
-        MailSecurity::Tls => {
-            let stream = tls
-                .connect(host, tcp)
-                .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?;
-            let mut client = imap::Client::new(stream);
-            client
-                .read_greeting()
-                .map_err(|_| AppError::Message("IMAP connection failed".into()))?;
-            client
-        }
-        MailSecurity::StartTls => {
-            let mut client = imap::Client::new(tcp);
-            client
-                .read_greeting()
-                .map_err(|_| AppError::Message("IMAP connection failed".into()))?;
-            client
-                .secure(host, &tls)
-                .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?
-        }
-    };
-
-    let mut session = match credential {
-        MailCredential::Password(password) => client
-            .login(username, password)
-            .map_err(|_| AppError::Message("IMAP authentication failed".into())),
-        MailCredential::AccessToken(token) => client
-            .authenticate(
-                "XOAUTH2",
-                &OAuth2Authenticator {
-                    user: username,
-                    access_token: token,
-                },
-            )
-            .map_err(|(_, _)| AppError::Message("IMAP authentication failed".into())),
-    }?;
+    let client = connect_client(host, port, auth_type, security)?;
+    let mut session = authenticate(client, username, credential)?;
     session
         .select("INBOX")
         .map_err(|_| AppError::Message("IMAP mailbox validation failed".into()))?;
@@ -300,7 +342,7 @@ pub fn move_to_folder(
     session
         .select(folder_path)
         .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
-    move_selected(&mut session, uid, target_path)?;
+    move_selected(&mut session, uid, target_path, account.auth_type)?;
     let _ = session.logout();
     Ok(())
 }
@@ -322,7 +364,7 @@ pub fn archive(
         .map(|capabilities| capabilities.has_str("X-GM-EXT-1"))
         .unwrap_or(false);
     let target = archive_destination(archive_path, all_path, gmail)?;
-    move_selected(&mut session, uid, &target)?;
+    move_selected(&mut session, uid, &target, account.auth_type)?;
     let _ = session.logout();
     Ok(())
 }
@@ -345,7 +387,18 @@ pub fn archive_destination(
     ))
 }
 
-fn move_selected(session: &mut ImapSession, uid: u32, target_path: &str) -> AppResult<()> {
+fn move_selected(
+    session: &mut ImapSession,
+    uid: u32,
+    target_path: &str,
+    auth_type: AccountAuth,
+) -> AppResult<()> {
+    if auth_type == AccountAuth::Proton {
+        session
+            .run_command_and_check_ok(proton_move_command(uid, target_path))
+            .map_err(|_| AppError::Message("IMAP message move failed".into()))?;
+        return Ok(());
+    }
     require_uidplus(uidplus_supported(session))?;
     session
         .uid_copy(uid.to_string(), quoted(target_path))
@@ -376,12 +429,28 @@ pub fn delete_permanently(
     session
         .select(folder_path)
         .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+    if account.auth_type == AccountAuth::Proton {
+        delete_selected_proton(&mut session, uid)?;
+        let _ = session.logout();
+        return Ok(());
+    }
     require_uidplus(uidplus_supported(&mut session))?;
     session
         .uid_store(uid.to_string(), "+FLAGS (\\Deleted)")
         .map_err(|_| AppError::Message("IMAP message delete failed".into()))?;
     expunge_uid(&mut session, uid)?;
     let _ = session.logout();
+    Ok(())
+}
+
+fn delete_selected_proton(session: &mut ImapSession, uid: u32) -> AppResult<()> {
+    let [mark, expunge] = proton_delete_command(uid);
+    session
+        .run_command_and_check_ok(&mark)
+        .map_err(|_| AppError::Message("IMAP message delete failed".into()))?;
+    session
+        .run_command_and_check_ok(&expunge)
+        .map_err(|_| AppError::Message("IMAP expunge failed".into()))?;
     Ok(())
 }
 
@@ -440,8 +509,53 @@ pub(crate) fn open_session(
     if account.imap_port == 0 {
         return Err(AppError::Message("IMAP port is required".into()));
     }
-    let security = MailSecurity::parse(&account.imap_security)?;
-    let tcp = connect_tcp(&account.imap_host, account.imap_port)?;
+    let security = session_security(account)?;
+    let client = connect_client(
+        &account.imap_host,
+        account.imap_port,
+        account.auth_type,
+        security,
+    )?;
+    authenticate(client, &account.username, credential)
+}
+
+fn session_security(account: &Account) -> AppResult<Option<MailSecurity>> {
+    if account.auth_type == AccountAuth::Proton {
+        Ok(None)
+    } else {
+        MailSecurity::parse(&account.imap_security).map(Some)
+    }
+}
+
+fn require_proton_host(host: &str) -> AppResult<()> {
+    if proton_host_allowed(host) {
+        Ok(())
+    } else {
+        Err(AppError::Message(
+            "Proton Bridge must be reached over loopback".into(),
+        ))
+    }
+}
+
+fn connect_client(
+    host: &str,
+    port: u16,
+    auth_type: AccountAuth,
+    security: Option<MailSecurity>,
+) -> AppResult<imap::Client<ImapStream>> {
+    if auth_type == AccountAuth::Proton {
+        require_proton_host(host)?;
+        let tcp = connect_tcp(host, port)?;
+        let mut client = imap::Client::new(ImapStream::Plain(tcp));
+        client
+            .read_greeting()
+            .map_err(|_| AppError::Message("IMAP connection failed".into()))?;
+        return Ok(client);
+    }
+
+    let security =
+        security.ok_or_else(|| AppError::Message("security must be tls or starttls".into()))?;
+    let tcp = connect_tcp(host, port)?;
     let tls = TlsConnector::builder()
         .build()
         .map_err(|_| AppError::Message("IMAP TLS configuration failed".into()))?;
@@ -449,34 +563,71 @@ pub(crate) fn open_session(
     let client = match security {
         MailSecurity::Tls => {
             let stream = tls
-                .connect(&account.imap_host, tcp)
+                .connect(host, tcp)
                 .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?;
-            let mut client = imap::Client::new(stream);
+            let mut client = imap::Client::new(ImapStream::Tls(stream));
             client
                 .read_greeting()
                 .map_err(|_| AppError::Message("IMAP connection failed".into()))?;
             client
         }
         MailSecurity::StartTls => {
-            let mut client = imap::Client::new(tcp);
-            client
-                .read_greeting()
+            let mut stream = tcp;
+            read_imap_line(&mut stream)
                 .map_err(|_| AppError::Message("IMAP connection failed".into()))?;
-            client
-                .secure(&account.imap_host, &tls)
-                .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?
+            stream
+                .write_all(b"a1 STARTTLS\r\n")
+                .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?;
+            loop {
+                let line = read_imap_line(&mut stream)
+                    .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?;
+                if line.starts_with(b"a1 ") {
+                    if line.starts_with(b"a1 OK") {
+                        break;
+                    }
+                    return Err(AppError::Message("IMAP TLS handshake failed".into()));
+                }
+            }
+            let stream = tls
+                .connect(host, stream)
+                .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?;
+            imap::Client::new(ImapStream::Tls(stream))
         }
     };
+    Ok(client)
+}
 
+fn read_imap_line(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        if stream.read(&mut byte)? == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "IMAP connection closed",
+            ));
+        }
+        line.push(byte[0]);
+        if byte[0] == b'\n' {
+            return Ok(line);
+        }
+    }
+}
+
+fn authenticate(
+    client: imap::Client<ImapStream>,
+    username: &str,
+    credential: &MailCredential,
+) -> AppResult<ImapSession> {
     match credential {
         MailCredential::Password(password) => client
-            .login(&account.username, password)
+            .login(username, password)
             .map_err(|_| AppError::Message("IMAP authentication failed".into())),
         MailCredential::AccessToken(token) => client
             .authenticate(
                 "XOAUTH2",
                 &OAuth2Authenticator {
-                    user: &account.username,
+                    user: username,
                     access_token: token,
                 },
             )
@@ -573,8 +724,174 @@ fn quoted(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accounts::MailSecurity;
+    use crate::accounts::{AccountAuth, MailSecurity};
     use imap::Authenticator;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    fn account(auth_type: AccountAuth) -> Account {
+        Account {
+            id: 1,
+            display_name: "Me".into(),
+            email: "me@example.com".into(),
+            username: "me@example.com".into(),
+            imap_host: "imap.example.com".into(),
+            imap_port: 993,
+            imap_security: "tls".into(),
+            smtp_host: "smtp.example.com".into(),
+            smtp_port: 465,
+            smtp_security: "tls".into(),
+            color: "accent".into(),
+            signature: String::new(),
+            signature_fields: Default::default(),
+            signature_on_new: true,
+            auth_type,
+            oauth_provider: String::new(),
+            space_id: 1,
+            position: 0,
+            sync_interval_secs: 120,
+            created_at: 0,
+        }
+    }
+
+    fn proton_account() -> Account {
+        let mut proton = account(AccountAuth::Proton);
+        proton.imap_host = "127.0.0.1".into();
+        proton.imap_port = 1143;
+        proton.imap_security = "plain".into();
+        proton.smtp_security = "plain".into();
+        proton
+    }
+
+    fn closed_loopback_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        port
+    }
+
+    #[test]
+    fn accepts_only_loopback_proton_hosts() {
+        for host in ["127.0.0.1", "::1", "[::1]", "localhost", "LOCALHOST"] {
+            assert!(proton_host_allowed(host), "expected {host} to be allowed");
+        }
+        for host in [
+            "imap.example.com",
+            "127.0.0.1.example.com",
+            "localhost.evil.com",
+            "0.0.0.0",
+        ] {
+            assert!(!proton_host_allowed(host), "expected {host} to be refused");
+        }
+        assert!(!proton_host_allowed(""));
+    }
+
+    #[test]
+    fn proton_move_uses_uid_move_with_a_quoted_mailbox() {
+        assert_eq!(
+            proton_move_command(42, "Archive"),
+            "UID MOVE 42 \"Archive\""
+        );
+        assert_eq!(
+            proton_move_command(7, "Sent \"Items\""),
+            "UID MOVE 7 \"Sent \\\"Items\\\"\""
+        );
+    }
+
+    #[test]
+    fn proton_delete_marks_deleted_then_expunges() {
+        assert_eq!(
+            proton_delete_command(42),
+            [
+                "UID STORE 42 +FLAGS (\\Deleted)".to_string(),
+                "EXPUNGE".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn selects_plaintext_only_for_proton_accounts() {
+        assert_eq!(session_security(&proton_account()).unwrap(), None);
+
+        let mut manual = account(AccountAuth::Password);
+        manual.imap_security = "plain".into();
+        assert!(session_security(&manual).is_err());
+
+        let tls = account(AccountAuth::Password);
+        assert_eq!(session_security(&tls).unwrap(), Some(MailSecurity::Tls));
+
+        let mut oauth = account(AccountAuth::OAuth);
+        oauth.imap_security = "starttls".into();
+        assert_eq!(
+            session_security(&oauth).unwrap(),
+            Some(MailSecurity::StartTls)
+        );
+    }
+
+    #[test]
+    fn proton_refuses_a_non_loopback_imap_host_without_connecting() {
+        let mut proton = proton_account();
+        proton.imap_host = "imap.example.com".into();
+        let error =
+            open_session(&proton, &MailCredential::Password("bridge-pass".into())).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Proton Bridge must be reached over loopback"
+        );
+
+        let error = validate_proton_imap(
+            "imap.example.com",
+            1143,
+            "me@example.com",
+            &MailCredential::Password("bridge-pass".into()),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Proton Bridge must be reached over loopback"
+        );
+    }
+
+    #[test]
+    fn proton_skips_security_parsing_and_uses_plain_tcp() {
+        let mut proton = proton_account();
+        proton.imap_port = closed_loopback_port();
+        let error =
+            open_session(&proton, &MailCredential::Password("bridge-pass".into())).unwrap_err();
+        assert!(
+            error.to_string().starts_with("IMAP connection"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn proton_validation_rejects_blank_host_and_zero_port() {
+        let credential = MailCredential::Password("bridge-pass".into());
+        assert!(validate_proton_imap("", 1143, "me@example.com", &credential).is_err());
+        assert!(validate_proton_imap("127.0.0.1", 0, "me@example.com", &credential).is_err());
+    }
+
+    #[test]
+    fn plain_imap_stream_round_trips_bytes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut peer, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4];
+            peer.read_exact(&mut request).unwrap();
+            assert_eq!(&request, b"ping");
+            peer.write_all(b"pong").unwrap();
+        });
+
+        let tcp = TcpStream::connect(address).unwrap();
+        let mut stream = ImapStream::Plain(tcp);
+        stream.write_all(b"ping").unwrap();
+        let mut response = [0u8; 4];
+        stream.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"pong");
+        handle.join().unwrap();
+    }
 
     #[test]
     fn rejects_blank_host_without_network_access() {
