@@ -25,6 +25,7 @@ fn write() -> std::sync::RwLockWriteGuard<'static, Option<Arc<ProtonBridge>>> {
 pub fn install(bridge: Arc<ProtonBridge>) {
     let previous = write().replace(bridge);
     if let Some(previous) = previous {
+        previous.shutdown_auth();
         previous.stop();
     }
 }
@@ -38,6 +39,7 @@ pub fn current() -> AppResult<Arc<ProtonBridge>> {
 pub fn stop() {
     let bridge = write().take();
     if let Some(bridge) = bridge {
+        bridge.shutdown_auth();
         bridge.stop();
     }
 }

@@ -2,7 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -22,13 +22,18 @@ use super::bridge::ProtonBridge;
 use super::ports;
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 const ACCESS_LIMITED_MESSAGE: &str =
     "Proton temporarily limited API access for this account. Use the official Proton app and try again later.";
 const APPEAL_URL: &str = "https://proton.me/support/appeal-abuse";
 
 #[derive(Clone, Deserialize)]
-#[serde(tag = "mode", rename_all = "camelCase")]
+#[serde(
+    tag = "mode",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ProtonAuthStart {
     Add {
         space_id: i64,
@@ -86,6 +91,7 @@ pub struct ProtonAuthSessions {
     state: Mutex<Option<Arc<Session>>>,
     active: AtomicBool,
     validator: Mutex<AuthValidator>,
+    idle_timeout_ms: AtomicU64,
 }
 
 impl ProtonAuthSessions {
@@ -107,6 +113,7 @@ impl ProtonAuthSessions {
                     credential,
                 )
             })),
+            idle_timeout_ms: AtomicU64::new(IDLE_TIMEOUT.as_millis() as u64),
         }
     }
 
@@ -120,15 +127,43 @@ impl ProtonAuthSessions {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            return Err(AppError::Message(
-                "Proton sign-in is already in progress.".into(),
-            ));
+            return Err(AppError::Message("Proton sign-in in progress".into()));
         }
         Ok(())
     }
 
     fn end(&self) {
         self.active.store(false, Ordering::SeqCst);
+    }
+
+    fn schedule_idle_timeout(self: &Arc<Self>, session: &Arc<Session>) {
+        let weak = Arc::downgrade(self);
+        let session = Arc::clone(session);
+        let activity = session.activity.load(Ordering::SeqCst);
+        let timeout = Duration::from_millis(self.idle_timeout_ms.load(Ordering::SeqCst));
+        thread::spawn(move || {
+            thread::sleep(timeout);
+            let Some(auth) = weak.upgrade() else {
+                return;
+            };
+            if session.activity.load(Ordering::SeqCst) != activity {
+                return;
+            }
+            let mut state = lock(&auth.state);
+            let owned = state
+                .as_ref()
+                .map(|current| Arc::ptr_eq(current, &session))
+                .unwrap_or(false);
+            if !owned {
+                return;
+            }
+            state.take();
+            drop(state);
+            session.kill();
+            let _ = restore_auth_snapshot(&session.auth_file, &session.auth_snapshot);
+            session.release_lock();
+            auth.end();
+        });
     }
 
     pub(crate) fn validate(&self, account: &Account, credential: &MailCredential) -> AppResult<()> {
@@ -139,6 +174,12 @@ impl ProtonAuthSessions {
     #[cfg(test)]
     pub(crate) fn set_validator(&self, validator: AuthValidator) {
         *lock(&self.validator) = validator;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_idle_timeout(&self, timeout: Duration) {
+        self.idle_timeout_ms
+            .store(timeout.as_millis() as u64, Ordering::SeqCst);
     }
 }
 
@@ -175,9 +216,17 @@ struct Session {
     lock: File,
     bridge_was_running: bool,
     pending: Mutex<Option<PendingStep>>,
+    activity: AtomicU64,
+    continuing: AtomicBool,
+    auth_file: PathBuf,
+    auth_snapshot: Option<Vec<u8>>,
 }
 
 impl Session {
+    fn touch(&self) {
+        self.activity.fetch_add(1, Ordering::SeqCst);
+    }
+
     fn send<T: Serialize>(&self, value: &T) -> AppResult<()> {
         let line = serde_json::to_vec(value)?;
         let mut process = lock(&self.process);
@@ -187,6 +236,7 @@ impl Session {
         stdin.write_all(&line)?;
         stdin.write_all(b"\n")?;
         stdin.flush()?;
+        self.touch();
         Ok(())
     }
 
@@ -226,6 +276,14 @@ impl Drop for Session {
 struct ChildProcess {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
+}
+
+struct ContinueGuard(Arc<Session>);
+
+impl Drop for ContinueGuard {
+    fn drop(&mut self) {
+        self.0.continuing.store(false, Ordering::SeqCst);
+    }
 }
 
 struct SidecarEvent {
@@ -383,6 +441,15 @@ impl ProtonBridge {
                 }
             }
         };
+        if session
+            .continuing
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(AppError::Message("Proton sign-in is busy.".into()));
+        }
+        let _guard = ContinueGuard(Arc::clone(&session));
+        session.touch();
 
         let line = ResponseLine::from_response(response);
         let event = session.send(&line).and_then(|_| next_event(&session));
@@ -392,21 +459,31 @@ impl ProtonBridge {
         }
 
         match event {
-            Ok(event) => self.handle_event(session, event, false),
+            Ok(event) => self.handle_event(session, event),
             Err(error) => {
                 if !take_session(&self.auth.state, &session) {
                     return Err(cancelled());
                 }
-                self.fail_session(session, error, false)
+                self.fail_session(session, error)
             }
         }
     }
 
     pub fn cancel_login(&self, login_id: &str) -> AppResult<()> {
+        self.cancel_login_optional(Some(login_id))
+    }
+
+    pub fn cancel_active_login(&self) -> AppResult<()> {
+        self.cancel_login_optional(None)
+    }
+
+    fn cancel_login_optional(&self, login_id: Option<&str>) -> AppResult<()> {
         let session = {
             let mut state = lock(&self.auth.state);
             match state.as_ref() {
-                Some(session) if session.login_id == login_id => state.take(),
+                Some(session) if login_id.map(|id| session.login_id == id).unwrap_or(true) => {
+                    state.take()
+                }
                 _ => None,
             }
         };
@@ -417,10 +494,25 @@ impl ProtonBridge {
         };
 
         session.kill();
-        self.restore_bridge(session.bridge_was_running);
+        self.stop();
+        let _ = restore_auth_snapshot(&session.auth_file, &session.auth_snapshot);
+        self.restore_bridge(session.bridge_was_running, true);
         session.release_lock();
         self.auth.end();
         Ok(())
+    }
+
+    pub(crate) fn shutdown_auth(&self) {
+        self.stop();
+        let session = lock(&self.auth.state).take();
+        let Some(session) = session else {
+            self.auth.end();
+            return;
+        };
+        session.kill();
+        let _ = restore_auth_snapshot(&session.auth_file, &session.auth_snapshot);
+        session.release_lock();
+        self.auth.end();
     }
 
     fn start_login_inner(
@@ -437,7 +529,17 @@ impl ProtonBridge {
         let lock = match acquire_auth_lock(&self.config_dir) {
             Ok(lock) => lock,
             Err(error) => {
-                self.restore_bridge(bridge_was_running);
+                self.restore_bridge(bridge_was_running, false);
+                return Err(error);
+            }
+        };
+
+        let auth_file = self.config_dir.join("hydroxide/auth.json");
+        let auth_snapshot = match read_auth_snapshot(&auth_file) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                self.restore_bridge(bridge_was_running, true);
+                let _ = FileExt::unlock(&lock);
                 return Err(error);
             }
         };
@@ -445,8 +547,8 @@ impl ProtonBridge {
         let (child, stdin, events, stderr) = match self.spawn_auth() {
             Ok(spawned) => spawned,
             Err(error) => {
+                self.restore_bridge(bridge_was_running, true);
                 let _ = FileExt::unlock(&lock);
-                self.restore_bridge(bridge_was_running);
                 return Err(error);
             }
         };
@@ -465,6 +567,10 @@ impl ProtonBridge {
             lock,
             bridge_was_running,
             pending: Mutex::new(None),
+            activity: AtomicU64::new(0),
+            continuing: AtomicBool::new(false),
+            auth_file,
+            auth_snapshot,
         });
 
         if let Err(error) = session.send(&LoginRequest {
@@ -472,31 +578,49 @@ impl ProtonBridge {
             username: &username,
             password: &password,
         }) {
-            return self.fail_session(session, error, false);
+            return self.fail_session(session, error);
+        }
+        if let Err(error) = self.publish_session(&session) {
+            return self.fail_session(session, error);
         }
 
         match next_event(&session) {
-            Ok(event) => self.handle_event(session, event, true),
-            Err(error) => self.fail_session(session, error, false),
+            Ok(event) => self.handle_event(session, event),
+            Err(error) => {
+                if !take_session(&self.auth.state, &session) {
+                    return Err(cancelled());
+                }
+                self.fail_session(session, error)
+            }
         }
+    }
+
+    fn publish_session(&self, session: &Arc<Session>) -> AppResult<()> {
+        let mut state = lock(&self.auth.state);
+        if state.is_some() {
+            return Err(AppError::Message("Proton sign-in in progress".into()));
+        }
+        *state = Some(Arc::clone(session));
+        Ok(())
     }
 
     fn handle_event(
         &self,
         session: Arc<Session>,
         event: SidecarEvent,
-        from_start: bool,
     ) -> AppResult<ProtonAuthStatus> {
         match event.event.as_str() {
             "totp_required" => {
-                self.hold_pending(&session, PendingStep::Totp, from_start)?;
+                self.hold_pending(&session, PendingStep::Totp)?;
+                self.auth.schedule_idle_timeout(&session);
                 Ok(ProtonAuthStatus::NeedsTotp {
                     login_id: session.login_id.clone(),
                     error: None,
                 })
             }
             "mailbox_password_required" => {
-                self.hold_pending(&session, PendingStep::MailboxPassword, from_start)?;
+                self.hold_pending(&session, PendingStep::MailboxPassword)?;
+                self.auth.schedule_idle_timeout(&session);
                 Ok(ProtonAuthStatus::NeedsMailboxPassword {
                     login_id: session.login_id.clone(),
                     error: None,
@@ -507,7 +631,8 @@ impl ProtonBridge {
                     url: event.url.clone(),
                     methods: event.methods.clone(),
                 };
-                self.hold_pending(&session, pending.clone(), from_start)?;
+                self.hold_pending(&session, pending.clone())?;
+                self.auth.schedule_idle_timeout(&session);
                 let PendingStep::Verification { url, methods } = pending else {
                     unreachable!()
                 };
@@ -532,19 +657,20 @@ impl ProtonBridge {
                     let pending = match pending {
                         Some(pending) => pending,
                         None => {
-                            if !from_start {
-                                take_session(&self.auth.state, &session);
+                            if !take_session(&self.auth.state, &session) {
+                                return Err(cancelled());
                             }
-                            return self.fail_session(session, AppError::Message(message), false);
+                            return self.fail_session(session, AppError::Message(message));
                         }
                     };
-                    self.hold_pending(&session, pending.clone(), from_start)?;
+                    self.hold_pending(&session, pending.clone())?;
+                    self.auth.schedule_idle_timeout(&session);
                     Ok(status_for_pending(&session, pending, Some(message)))
                 } else {
-                    if !from_start && !take_session(&self.auth.state, &session) {
+                    if !take_session(&self.auth.state, &session) {
                         return Err(cancelled());
                     }
-                    self.fail_session(session, AppError::Message(message), false)
+                    self.fail_session(session, AppError::Message(message))
                 }
             }
             "access_limited" => {
@@ -558,11 +684,13 @@ impl ProtonBridge {
                 } else {
                     event.appeal_url.trim().to_string()
                 };
-                if !from_start && !take_session(&self.auth.state, &session) {
+                if !take_session(&self.auth.state, &session) {
                     return Err(cancelled());
                 }
                 session.kill();
-                self.restore_bridge(session.bridge_was_running);
+                self.stop();
+                let _ = restore_auth_snapshot(&session.auth_file, &session.auth_snapshot);
+                self.restore_bridge(session.bridge_was_running, true);
                 session.release_lock();
                 self.auth.end();
                 Ok(ProtonAuthStatus::AccessLimited {
@@ -571,13 +699,13 @@ impl ProtonBridge {
                 })
             }
             "success" => {
-                if !from_start && !take_session(&self.auth.state, &session) {
+                if !take_session(&self.auth.state, &session) {
                     return Err(cancelled());
                 }
                 self.finish_success(session, event)
             }
             _ => {
-                if !from_start && !take_session(&self.auth.state, &session) {
+                if !take_session(&self.auth.state, &session) {
                     return Err(cancelled());
                 }
                 self.fail_session(
@@ -585,25 +713,14 @@ impl ProtonBridge {
                     AppError::Message(
                         "Proton sign-in failed. Check your connection and try again.".into(),
                     ),
-                    false,
                 )
             }
         }
     }
 
-    fn hold_pending(
-        &self,
-        session: &Arc<Session>,
-        pending: PendingStep,
-        from_start: bool,
-    ) -> AppResult<()> {
-        let mut state = lock(&self.auth.state);
-        if from_start {
-            if state.is_some() {
-                return Err(cancelled());
-            }
-            *state = Some(Arc::clone(session));
-        } else if !state
+    fn hold_pending(&self, session: &Arc<Session>, pending: PendingStep) -> AppResult<()> {
+        let state = lock(&self.auth.state);
+        if !state
             .as_ref()
             .map(|current| Arc::ptr_eq(current, session))
             .unwrap_or(false)
@@ -622,11 +739,11 @@ impl ProtonBridge {
         session: Arc<Session>,
         event: SidecarEvent,
     ) -> AppResult<ProtonAuthStatus> {
+        session.finish();
         let mut rollback = Rollback::default();
         let result = self.apply_success(&session, &event, &mut rollback);
         match result {
             Ok(account) => {
-                session.finish();
                 session.release_lock();
                 self.auth.end();
                 Ok(ProtonAuthStatus::Complete { account })
@@ -635,8 +752,7 @@ impl ProtonBridge {
                 if let Some(account_id) = rollback.created_account {
                     let _ = accounts::delete(self.db.as_ref(), self.secrets.as_ref(), account_id);
                 }
-                let discard_auth = matches!(session.target, Target::Add { .. });
-                self.fail_session(session, error, discard_auth)
+                self.fail_session(session, error)
             }
         }
     }
@@ -733,26 +849,23 @@ impl ProtonBridge {
         }
     }
 
-    fn fail_session(
-        &self,
-        session: Arc<Session>,
-        error: AppError,
-        discard_auth: bool,
-    ) -> AppResult<ProtonAuthStatus> {
-        let username = session.username.clone();
+    fn fail_session(&self, session: Arc<Session>, error: AppError) -> AppResult<ProtonAuthStatus> {
         session.kill();
-        self.restore_bridge(session.bridge_was_running);
+        self.stop();
+        let _ = restore_auth_snapshot(&session.auth_file, &session.auth_snapshot);
+        self.restore_bridge(session.bridge_was_running, true);
         session.release_lock();
-        if discard_auth {
-            let _ = self.remove_stored_auth(&username);
-        }
         self.auth.end();
         Err(error)
     }
 
-    fn restore_bridge(&self, was_running: bool) {
+    fn restore_bridge(&self, was_running: bool, lock_held: bool) {
         if was_running {
-            let _ = self.restart_for_auth();
+            let _ = if lock_held {
+                self.restart_for_auth()
+            } else {
+                self.restart()
+            };
         } else {
             self.stop();
         }
@@ -888,6 +1001,35 @@ fn new_login_id() -> String {
     )
 }
 
+fn read_auth_snapshot(path: &Path) -> AppResult<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(AppError::Io(error)),
+    }
+}
+
+fn restore_auth_snapshot(path: &Path, snapshot: &Option<Vec<u8>>) -> AppResult<()> {
+    match snapshot {
+        Some(contents) => {
+            let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
+            fs::write(&temporary, contents)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
+            }
+            fs::rename(&temporary, path)?;
+            Ok(())
+        }
+        None => match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(AppError::Io(error)),
+        },
+    }
+}
+
 fn acquire_auth_lock(config_dir: &Path) -> AppResult<File> {
     let dir = config_dir.join("hydroxide");
     ensure_private_dir(&dir)?;
@@ -905,7 +1047,7 @@ fn acquire_auth_lock(config_dir: &Path) -> AppResult<File> {
     }
     file.try_lock_exclusive().map_err(|error| {
         if error.kind() == ErrorKind::WouldBlock {
-            AppError::Message("Proton sign-in is already in progress.".into())
+            AppError::Message("Proton sign-in in progress".into())
         } else {
             AppError::Io(error)
         }
@@ -1136,6 +1278,41 @@ mod tests {
             username: username.into(),
             password: "proton-password".into(),
         }
+    }
+
+    #[test]
+    fn parses_add_and_reconnect_requests_with_camel_case_fields() {
+        let add: ProtonAuthStart = serde_json::from_str(
+            r#"{"mode":"add","spaceId":4,"username":"me@proton.me","password":"secret"}"#,
+        )
+        .unwrap();
+        let ProtonAuthStart::Add {
+            space_id,
+            username,
+            password,
+        } = add
+        else {
+            panic!("expected add");
+        };
+        assert_eq!(space_id, 4);
+        assert_eq!(username, "me@proton.me");
+        assert_eq!(password, "secret");
+
+        let reconnect: ProtonAuthStart = serde_json::from_str(
+            r#"{"mode":"reconnect","accountId":7,"username":"me@proton.me","password":"secret"}"#,
+        )
+        .unwrap();
+        let ProtonAuthStart::Reconnect {
+            account_id,
+            username,
+            password,
+        } = reconnect
+        else {
+            panic!("expected reconnect");
+        };
+        assert_eq!(account_id, 7);
+        assert_eq!(username, "me@proton.me");
+        assert_eq!(password, "secret");
     }
 
     fn account_count(fixture: &Fixture) -> usize {
@@ -1508,10 +1685,153 @@ mod tests {
         };
 
         let error = bridge.start_login(adding("other@proton.me")).unwrap_err();
-        assert!(error.to_string().contains("already in progress"), "{error}");
+        assert_eq!(error.to_string(), "Proton sign-in in progress");
         assert!(!lock_is_free(&fixture));
 
         bridge.cancel_login(&login_id).unwrap();
         assert!(lock_is_free(&fixture));
+    }
+
+    #[test]
+    fn start_if_needed_is_rejected_while_a_login_is_pending() {
+        let fixture = Fixture::new();
+        fixture.add_proton("existing@proton.me", "existing@proton.me", "old-secret");
+        let bridge = fixture.bridge();
+        bridge.start_if_needed().unwrap().unwrap();
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+
+        let status = bridge.start_login(adding("totp@proton.me")).unwrap();
+        let ProtonAuthStatus::NeedsTotp { login_id, .. } = status else {
+            panic!("expected TOTP");
+        };
+
+        let error = bridge.start_if_needed().unwrap_err();
+        assert_eq!(error.to_string(), "Proton sign-in in progress");
+        assert!(!bridge.is_running());
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+
+        bridge.cancel_login(&login_id).unwrap();
+        assert!(bridge.is_running());
+    }
+
+    #[test]
+    fn an_external_auth_lock_fails_without_starting_serve() {
+        let fixture = Fixture::new();
+        fixture.add_proton("existing@proton.me", "existing@proton.me", "old-secret");
+        let bridge = fixture.bridge();
+        bridge.start_if_needed().unwrap().unwrap();
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+
+        let hydroxide = fixture.config_dir().join("hydroxide");
+        fs::create_dir_all(&hydroxide).unwrap();
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(hydroxide.join("auth.lock"))
+            .unwrap();
+        lock.lock_exclusive().unwrap();
+
+        let error = bridge.start_login(adding("totp@proton.me")).unwrap_err();
+        assert_eq!(error.to_string(), "Proton sign-in in progress");
+        assert!(!bridge.is_running());
+        assert_eq!(fixture.generation().as_deref(), Some("1"));
+
+        let _ = FileExt::unlock(&lock);
+    }
+
+    #[test]
+    fn cancel_without_a_login_id_releases_the_pending_session() {
+        let fixture = Fixture::new();
+        let bridge = fixture.bridge();
+
+        let status = bridge.start_login(adding("totp@proton.me")).unwrap();
+        let ProtonAuthStatus::NeedsTotp { login_id, .. } = status else {
+            panic!("expected TOTP");
+        };
+        assert!(!lock_is_free(&fixture));
+
+        bridge.cancel_active_login().unwrap();
+
+        assert!(lock_is_free(&fixture));
+        assert!(bridge
+            .continue_login(&login_id, ProtonAuthResponse::Totp("1".into()))
+            .is_err());
+    }
+
+    #[test]
+    fn idle_pending_login_releases_the_lock() {
+        let fixture = Fixture::new();
+        let bridge = fixture.bridge();
+        bridge.auth.set_idle_timeout(Duration::from_millis(150));
+
+        let status = bridge.start_login(adding("totp@proton.me")).unwrap();
+        let ProtonAuthStatus::NeedsTotp { login_id, .. } = status else {
+            panic!("expected TOTP");
+        };
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !lock_is_free(&fixture) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(lock_is_free(&fixture));
+        assert!(!bridge.is_running());
+        assert!(bridge
+            .continue_login(&login_id, ProtonAuthResponse::Totp("1".into()))
+            .is_err());
+    }
+
+    #[test]
+    fn concurrent_continue_is_rejected() {
+        let fixture = Fixture::new();
+        let bridge = Arc::new(fixture.bridge());
+
+        let status = bridge.start_login(adding("slow@proton.me")).unwrap();
+        let ProtonAuthStatus::NeedsTotp { login_id, .. } = status else {
+            panic!("expected TOTP");
+        };
+
+        let first = {
+            let bridge = Arc::clone(&bridge);
+            let login_id = login_id.clone();
+            thread::spawn(move || {
+                bridge.continue_login(&login_id, ProtonAuthResponse::Totp("123456".into()))
+            })
+        };
+        thread::sleep(Duration::from_millis(150));
+
+        let error = bridge
+            .continue_login(&login_id, ProtonAuthResponse::Totp("123456".into()))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Proton sign-in is busy.");
+
+        let status = first.join().unwrap().unwrap();
+        assert!(matches!(status, ProtonAuthStatus::Complete { .. }));
+    }
+
+    #[test]
+    fn add_rollback_preserves_a_preexisting_auth_entry() {
+        let fixture = Fixture::new();
+        let hydroxide = fixture.config_dir().join("hydroxide");
+        fs::create_dir_all(&hydroxide).unwrap();
+        let auth_file = hydroxide.join("auth.json");
+        let original = r#"{"totp@proton.me":"old","other@proton.me":"keep"}"#;
+        fs::write(&auth_file, original).unwrap();
+        let bridge = fixture.bridge_with_validator(Arc::new(|_, _| {
+            Err(AppError::Message("IMAP mailbox validation failed".into()))
+        }));
+
+        let status = bridge.start_login(adding("totp@proton.me")).unwrap();
+        let ProtonAuthStatus::NeedsTotp { login_id, .. } = status else {
+            panic!("expected TOTP");
+        };
+        let error = bridge
+            .continue_login(&login_id, ProtonAuthResponse::Totp("123456".into()))
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "IMAP mailbox validation failed");
+        assert_eq!(fs::read_to_string(auth_file).unwrap(), original);
+        assert_eq!(account_count(&fixture), 0);
     }
 }

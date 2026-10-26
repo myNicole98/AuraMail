@@ -70,7 +70,7 @@ pub struct ProtonBridge {
     pub(crate) secrets: Arc<dyn SecretStore>,
     pub(crate) config_dir: PathBuf,
     pub(crate) sidecar: PathBuf,
-    pub(crate) auth: ProtonAuthSessions,
+    pub(crate) auth: Arc<ProtonAuthSessions>,
     shared: Arc<Shared>,
     start_lock: Mutex<()>,
 }
@@ -88,7 +88,7 @@ impl ProtonBridge {
             secrets,
             config_dir,
             sidecar,
-            auth: ProtonAuthSessions::new(),
+            auth: Arc::new(ProtonAuthSessions::new()),
             shared: Arc::new(Shared {
                 events,
                 state: Mutex::new(State::default()),
@@ -307,31 +307,11 @@ impl ProtonBridge {
         let _ = FileExt::unlock(&lock);
         result
     }
-
-    pub(crate) fn remove_stored_auth(&self, username: &str) -> AppResult<()> {
-        let dir = self.config_dir.join("hydroxide");
-        ensure_private_dir(&dir)?;
-        let lock = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(dir.join("auth.lock"))?;
-        lock.try_lock_exclusive().map_err(|error| {
-            if error.kind() == ErrorKind::WouldBlock {
-                AppError::Message("Proton sign-in in progress".into())
-            } else {
-                AppError::Io(error)
-            }
-        })?;
-        let result = remove_auth_entry(&dir.join("auth.json"), username);
-        let _ = FileExt::unlock(&lock);
-        result
-    }
 }
 
 impl Drop for ProtonBridge {
     fn drop(&mut self) {
+        self.shutdown_auth();
         self.stop();
     }
 }

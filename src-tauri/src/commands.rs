@@ -1502,11 +1502,14 @@ pub async fn continue_proton_login(
 }
 
 #[tauri::command]
-pub async fn cancel_proton_login(login_id: String) -> AppResult<()> {
+pub async fn cancel_proton_login(login_id: Option<String>) -> AppResult<()> {
     let bridge = crate::proton::runtime::current()?;
-    tauri::async_runtime::spawn_blocking(move || bridge.cancel_login(&login_id))
-        .await
-        .map_err(|_| blocking_error())?
+    tauri::async_runtime::spawn_blocking(move || match login_id {
+        Some(login_id) => bridge.cancel_login(&login_id),
+        None => bridge.cancel_active_login(),
+    })
+    .await
+    .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
