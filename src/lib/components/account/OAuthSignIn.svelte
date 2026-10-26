@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { api } from "../../api";
+  import { providerIconUrls } from "../../ai/providers";
   import type { Account, OAuthUiStatus } from "../../types";
 
   let {
@@ -31,6 +32,7 @@
 
   const label = $derived(provider === "microsoft" ? "Microsoft" : "Google");
   const missingAccount = $derived(mode === "reconnect" && !account);
+  const googleIcon = providerIconUrls("google").light;
 
   function errorMessage(value: unknown): string {
     if (typeof value === "string") return value;
@@ -123,7 +125,9 @@
       <i class="ms-red"></i><i class="ms-green"></i><i class="ms-blue"></i><i class="ms-yellow"></i>
     </div>
   {:else}
-    <div class="provider-mark google" aria-hidden="true">G</div>
+    <div class="provider-mark google" aria-hidden="true">
+      {#if googleIcon}<img class="provider-logo" src={googleIcon} alt="" />{/if}
+    </div>
   {/if}
 
   {#if missingAccount}
@@ -187,8 +191,11 @@
   }
   .provider-mark.google {
     background: #fff;
-    color: #1a1a1a;
-    font-family: var(--font-ui);
+  }
+  .provider-logo {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
   }
   .provider-mark.microsoft {
     grid-template-columns: repeat(2, 11px);

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../../api";
+  import { providerIconUrls } from "../../ai/providers";
 
   let {
     onGoogle,
@@ -19,6 +20,7 @@
 
   const googleDisabled = $derived(googleConfigured !== true);
   const microsoftDisabled = $derived(microsoftConfigured !== true);
+  const googleIcon = providerIconUrls("google").light;
 
   onMount(() => {
     void (async () => {
@@ -52,7 +54,9 @@
       disabled={googleDisabled}
       onclick={onGoogle}
     >
-      <span class="provider-mark google" aria-hidden="true">G</span>
+      <span class="provider-mark google" aria-hidden="true">
+        {#if googleIcon}<img class="provider-logo" src={googleIcon} alt="" />{/if}
+      </span>
       <span class="provider-name">Google</span>
     </button>
     {#if googleConfigured === false && googleReason}
@@ -131,8 +135,11 @@
   }
   .provider-mark.google {
     background: #fff;
-    color: #1a1a1a;
-    font-family: var(--font-ui);
+  }
+  .provider-logo {
+    width: 18px;
+    height: 18px;
+    object-fit: contain;
   }
   .provider-mark.microsoft {
     grid-template-columns: repeat(2, 8px);
