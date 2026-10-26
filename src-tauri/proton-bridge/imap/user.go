@@ -5,12 +5,12 @@ import (
 	"strings"
 	"sync"
 
+	"codeberg.org/emersion/hydroxide/events"
+	"codeberg.org/emersion/hydroxide/imap/database"
+	"codeberg.org/emersion/hydroxide/protonmail"
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/emersion/go-imap"
 	imapbackend "github.com/emersion/go-imap/backend"
-	"github.com/emersion/hydroxide/events"
-	"github.com/emersion/hydroxide/imap/database"
-	"github.com/emersion/hydroxide/protonmail"
 )
 
 var systemMailboxes = []struct {

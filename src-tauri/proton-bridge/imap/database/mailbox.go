@@ -7,7 +7,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/emersion/hydroxide/protonmail"
+	"codeberg.org/emersion/hydroxide/protonmail"
 )
 
 func serializeUID(uid uint32) []byte {

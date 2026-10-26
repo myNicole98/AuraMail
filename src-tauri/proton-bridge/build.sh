@@ -12,6 +12,12 @@
 # protonmail/import.go, config/tls.go, and the contact surface of
 # protonmail/events.go. go.mod and go.sum are tidied to match.
 #
+# Local patches:
+#   go.mod: module path renamed from the snapshot's GitHub module path to
+#   codeberg.org/emersion/hydroxide, matching the Codeberg origin.
+#   auth/auth.go: create and chmod the encrypted auth file as 0600. Upstream
+#   uses os.Create, which leaves new files at 0644.
+#
 # Builds only read these local files. They never clone, pull, or otherwise
 # fetch upstream Hydroxide. Updating the snapshot is a deliberate re-vendoring
 # task that bumps the pinned commit, reviews these exclusions, and reruns the

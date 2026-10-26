@@ -1,8 +1,9 @@
 // Package authflow drives the interactive Proton login state machine.
 //
 // Events never contain Proton credentials, TOTP codes, or inbound CAPTCHA
-// tokens. The returned error is non-nil exactly for an error event, which
-// callers must still emit; access_limited is terminal and must not be retried.
+// tokens. A retryable error leaves the flow pending for a corrected response.
+// The returned error is non-nil exactly for an error event, which callers must
+// still emit; access_limited is terminal and must not be retried.
 // ctx is checked between steps because ProtonAuth has no context-aware methods.
 package authflow
 
@@ -15,9 +16,9 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 
-	"github.com/emersion/hydroxide/auth"
-	"github.com/emersion/hydroxide/internal/protocol"
-	"github.com/emersion/hydroxide/protonmail"
+	"codeberg.org/emersion/hydroxide/auth"
+	"codeberg.org/emersion/hydroxide/internal/protocol"
+	"codeberg.org/emersion/hydroxide/protonmail"
 )
 
 // AppealURL is Proton's anti-abuse appeal form.
@@ -172,7 +173,7 @@ func (f *Flow) requireCaptcha(details protonmail.HumanVerificationDetails) (prot
 
 func (f *Flow) continueCaptcha(ctx context.Context, resp protocol.Response) (protocol.Event, error) {
 	if !resp.VerificationDone && resp.CaptchaToken == "" {
-		return f.eventError("human verification is not complete")
+		return f.retryableError("human verification is not complete")
 	}
 
 	details := *f.challenge
@@ -188,14 +189,14 @@ func (f *Flow) continueCaptcha(ctx context.Context, resp protocol.Response) (pro
 func (f *Flow) continueTOTP(resp protocol.Response) (protocol.Event, error) {
 	code := strings.TrimSpace(resp.TOTP)
 	if code == "" {
-		return f.eventError("TOTP code is required")
+		return f.retryableError("TOTP code is required")
 	}
 
 	scope, err := f.client.AuthTOTP(code)
 	if err != nil {
 		var apiErr *protonmail.APIError
 		if errors.As(err, &apiErr) && apiErr.Code != 2028 {
-			return f.eventError(totpRejectedMessage)
+			return f.retryableError(totpRejectedMessage)
 		}
 		return f.mapError(err)
 	}
@@ -206,7 +207,7 @@ func (f *Flow) continueTOTP(resp protocol.Response) (protocol.Event, error) {
 
 func (f *Flow) continueMailbox(resp protocol.Response) (protocol.Event, error) {
 	if resp.MailboxPassword == "" {
-		return f.eventError("mailbox password is required")
+		return f.retryableError("mailbox password is required")
 	}
 
 	return f.finish(resp.MailboxPassword)
@@ -319,6 +320,14 @@ func (f *Flow) eventError(message string) (protocol.Event, error) {
 		message = "authentication failed"
 	}
 	return protocol.Event{Event: protocol.EventError, Message: message}, errors.New(message)
+}
+
+// retryableError reports an error that a corrected response can resolve
+// without restarting the flow. It does not change the current state.
+func (f *Flow) retryableError(message string) (protocol.Event, error) {
+	ev, err := f.eventError(message)
+	ev.Retryable = true
+	return ev, err
 }
 
 // fail reports a terminal error and marks the flow finished.

@@ -13,8 +13,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/nacl/secretbox"
 
-	"github.com/emersion/hydroxide/config"
-	"github.com/emersion/hydroxide/protonmail"
+	"codeberg.org/emersion/hydroxide/config"
+	"codeberg.org/emersion/hydroxide/protonmail"
 )
 
 func authFilePath() (string, error) {
@@ -56,11 +56,16 @@ func saveAuths(auths map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get auth file path: %v", err)
 	}
-	f, err := os.Create(p)
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create cached auth file: %v", err)
 	}
 	defer f.Close()
+
+	// OpenFile's mode only applies when the file is created.
+	if err := f.Chmod(0600); err != nil {
+		return fmt.Errorf("failed to secure cached auth file: %v", err)
+	}
 
 	if err := json.NewEncoder(f).Encode(auths); err != nil {
 		return fmt.Errorf("failed to write cached auth file: %v", err)

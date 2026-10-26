@@ -54,6 +54,7 @@ type Event struct {
 	URL            string   `json:"url,omitempty"`
 	Methods        []string `json:"methods,omitempty"`
 	Message        string   `json:"message,omitempty"`
+	Retryable      bool     `json:"retryable,omitempty"`
 	AppealURL      string   `json:"appeal_url,omitempty"`
 	LoginUsername  string   `json:"login_username,omitempty"`
 	Email          string   `json:"email,omitempty"`

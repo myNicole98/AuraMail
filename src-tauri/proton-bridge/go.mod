@@ -1,4 +1,4 @@
-module github.com/emersion/hydroxide
+module codeberg.org/emersion/hydroxide
 
 go 1.26.0
 
