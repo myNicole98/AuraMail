@@ -225,6 +225,10 @@ func acquireLock(dir string) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("serve: cannot create the bridge config directory %s: %w", dir, err)
 	}
+	// MkdirAll does not tighten an existing directory.
+	if err := os.Chmod(dir, 0700); err != nil {
+		return nil, fmt.Errorf("serve: cannot secure the bridge config directory %s: %w", dir, err)
+	}
 
 	path := filepath.Join(dir, "bridge.lock")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)

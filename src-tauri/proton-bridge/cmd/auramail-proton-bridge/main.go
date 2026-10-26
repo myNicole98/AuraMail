@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 
 	"codeberg.org/emersion/hydroxide/internal/authflow"
@@ -36,6 +37,10 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	// The sidecar protocol is stdout JSON; upstream libraries log through the
+	// standard logger, so discard it process-wide.
+	log.SetOutput(io.Discard)
+
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2

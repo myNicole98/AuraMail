@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"golang.org/x/crypto/bcrypt"
@@ -183,9 +184,16 @@ var ErrUnauthorized = errors.New("Invalid username or password")
 type Manager struct {
 	newClient func(username string) *protonmail.Client
 	sessions  map[string]*session
+
+	// mu serializes Auth: the session map and encrypted auth file are not safe
+	// for concurrent writers.
+	mu sync.Mutex
 }
 
 func (m *Manager) Auth(username, password string) (*protonmail.Client, openpgp.EntityList, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var secretKey [32]byte
 	passwordBytes, err := base64.StdEncoding.DecodeString(password)
 	if err != nil || len(passwordBytes) != len(secretKey) {

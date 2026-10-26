@@ -20,7 +20,9 @@
 #   auth/auth.go: create and chmod the encrypted auth file as 0600. Upstream
 #   uses os.Create, which leaves new files at 0644.
 #   auth/auth.go: pass the login username to the client factory so serve can
-#   associate Proton 2028 status events with the account username.
+#   associate Proton 2028 status events with the account username, and serialize
+#   Manager.Auth so concurrent IMAP/SMTP logins cannot race the session map or
+#   the encrypted auth file.
 #   events/events.go: keep the upstream 30s poll logic but log a fixed message
 #   on a failed event poll, so raw Proton error text never reaches stderr.
 #   imap/database: persist per-mailbox UIDVALIDITY and UIDNEXT in bbolt and
