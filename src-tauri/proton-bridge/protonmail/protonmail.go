@@ -202,7 +202,6 @@ func (c *Client) doJSON(req *http.Request, respData interface{}) error {
 
 	if maybeError, ok := respData.(maybeError); ok {
 		if err := maybeError.Err(); err != nil {
-			log.Printf("request failed: %v %v: %v", req.Method, req.URL.String(), err)
 			return err
 		}
 	}

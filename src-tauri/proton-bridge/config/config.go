@@ -17,6 +17,10 @@ func Path(filename string) (string, error) {
 	if err := os.MkdirAll(dirname, 0700); err != nil {
 		return "", err
 	}
+	// MkdirAll does not tighten an existing directory.
+	if err := os.Chmod(dirname, 0700); err != nil {
+		return "", err
+	}
 
 	return p, nil
 }

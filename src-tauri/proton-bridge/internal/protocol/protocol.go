@@ -50,16 +50,17 @@ type Response struct {
 
 // Event is one auth-mode stdout line. It has no credential fields.
 type Event struct {
-	Event          string   `json:"event"`
-	URL            string   `json:"url,omitempty"`
-	Methods        []string `json:"methods,omitempty"`
-	Message        string   `json:"message,omitempty"`
-	Retryable      bool     `json:"retryable,omitempty"`
-	AppealURL      string   `json:"appeal_url,omitempty"`
-	LoginUsername  string   `json:"login_username,omitempty"`
-	Email          string   `json:"email,omitempty"`
-	DisplayName    string   `json:"display_name,omitempty"`
-	BridgePassword string   `json:"bridge_password,omitempty"`
+	Event   string   `json:"event"`
+	URL     string   `json:"url,omitempty"`
+	Methods []string `json:"methods,omitempty"`
+	Message string   `json:"message,omitempty"`
+	// Retryable asks the caller to keep the flow open and send another response line.
+	Retryable      bool   `json:"retryable,omitempty"`
+	AppealURL      string `json:"appeal_url,omitempty"`
+	LoginUsername  string `json:"login_username,omitempty"`
+	Email          string `json:"email,omitempty"`
+	DisplayName    string `json:"display_name,omitempty"`
+	BridgePassword string `json:"bridge_password,omitempty"`
 }
 
 // DecodeRequest decodes one JSON line and requires a non-empty op.

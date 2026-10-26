@@ -15,6 +15,8 @@
 # Local patches:
 #   go.mod: module path renamed from the snapshot's GitHub module path to
 #   codeberg.org/emersion/hydroxide, matching the Codeberg origin.
+#   protonmail/protonmail.go: drop the raw request-failure log from doJSON so
+#   Proton error text is never written to stderr.
 #   auth/auth.go: create and chmod the encrypted auth file as 0600. Upstream
 #   uses os.Create, which leaves new files at 0644.
 #

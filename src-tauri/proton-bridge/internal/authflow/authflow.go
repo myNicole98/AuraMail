@@ -30,6 +30,7 @@ const AccessLimitedMessage = "Proton temporarily limited API access for this acc
 const (
 	wrongCredentialsMessage = "Proton rejected the email address or password."
 	totpRejectedMessage     = "That verification code was not accepted. Try the current code."
+	totpVerificationMessage = "Proton requires additional human verification during two-factor sign-in. Use the official Proton app and try again later."
 	mailboxPasswordMessage  = "The mailbox password was not accepted. Try again."
 	genericAuthMessage      = "Proton sign-in failed. Check your connection and try again."
 )
@@ -194,8 +195,12 @@ func (f *Flow) continueTOTP(resp protocol.Response) (protocol.Event, error) {
 
 	scope, err := f.client.AuthTOTP(code)
 	if err != nil {
+		var hvErr *protonmail.HumanVerificationRequiredError
+		if errors.As(err, &hvErr) {
+			return f.fail(totpVerificationMessage)
+		}
 		var apiErr *protonmail.APIError
-		if errors.As(err, &apiErr) && apiErr.Code != 2028 {
+		if errors.As(err, &apiErr) && apiErr.Code == 8002 {
 			return f.retryableError(totpRejectedMessage)
 		}
 		return f.mapError(err)

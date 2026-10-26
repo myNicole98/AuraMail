@@ -11,7 +11,8 @@ import (
 const (
 	// DefaultAPIEndpoint is Proton's production API root.
 	DefaultAPIEndpoint = "https://mail.proton.me/api"
-	// DefaultAppVersion is Hydroxide's accepted fallback client identifier.
+	// DefaultAppVersion is Hydroxide's upstream fallback client identifier.
+	// Proton's acceptance of it still needs live verification.
 	DefaultAppVersion = "Other"
 )
 
