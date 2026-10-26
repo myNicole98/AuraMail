@@ -399,6 +399,12 @@ export type ProtonAccessLimited = {
   appealUrl: string;
 };
 
+export type ProtonAccessLimitedEvent = {
+  username: string;
+  message: string;
+  appealUrl: string;
+};
+
 export type ProtonAuthStatus =
   | { status: "needsTotp"; loginId: string; error: string | null }
   | { status: "needsMailboxPassword"; loginId: string; error: string | null }

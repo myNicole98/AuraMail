@@ -24,6 +24,7 @@ import type {
   Message,
   MessageDetail,
   MessageQuery,
+  ProtonAccessLimitedEvent,
   Space,
   SpaceWorkflow,
   ThreadMessage,
@@ -86,6 +87,7 @@ class AppStore {
   auraRailOpen = $state(false);
   search = $state("");
   statuses = $state<Record<number, SyncStatus>>({});
+  protonAccessLimited = $state<ProtonAccessLimitedEvent | null>(null);
   syncingFolders = $state<Record<number, boolean>>({});
   loading = $state(false);
   messageLoading = $state(false);
@@ -157,6 +159,12 @@ class AppStore {
       .find(([, status]) => status.state === "reauth");
     if (!entry) return null;
     return this.accounts.find((account) => account.id === Number(entry[0])) ?? null;
+  }
+
+  clearProtonAccessLimited(username?: string): void {
+    if (!this.protonAccessLimited) return;
+    if (username && this.protonAccessLimited.username !== username) return;
+    this.protonAccessLimited = null;
   }
 
   get syncLabel(): string {
@@ -340,6 +348,7 @@ class AppStore {
       this.drafts = [];
       this.tabs = [];
       this.messages = [];
+      this.protonAccessLimited = null;
       return;
     }
     this.loading = true;
@@ -353,6 +362,13 @@ class AppStore {
         api.listTabs(spaceId)
       ]);
       this.accounts = accounts;
+      const limited = this.protonAccessLimited;
+      if (
+        limited &&
+        !accounts.some((account) => account.username === limited.username)
+      ) {
+        this.protonAccessLimited = null;
+      }
       this.folders = folders;
       this.drafts = drafts;
       this.tabs = tabs;
@@ -1676,6 +1692,12 @@ class AppStore {
         void this.openFromNotification(spaceId, messageId);
       }
     });
+    const protonAccessLimited = await listen<ProtonAccessLimitedEvent>(
+      "proton://access_limited",
+      ({ payload }) => {
+        this.protonAccessLimited = payload;
+      }
+    );
     this.unlisteners.push(
       status,
       folderStatus,
@@ -1686,7 +1708,8 @@ class AppStore {
       classified,
       themeChanged,
       themeError,
-      spaceOpen
+      spaceOpen,
+      protonAccessLimited
     );
   }
 }

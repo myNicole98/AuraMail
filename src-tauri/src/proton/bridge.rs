@@ -27,6 +27,7 @@ const SIDECAR_NAME: &str = "auramail-proton-bridge";
 pub struct ProtonAccessLimited {
     pub username: String,
     pub message: String,
+    #[serde(rename = "appealUrl", alias = "appeal_url")]
     pub appeal_url: String,
 }
 
@@ -906,5 +907,32 @@ mod tests {
                 .unwrap();
         assert_eq!(stored.get("me@proton.me"), None);
         assert_eq!(stored["other@proton.me"], "second");
+    }
+
+    #[test]
+    fn access_limited_serializes_appeal_url_as_camel_case() {
+        let status = ProtonAccessLimited {
+            username: "me@proton.me".into(),
+            message: "Proton temporarily limited API access.".into(),
+            appeal_url: "https://proton.me/support/appeal-abuse".into(),
+        };
+
+        let value = serde_json::to_value(&status).unwrap();
+
+        assert_eq!(
+            value.get("appealUrl").and_then(|value| value.as_str()),
+            Some("https://proton.me/support/appeal-abuse")
+        );
+        assert!(value.get("appeal_url").is_none());
+    }
+
+    #[test]
+    fn access_limited_accepts_snake_case_appeal_url() {
+        let status: ProtonAccessLimited = serde_json::from_str(
+            r#"{"username":"me@proton.me","message":"limited","appeal_url":"https://proton.me/support/appeal-abuse"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(status.appeal_url, "https://proton.me/support/appeal-abuse");
     }
 }

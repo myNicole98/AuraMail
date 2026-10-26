@@ -27,13 +27,15 @@
     spaces,
     onSaved,
     onRemoved,
-    onColorChanged
+    onColorChanged,
+    onReconnect
   }: {
     account: Account;
     spaces: Space[];
     onSaved: (account: Account) => void;
     onRemoved: () => void;
     onColorChanged: (account: Account) => void;
+    onReconnect: (account: Account) => void;
   } = $props();
 
   const SAVED_PASSWORD_MASK = "••••••••••••";
@@ -69,6 +71,7 @@
   let savedRecently = $state(false);
 
   const oauth = $derived(account.auth_type === "oauth");
+  const proton = $derived(account.auth_type === "proton");
   const oauthProvider = $derived(
     account.oauth_provider === "microsoft" ? "microsoft" : "google"
   );
@@ -103,7 +106,7 @@
 
   async function save(): Promise<void> {
     clearTimeout(colorTimer);
-    if (!oauth) {
+    if (!oauth && !proton) {
       const form: AccountForm = {
         display_name: displayName,
         username,
@@ -130,9 +133,9 @@
     try {
       const saved = await api.updateAccount(
         account.id,
-        input(oauth || password === SAVED_PASSWORD_MASK ? "" : password)
+        input(oauth || proton || password === SAVED_PASSWORD_MASK ? "" : password)
       );
-      if (moved) await api.moveAccount(account.id, spaceId);
+      if (moved && !proton) await api.moveAccount(account.id, spaceId);
       displayName = saved.display_name;
       color = saved.color;
       spaceId = saved.space_id;
@@ -249,6 +252,8 @@
     </div>
     {#if oauth}
       <span class="provider-badge">{providerLabel}</span>
+    {:else if proton}
+      <span class="provider-badge">Proton</span>
     {/if}
   </header>
 
@@ -374,6 +379,13 @@
           >
             <RefreshCw size={15} />
             {reconnecting ? "Reconnecting…" : `Reconnect ${providerLabel}`}
+          </button>
+        </div>
+      {:else if proton}
+        <div class="oauth-setup">
+          <button class="ghost" type="button" onclick={() => onReconnect(account)}>
+            <RefreshCw size={15} />
+            Reconnect Proton
           </button>
         </div>
       {:else}

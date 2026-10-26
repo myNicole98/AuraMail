@@ -14,11 +14,12 @@
     X
   } from "lucide-svelte";
   import { accountColorValue } from "../accountColors";
+  import { api } from "../api";
   import { relativeDate } from "../format";
   import { tabColor, tabIconComponent } from "../tabAppearance";
   import { app } from "../stores/app.svelte";
   import { appearance } from "../stores/appearance.svelte";
-  import type { DraftSummary, Message, ThreadMessage } from "../types";
+  import type { Account, DraftSummary, Message, ThreadMessage } from "../types";
   import Checkbox from "./Checkbox.svelte";
   import ClassificationTabs from "./ClassificationTabs.svelte";
   import ClassificationToast from "./ClassificationToast.svelte";
@@ -113,6 +114,12 @@
 
   function accountFor(message: Message) {
     return app.accounts.find((account) => account.id === message.account_id);
+  }
+
+  function providerLabel(account: Account | null | undefined): string {
+    if (!account) return "Google";
+    if (account.auth_type === "proton") return "Proton";
+    return account.oauth_provider === "microsoft" ? "Microsoft" : "Google";
   }
 
   $effect(() => {
@@ -301,6 +308,20 @@
     {/if}
   </header>
 
+  {#if app.protonAccessLimited}
+    <div class="status-banner error" role="alert">
+      <CircleAlert size={14} />
+      <span>{app.protonAccessLimited.message}</span>
+      <button
+        type="button"
+        onclick={() => {
+          const limited = app.protonAccessLimited;
+          if (limited) void api.openExternal(limited.appealUrl).catch(() => {});
+        }}
+      >Appeal access limitation</button>
+    </div>
+  {/if}
+
   {#if app.error || app.syncState === "offline" || app.syncState === "error" || app.syncState === "reauth"}
     <div
       class="status-banner"
@@ -310,7 +331,7 @@
       <CircleAlert size={14} />
       {#if app.syncState === "reauth"}
         <span>
-          {app.reauthAccount?.oauth_provider === "microsoft" ? "Microsoft" : "Google"}
+          {providerLabel(app.reauthAccount)}
           authorization expired for {app.reauthAccount?.email ?? "an account"}.
         </span>
         <button

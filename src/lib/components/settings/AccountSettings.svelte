@@ -154,7 +154,11 @@
   async function onOAuthConnected(account: Account) {
     const reconnecting = dialog === "reconnect";
     const provider =
-      account.oauth_provider === "microsoft" ? "Microsoft" : "Google";
+      account.auth_type === "proton"
+        ? "Proton"
+        : account.oauth_provider === "microsoft"
+          ? "Microsoft"
+          : "Google";
     dialog = null;
     reconnectAccount = null;
     accountNotice = null;
@@ -162,6 +166,9 @@
     try {
       await app.refresh();
       if (reconnecting) {
+        if (account.auth_type === "proton") {
+          app.clearProtonAccessLimited(account.username);
+        }
         void app.syncAll();
         accountNotice = `${provider} account reconnected.`;
       } else {
@@ -335,6 +342,7 @@
     accountError = null;
     try {
       await api.deleteAccount(account.id);
+      app.clearProtonAccessLimited(account.username);
       if (accountEditingId === account.id) {
         showAccountForm = false;
         accountEditingId = null;
@@ -699,6 +707,7 @@
             onSaved={handleSaved}
             onRemoved={handleRemoved}
             onColorChanged={handleColorChanged}
+            onReconnect={openReconnect}
           />
         {/key}
       {/if}
