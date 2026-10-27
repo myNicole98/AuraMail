@@ -1980,6 +1980,7 @@ mod tests {
                 mime_type: "application/pdf".into(),
                 size: 5,
                 content_id: Some("cid-1".into()),
+                is_inline: false,
                 data: b"hello".to_vec(),
             }],
             ..parse::ParsedMessage::default()

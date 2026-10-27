@@ -23,6 +23,7 @@ pub struct ParsedAttachment {
     pub mime_type: String,
     pub size: usize,
     pub content_id: Option<String>,
+    pub is_inline: bool,
     pub data: Vec<u8>,
 }
 
@@ -45,11 +46,9 @@ pub struct ParsedMessage {
 pub fn parse_headers(raw: &[u8]) -> ParsedHeaders {
     match MessageParser::default().parse(raw) {
         Some(message) => {
-            let headers = headers_from(&message);
-            ParsedHeaders {
-                has_attachments: headers.has_attachments || has_attachment_hint(raw),
-                ..headers
-            }
+            let mut headers = headers_from(&message);
+            headers.has_attachments = has_attachment_hint(raw);
+            headers
         }
         None => ParsedHeaders::default(),
     }
@@ -66,6 +65,7 @@ pub fn parse_headers_with_preview(raw: &[u8], preview: &[u8]) -> ParsedHeaders {
     let Some(message) = MessageParser::default().parse(&combined) else {
         return headers;
     };
+    headers.has_attachments |= has_attachment_hint(&combined);
     let text = message
         .body_text(0)
         .map(|body| body.into_owned())
@@ -95,6 +95,9 @@ pub fn parse_message(raw: &[u8]) -> ParsedMessage {
                 mime_type: mime_type(part),
                 size: data.len(),
                 content_id: part.content_id().map(str::to_string),
+                is_inline: part
+                    .content_disposition()
+                    .is_some_and(|disposition| disposition.is_inline()),
                 data,
             }
         })
@@ -216,8 +219,6 @@ fn mime_type(part: &mail_parser::MessagePart<'_>) -> String {
 fn has_attachment_hint(raw: &[u8]) -> bool {
     let text = String::from_utf8_lossy(raw).to_ascii_lowercase();
     text.contains("content-disposition: attachment")
-        || text.contains("content-type: multipart/mixed")
-        || text.contains("content-type: multipart/related")
 }
 
 #[cfg(test)]
@@ -245,8 +246,24 @@ mod tests {
             vec!["grace@example.com", "me@example.com"]
         );
         assert_eq!(headers.cc_addrs, vec!["team@example.com"]);
-        assert!(headers.has_attachments);
+        assert!(!headers.has_attachments);
         assert!(headers.date > 1_700_000_000);
+    }
+
+    #[test]
+    fn preview_detects_attachment_parts_without_trusting_multipart_alone() {
+        let raw = b"From: Ada <ada@example.com>\r\nSubject: Files\r\nContent-Type: multipart/mixed; boundary=\"b\"\r\n\r\n";
+        let preview = b"--b\r\nContent-Type: text/plain\r\n\r\nHello\r\n--b\r\nContent-Type: application/pdf; name=\"report.pdf\"\r\nContent-Disposition: attachment; filename=\"report.pdf\"\r\n\r\n";
+        let headers = parse_headers_with_preview(raw, preview);
+        assert!(headers.has_attachments);
+    }
+
+    #[test]
+    fn inline_multipart_without_attachment_disposition_is_not_an_attachment() {
+        let raw = b"From: Ada <ada@example.com>\r\nSubject: Newsletter\r\nContent-Type: multipart/related; boundary=\"b\"\r\n\r\n";
+        let preview = b"--b\r\nContent-Type: text/html\r\n\r\n<p>Hello</p>\r\n--b\r\nContent-Type: image/png\r\nContent-ID: <logo@example>\r\n\r\n";
+        let headers = parse_headers_with_preview(raw, preview);
+        assert!(!headers.has_attachments);
     }
 
     #[test]

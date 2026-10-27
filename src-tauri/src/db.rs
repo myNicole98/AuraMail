@@ -856,6 +856,23 @@ impl Database {
             )?;
             conn.pragma_update(None, "user_version", 30)?;
         }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 31 {
+            // Older syncs guessed attachments from multipart headers, which
+            // flagged newsletters with inline images. Rebuild the flag from
+            // cached MIME parts and stop trusting header-only guesses.
+            conn.execute_batch(
+                "update messages
+                 set has_attachments = case
+                   when body_cached = 0 then 0
+                   when exists (
+                     select 1 from attachments a where a.message_id = messages.id
+                   ) then 1
+                   else 0
+                 end;",
+            )?;
+            conn.pragma_update(None, "user_version", 31)?;
+        }
         conn.execute_batch(
             "create index if not exists idx_messages_folder_date on messages(folder_id, date desc);
              create index if not exists idx_messages_account_date on messages(account_id, date desc);
@@ -971,7 +988,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
         let tabs: i64 = conn
             .query_row("select count(*) from tabs", [], |row| row.get(0))
             .unwrap();
@@ -1127,7 +1144,7 @@ mod tests {
             .unwrap();
         assert_eq!(bodies, 0);
         assert_eq!(cached, 0);
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
     }
 
     #[test]
@@ -1154,7 +1171,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table, 1);
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
     }
 
     #[test]
@@ -1181,7 +1198,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(cached, 0);
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
     }
 
     #[test]
@@ -1224,7 +1241,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
     }
 
     #[test]
@@ -1305,6 +1322,6 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!((auth_type, provider, version), (1, 1, 30));
+        assert_eq!((auth_type, provider, version), (1, 1, 31));
     }
 }

@@ -2446,6 +2446,7 @@ mod tests {
             mime_type: "application/octet-stream".into(),
             size,
             content_id: content_id.map(str::to_string),
+            is_inline: false,
             data: Vec::new(),
         }
     }

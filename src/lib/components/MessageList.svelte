@@ -6,9 +6,7 @@
     FileText,
     Paperclip,
     PenLine,
-    Reply,
     Search,
-    Star,
     Tags,
     Trash2,
     X
@@ -197,6 +195,16 @@
       case "mark-unread":
         void app.markMessages(ids, false);
         break;
+      case "star": {
+        const starred = !message.is_starred;
+        for (const id of ids) {
+          const candidate = app.messages.find((item) => item.id === id);
+          if (candidate && candidate.is_starred !== starred) {
+            void app.toggleStarMessage(id);
+          }
+        }
+        break;
+      }
       case "move": {
         const targetIds = ids.filter(
           (id) =>
@@ -527,21 +535,9 @@
             {#if message.has_attachments}
               <span class="meta-icon" title="Has attachment"><Paperclip size={13} /></span>
             {/if}
-            {#if message.is_starred}
-              <span class="meta-icon starred" title="Starred"><Star size={13} fill="currentColor" /></span>
-            {/if}
           </span>
         </button>
         <span class="row-actions">
-          <button
-            class="row-action"
-            type="button"
-            aria-label="Reply"
-            title="Reply"
-            onclick={() => void app.replyToMessage(message.id)}
-          >
-            <Reply size={13} />
-          </button>
           <button
             class="row-action"
             type="button"
@@ -556,7 +552,7 @@
             disabled={!app.aiConfigured || app.classifyBusy}
             onclick={() => void app.classifyMessageById(message.id)}
           >
-            <Tags size={13} />
+            <Tags size={16} />
           </button>
           {#if !inArchive && message.thread_has_inbox}
             <button
@@ -566,7 +562,7 @@
               title="Archive"
               onclick={() => void app.archiveThread(message.account_id, message.thread_key)}
             >
-              <Archive size={13} />
+              <Archive size={16} />
             </button>
           {/if}
           {#if !inTrash}
@@ -577,7 +573,7 @@
               title="Move to trash"
               onclick={() => void app.deleteMessageById(message.id)}
             >
-              <Trash2 size={13} />
+              <Trash2 size={16} />
             </button>
           {/if}
         </span>
@@ -814,7 +810,7 @@
     position: relative;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 0;
     width: 100%;
     padding: 0;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 38%, transparent);
@@ -848,15 +844,16 @@
   .row-actions {
     position: absolute;
     top: 50%;
-    right: 30px;
+    right: 8px;
     z-index: 1;
     display: flex;
     align-items: center;
-    gap: 1px;
+    gap: 0;
     padding: 2px;
+    border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
     border-radius: 8px;
-    background: var(--bg-hover);
-    box-shadow: -12px 0 14px color-mix(in srgb, var(--bg-hover) 82%, transparent);
+    background: var(--bg-raised);
+    box-shadow: -10px 0 12px color-mix(in srgb, var(--bg-hover) 78%, transparent);
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
@@ -873,16 +870,19 @@
   .row-action {
     display: grid;
     place-items: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 6px;
+    width: 30px;
+    height: 25px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
     color: var(--muted);
   }
   .row-action:hover:not(:disabled) {
-    color: var(--text);
     background: var(--bg-hover);
+    color: var(--text);
   }
   .row-action.danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
     color: var(--danger);
   }
   .row-action:disabled {
@@ -1057,9 +1057,6 @@
     flex: none;
     padding-top: 2px;
     color: var(--muted);
-  }
-  .starred {
-    color: var(--warning);
   }
   .empty {
     padding: 28px 16px;

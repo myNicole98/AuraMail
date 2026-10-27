@@ -63,11 +63,13 @@ pub fn load_detail(
     let credential = crate::mail_auth::credential_for(&account, secrets)?;
     let raw = client::fetch_message(&account, &credential, &folder.path, message.uid)?;
     let mut parsed = parse::parse_message(&raw);
+    let mut used = Vec::new();
     if let Some(html) = parsed.html_body.take() {
-        let (inlined, used) = render::inline_cid_images(&html, &parsed.attachments);
-        remove_inline_attachments(&mut parsed.attachments, &used);
+        let (inlined, rendered) = render::inline_cid_images(&html, &parsed.attachments);
+        used = rendered;
         parsed.html_body = Some(render::sanitize_html(&inlined));
     }
+    remove_inline_attachments(&mut parsed.attachments, &used);
     mail::cache_message_body(db, message_id, &parsed)
 }
 
@@ -196,14 +198,14 @@ fn remove_inline_attachments(
     attachments: &mut Vec<parse::ParsedAttachment>,
     used_content_ids: &[String],
 ) {
-    if used_content_ids.is_empty() {
-        return;
-    }
     let used = used_content_ids
         .iter()
         .cloned()
         .collect::<std::collections::HashSet<_>>();
     attachments.retain(|attachment| {
+        if attachment.is_inline {
+            return false;
+        }
         attachment
             .content_id
             .as_deref()
@@ -292,6 +294,7 @@ mod tests {
             mime_type: "image/png".into(),
             size: 3,
             content_id: content_id.map(str::to_string),
+            is_inline: content_id.is_some(),
             data: vec![1, 2, 3],
         }
     }
@@ -311,16 +314,15 @@ mod tests {
     }
 
     #[test]
-    fn removes_only_inline_cid_attachments_that_were_rendered() {
+    fn removes_inline_attachments_and_rendered_cid_parts() {
         let mut attachments = vec![
             attachment("logo.png", Some("<logo@example>")),
             attachment("invoice.pdf", None),
             attachment("unused.png", Some("unused@example")),
         ];
         remove_inline_attachments(&mut attachments, &["logo@example".into()]);
-        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments.len(), 1);
         assert_eq!(attachments[0].filename, "invoice.pdf");
-        assert_eq!(attachments[1].filename, "unused.png");
     }
 
     #[test]

@@ -526,6 +526,7 @@ mod tests {
             mime_type: "image/png".into(),
             size: 3,
             content_id: Some("<logo@example>".into()),
+            is_inline: true,
             data: vec![1, 2, 3],
         };
         let (html, used) = inline_cid_images(

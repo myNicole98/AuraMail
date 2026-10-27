@@ -145,19 +145,53 @@ function decodeText(value: string): string {
   return new DOMParser().parseFromString(value, "text/html").body.textContent ?? value;
 }
 
-export function stripDuplicatePreheader(html: string, subject: string): string {
-  const leading = /^\s*([^<]+)\s*/.exec(html);
-  if (!leading) return html;
-  const text = normalizeSubject(decodeText(leading[1]));
-  const expected = normalizeSubject(subject);
-  if (!text || !expected) return html;
+function repeatsSubject(text: string, expected: string): boolean {
+  if (!text || !expected) return false;
   const shortest = Math.min(text.length, expected.length);
-  const same = text === expected;
-  const related =
-    shortest >= 16 &&
-    (text.includes(expected) || expected.includes(text));
-  if (!same && !related) return html;
-  return html.slice(leading[0].length);
+  return (
+    text === expected ||
+    (shortest >= 16 && (text.includes(expected) || expected.includes(text)))
+  );
+}
+
+function leadingNoiseLength(html: string): number {
+  const noise =
+    /^\s*(?:<!--[\s\S]*?-->|<(style|script|title|head)\b[^>]*>[\s\S]*?<\/\1\s*>|<(?:meta|link)\b[^>]*\/?>)/i;
+  let rest = html;
+  for (;;) {
+    const match = noise.exec(rest);
+    if (!match) break;
+    rest = rest.slice(match[0].length);
+  }
+  return html.length - rest.length;
+}
+
+export function stripDuplicatePreheader(html: string, subject: string): string {
+  const expected = normalizeSubject(subject);
+  if (!expected) return html;
+
+  const offset = leadingNoiseLength(html);
+  const rest = html.slice(offset);
+
+  const leadingText = /^\s*([^<]+)\s*/.exec(rest);
+  if (leadingText) {
+    const text = normalizeSubject(decodeText(leadingText[1]));
+    const remaining = rest.slice(leadingText[0].length);
+    if (repeatsSubject(text, expected) && remaining.trim()) {
+      return html.slice(0, offset) + remaining;
+    }
+  }
+
+  const leadingElement = /^\s*<([a-z][\w:-]*)(?:\s[^>]*)?>([^<]*)<\/\1>\s*/i.exec(
+    rest
+  );
+  if (!leadingElement) return html;
+  const tag = leadingElement[1].toLowerCase();
+  if (tag !== "div" && tag !== "p" && tag !== "span") return html;
+  const text = normalizeSubject(decodeText(leadingElement[2]));
+  const remaining = rest.slice(leadingElement[0].length);
+  if (!repeatsSubject(text, expected) || !remaining.trim()) return html;
+  return html.slice(0, offset) + remaining;
 }
 
 type Rgba = { r: number; g: number; b: number; a: number };

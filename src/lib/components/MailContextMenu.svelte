@@ -9,6 +9,7 @@
     Reply,
     ReplyAll,
     Send,
+    Star,
     Tags,
     Trash2
   } from "lucide-svelte";
@@ -24,6 +25,7 @@
           | "forward"
           | "mark-read"
           | "mark-unread"
+          | "star"
           | "archive"
           | "delete";
       }
@@ -164,6 +166,14 @@
       <MailOpen size={14} />
       Mark read
     {/if}
+  </button>
+  <button
+    type="button"
+    role="menuitem"
+    onclick={() => choose({ type: "star" })}
+  >
+    <Star size={14} fill={message.is_starred ? "currentColor" : "none"} />
+    {message.is_starred ? "Unstar" : "Star"}
   </button>
   <button
     type="button"
