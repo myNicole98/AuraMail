@@ -86,6 +86,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang lld llvm nsis
+          # Ubuntu's clang package does not ship the clang-cl driver name.
+          printf '#!/bin/sh\nexec /usr/bin/clang --driver-mode=cl "$@"\n' \
+            | sudo tee /usr/local/bin/clang-cl >/dev/null
+          sudo chmod +x /usr/local/bin/clang-cl
           LLVM_RC="$(find /usr/lib/llvm-*/bin -type f -name llvm-rc | sort -V | tail -n1)"
           test -n "$LLVM_RC"
           echo "$(dirname "$LLVM_RC")" >> "$GITHUB_PATH"
