@@ -1252,6 +1252,7 @@ pub async fn open_compose_window(
     .inner_size(760.0, 720.0)
     .min_inner_size(520.0, 500.0)
     .center()
+    .disable_drag_drop_handler()
     .build()
     .map_err(|error| AppError::Message(format!("could not open compose window: {error}")))?;
     Ok(())
