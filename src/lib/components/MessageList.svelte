@@ -209,6 +209,9 @@
       case "categorize":
         void app.categorizeMessages(ids, action.tabId);
         break;
+      case "classify":
+        void app.classifyMessagesByIds(ids);
+        break;
       case "archive":
         void app.archiveMessages(ids);
         break;
@@ -600,6 +603,7 @@
       message={contextMenu.message}
       folders={app.folders}
       tabs={app.tabs}
+      canClassify={app.aiConfigured && !app.classifyBusy}
       onAction={runContextAction}
       onClose={() => (contextMenu = null)}
     />

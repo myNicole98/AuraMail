@@ -28,7 +28,8 @@
           | "delete";
       }
     | { type: "move"; folderId: number }
-    | { type: "categorize"; tabId: number | null };
+    | { type: "categorize"; tabId: number | null }
+    | { type: "classify" };
 
   let {
     x,
@@ -36,6 +37,7 @@
     message,
     folders,
     tabs,
+    canClassify = true,
     onAction,
     onClose
   }: {
@@ -44,6 +46,7 @@
     message: ThreadMessage;
     folders: Folder[];
     tabs: Tab[];
+    canClassify?: boolean;
     onAction: (action: MailContextAction) => void;
     onClose: () => void;
   } = $props();
@@ -65,7 +68,7 @@
     folders.find((folder) => folder.id === message.folder_id)?.role === "trash"
   );
   let left = $derived(Math.max(8, Math.min(x, window.innerWidth - 232)));
-  let top = $derived(Math.max(8, Math.min(y, window.innerHeight - 336)));
+  let top = $derived(Math.max(8, Math.min(y, window.innerHeight - 380)));
 
   function close() {
     if (closed) return;
@@ -185,8 +188,17 @@
     onpointerleave={cancelSubmenuHover}
   >
     <Tags size={14} />
-    Categorize
+    Assign category
     <span class="chevron"><ChevronRight size={13} /></span>
+  </button>
+  <button
+    type="button"
+    role="menuitem"
+    disabled={!canClassify}
+    onclick={() => choose({ type: "classify" })}
+  >
+    <Tags size={14} />
+    Categorize
   </button>
   {#if submenu === "move"}
     <div class="submenu move" role="menu" aria-label="Move to folder">
@@ -204,7 +216,7 @@
       {/each}
     </div>
   {:else if submenu === "categorize"}
-    <div class="submenu categorize" role="menu" aria-label="Categorize">
+    <div class="submenu categorize" role="menu" aria-label="Assign category">
       <button
         type="button"
         role="menuitem"
@@ -296,6 +308,13 @@
   }
   .mail-context-menu button.danger:hover {
     background: color-mix(in srgb, var(--danger) 12%, transparent);
+  }
+  .mail-context-menu > button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .mail-context-menu > button:disabled:hover {
+    background: transparent;
   }
   .divider {
     height: 1px;
