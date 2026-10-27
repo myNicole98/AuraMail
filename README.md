@@ -66,6 +66,7 @@ AuraAI is an optional companion ran through a local or an OpenAI cloud provider 
 
 * [x] IMAP/SMTP Accounts support.
 * [~] Oauth with major providers (e.g. Google, Microsoft)
+* [x] Native Proton Mail bridge with hydroxide (aka login with a free account)
 * [x] Basic email workflow
 * [x] Theming with Matugen support
 * [x] AI: Mail sorting, context aware replies
@@ -76,6 +77,7 @@ AuraAI is an optional companion ran through a local or an OpenAI cloud provider 
 * [] CSD work
 * [] WCAG 1.4.12 compliance
 * [] Localization support with human assisted translation
+* [] Calendar and contacts
 
 ## Contributing
 
@@ -86,3 +88,4 @@ Thanks to the following tools developing this project is possible:
 
 - <a href="https://tauri.app">Tauri</a>
 - <a href="https://svelte.dev">Svelte</a>
+- <a href="https://codeberg.org/emersion/hydroxide">Hydroxide</a>
