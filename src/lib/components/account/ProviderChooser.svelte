@@ -85,7 +85,9 @@
 
   {#if onProton}
     <button type="button" class="provider-button" onclick={onProton}>
-      <span class="provider-mark proton" aria-hidden="true">P</span>
+      <span class="provider-mark proton" aria-hidden="true">
+        <img class="provider-logo" src="/proton.svg" alt="" />
+      </span>
       <span class="provider-name">Proton</span>
     </button>
   {/if}
@@ -146,13 +148,16 @@
     background: #fff;
   }
   .provider-mark.proton {
-    background: #6d4aff;
-    color: #fff;
+    background: transparent;
   }
   .provider-logo {
     width: 18px;
     height: 18px;
     object-fit: contain;
+  }
+  .provider-mark.proton .provider-logo {
+    width: 24px;
+    height: 24px;
   }
   .provider-mark.microsoft {
     grid-template-columns: repeat(2, 8px);

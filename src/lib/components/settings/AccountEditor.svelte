@@ -253,7 +253,10 @@
     {#if oauth}
       <span class="provider-badge">{providerLabel}</span>
     {:else if proton}
-      <span class="provider-badge">Proton</span>
+      <span class="provider-badge">
+        <img src="/proton.svg" alt="" />
+        Proton
+      </span>
     {/if}
   </header>
 
@@ -524,6 +527,9 @@
     font-size: 10.5px;
   }
   .provider-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     padding: 2px 7px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -531,6 +537,11 @@
     font-size: 9px;
     font-weight: 700;
     text-transform: uppercase;
+  }
+  .provider-badge img {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
   }
   .grid {
     display: grid;

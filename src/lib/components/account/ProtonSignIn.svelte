@@ -216,7 +216,9 @@
 </script>
 
 <div class="proton-signin" data-testid="proton-signin">
-  <div class="provider-mark proton" aria-hidden="true">P</div>
+  <div class="provider-mark proton" aria-hidden="true">
+    <img src="/proton.svg" alt="" />
+  </div>
 
   {#if missingAccount}
     <p class="proton-status" role="status">
@@ -417,11 +419,11 @@
     place-items: center;
     width: 42px;
     height: 42px;
+  }
+  .provider-mark img {
+    width: 42px;
+    height: 42px;
     border-radius: 12px;
-    background: #6d4aff;
-    color: #fff;
-    font-size: 19px;
-    font-weight: 700;
   }
   .proton-status {
     margin: 0;
