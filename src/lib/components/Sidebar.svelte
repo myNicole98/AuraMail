@@ -284,7 +284,6 @@
       </div>
       <button
         class="icon-btn sync-btn"
-        class:spinning={statusState === "syncing"}
         type="button"
         aria-label="Sync now"
         title="Sync now"
@@ -357,9 +356,6 @@
   .icon-btn:hover:not(:disabled) {
     color: var(--text);
     background: var(--bg-hover);
-  }
-  .sync-btn.spinning :global(svg) {
-    animation: spin 1s linear infinite;
   }
   .icon-btn:disabled {
     cursor: default;
@@ -558,11 +554,6 @@
   @keyframes pulse {
     50% {
       opacity: 0.45;
-    }
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
     }
   }
 </style>

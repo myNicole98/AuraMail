@@ -170,7 +170,7 @@ class AppStore {
   get syncLabel(): string {
     const accounts = this.activeAccounts;
     if (accounts.length === 0) return "No accounts";
-    if (this.syncing) return "Syncing…";
+    if (this.syncState === "syncing") return "Syncing…";
     if (this.syncState === "offline") return "Offline · retrying…";
     if (this.syncState === "reauth") return "Reconnect needed";
     if (this.syncState === "error") return "Sync failed · retrying…";
