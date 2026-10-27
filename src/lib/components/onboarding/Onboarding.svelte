@@ -107,6 +107,7 @@
   }
   .preview-side {
     min-width: 0;
+    min-height: 0;
     padding: 18px;
     border-right: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
     background: color-mix(in srgb, var(--bg) 10%, transparent);
@@ -116,6 +117,7 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
     padding: 24px clamp(20px, 4vw, 54px) 20px;
     background: color-mix(in srgb, var(--bg) 24%, transparent);
   }
@@ -157,9 +159,23 @@
     display: flex;
     flex: 0 0 100%;
     min-width: 0;
+    min-height: 0;
     height: 100%;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 8px 12px 8px 8px;
+    scrollbar-width: thin;
+  }
+  .step-panel::-webkit-scrollbar {
+    display: block;
+    width: 6px;
+  }
+  .step-panel::-webkit-scrollbar-thumb {
+    border-radius: 99px;
+    background: color-mix(in srgb, var(--muted) 35%, transparent);
+  }
+  .step-panel::-webkit-scrollbar-track {
+    background: transparent;
   }
   .step-panel > :global(*) {
     width: min(100%, 620px);

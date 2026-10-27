@@ -3,6 +3,7 @@
   import {
     MAX_UI_SCALE,
     MIN_UI_SCALE,
+    normalizeUiScale,
     snapUiScale,
     UI_SCALE_LABELS,
     UI_SCALE_STOPS
@@ -21,13 +22,36 @@
   }: { onBack: () => void; onNext: () => void } = $props();
 
   let scalePreview = $state(appearance.uiScale);
+  let scaleText = $state(String(appearance.uiScale));
+
+  function syncScale(percent: number) {
+    scalePreview = percent;
+    scaleText = String(percent);
+  }
 
   function previewScale(event: Event) {
-    scalePreview = snapUiScale(Number((event.currentTarget as HTMLInputElement).value));
+    syncScale(snapUiScale(Number((event.currentTarget as HTMLInputElement).value)));
   }
 
   function commitScale() {
     if (scalePreview !== appearance.uiScale) appearance.setUiScale(scalePreview);
+  }
+
+  function commitScaleInput() {
+    const raw = scaleText.trim();
+    const numeric = Number(raw);
+    const next =
+      raw !== "" && Number.isFinite(numeric)
+        ? normalizeUiScale(numeric)
+        : appearance.uiScale;
+    syncScale(next);
+    if (next !== appearance.uiScale) appearance.setUiScale(next);
+  }
+
+  function commitScaleOnEnter(event: KeyboardEvent) {
+    if (event.key !== "Enter") return;
+    commitScaleInput();
+    (event.currentTarget as HTMLInputElement).blur();
   }
 
   function scalePosition(value: number): string {
@@ -47,8 +71,22 @@
   <section class="control-card">
     <div class="control-head">
       <span class="icon"><Type size={14} /></span>
-      <div><strong>Text size</strong></div>
-      <output>{scalePreview}%</output>
+      <div><strong>UI size</strong></div>
+      <label class="scale-value">
+        <input
+          type="number"
+          min={MIN_UI_SCALE}
+          max={MAX_UI_SCALE}
+          step="1"
+          value={scaleText}
+          aria-label="UI size percentage"
+          oninput={(event) => (scaleText = event.currentTarget.value)}
+          onchange={commitScaleInput}
+          onblur={commitScaleInput}
+          onkeydown={commitScaleOnEnter}
+        />
+        <span>%</span>
+      </label>
     </div>
     <div class="range-wrap" style={`--fill:${fill}`}>
       <input
@@ -57,7 +95,7 @@
         max={MAX_UI_SCALE}
         step="1"
         value={scalePreview}
-        aria-label="Text size"
+        aria-label="UI size"
         aria-valuetext={`${scalePreview}%`}
         oninput={previewScale}
         onchange={commitScale}
@@ -133,7 +171,34 @@
   }
   .control-head strong,
   .copy strong { display: block; color: var(--text-strong); font-size: 11px; }
-  .control-head output { margin-left: auto; color: var(--accent); font-size: 11px; font-weight: 700; }
+  .scale-value {
+    display: flex;
+    align-items: center;
+    flex: none;
+    gap: 4px;
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 10px;
+  }
+  .scale-value input {
+    width: 76px;
+    min-width: 76px;
+    height: 28px;
+    padding: 0 6px;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bg) 55%, var(--bg-raised));
+    color: var(--accent);
+    font-size: 10.5px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .scale-value input:focus-visible {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+  }
   .icon {
     display: grid;
     place-items: center;
