@@ -10,6 +10,7 @@
     SlidersHorizontal,
     X
   } from "lucide-svelte";
+  import { appVersion } from "../version";
   import AccessibilitySettings from "./settings/AccessibilitySettings.svelte";
   import AccountSettings from "./settings/AccountSettings.svelte";
   import AiSettings from "./settings/AiSettings.svelte";
@@ -186,7 +187,7 @@
   </div>
 
   <footer class="settings-foot">
-    <span><b>About AuraMail</b> · Version 0.1.0</span>
+    <span><b>About AuraMail</b> · Version {appVersion}</span>
     <span>Local-first mail</span>
   </footer>
 </div>

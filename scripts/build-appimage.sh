@@ -3,10 +3,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 read -r -a DOCKER_CMD <<< "${DOCKER:-docker}"
-VERSION="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/src-tauri/tauri.conf.json" | head -n1)"
+VERSION="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/package.json" | head -n1)"
 
 if [ -z "$VERSION" ]; then
-  echo "Could not read version from src-tauri/tauri.conf.json" >&2
+  echo "Could not read version from package.json" >&2
   exit 1
 fi
 
