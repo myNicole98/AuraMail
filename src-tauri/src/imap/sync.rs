@@ -14,7 +14,7 @@ use crate::imap::client;
 use crate::mail::{self, parse};
 use crate::secrets::SecretStore;
 
-const MAX_SYNC_BACKOFF_SECS: u64 = 15 * 60;
+const SYNC_RETRY_SECS: u64 = 10;
 const VOICE_REFRESH_SECS: i64 = 60 * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +62,6 @@ struct SyncOutcome {
 
 pub struct SyncResult {
     pub inserted: Vec<i64>,
-    pub auto_classify: Vec<i64>,
 }
 
 struct FolderSyncGuard<'a> {
@@ -130,34 +129,37 @@ pub fn next_action(cursor: FolderCursor, uid_validity: u32, latest_uid: u32) -> 
     }
 }
 
-pub fn next_sync_delay(base_secs: u64, current_secs: u64, success: bool) -> u64 {
-    let base = base_secs.max(1);
+pub fn next_sync_delay(base_secs: u64, _current_secs: u64, success: bool) -> u64 {
     if success {
-        base
+        base_secs.max(1)
     } else {
-        current_secs
-            .saturating_mul(2)
-            .clamp(base, MAX_SYNC_BACKOFF_SECS.max(base))
+        SYNC_RETRY_SECS
     }
+}
+
+fn sync_order(folders: &mut [mail::Folder]) {
+    folders.sort_by_key(|folder| match folder.role.as_str() {
+        "inbox" => 0,
+        "sent" => 1,
+        _ => 2,
+    });
 }
 
 pub fn sync_account(
     app: &AppHandle,
-    db: &Database,
-    secrets: &dyn SecretStore,
+    db: Arc<Database>,
+    secrets: Arc<dyn SecretStore>,
     syncing: &Mutex<HashSet<i64>>,
     account_id: i64,
 ) -> AppResult<SyncResult> {
-    let Some(account) = find_account(db, account_id)? else {
+    let Some(account) = find_account(db.as_ref(), account_id)? else {
         return Ok(SyncResult {
             inserted: Vec::new(),
-            auto_classify: Vec::new(),
         });
     };
     if !begin_sync(syncing, account_id) {
         return Ok(SyncResult {
             inserted: Vec::new(),
-            auto_classify: Vec::new(),
         });
     }
     let _guard = SyncGuard {
@@ -166,7 +168,7 @@ pub fn sync_account(
     };
 
     emit_status(app, account_id, "syncing", None);
-    match sync_account_inner(app, db, secrets, &account) {
+    match sync_account_inner(app, &db, &secrets, &account) {
         Ok(result) => {
             emit_status(app, account_id, "idle", None);
             Ok(result)
@@ -331,11 +333,11 @@ fn schedule_auto_voice(
 
 fn sync_account_inner(
     app: &AppHandle,
-    db: &Database,
-    secrets: &dyn SecretStore,
+    db: &Arc<Database>,
+    secrets: &Arc<dyn SecretStore>,
     account: &Account,
 ) -> AppResult<SyncResult> {
-    let credential = crate::mail_auth::credential_for(account, secrets)?;
+    let credential = crate::mail_auth::credential_for(account, secrets.as_ref())?;
     let mut session = client::open_session(account, &credential)?;
     let remote_folders = client::list_folders(&mut session)?;
     let remote_paths: Vec<String> = remote_folders
@@ -345,7 +347,7 @@ fn sync_account_inner(
     let mut folders = Vec::new();
     for remote in remote_folders {
         let folder = mail::upsert_folder(
-            db,
+            db.as_ref(),
             account.id,
             &remote.path,
             &remote.name,
@@ -354,17 +356,26 @@ fn sync_account_inner(
         )?;
         folders.push(folder);
     }
-    mail::reconcile_folders(db, account.id, &remote_paths)?;
+    mail::reconcile_folders(db.as_ref(), account.id, &remote_paths)?;
+    sync_order(&mut folders);
 
     let result = {
         let mut first_error = None;
         let mut inserted = Vec::new();
-        let mut auto_classify = Vec::new();
         for folder in folders {
-            match sync_folder(&mut session, app, db, account, &folder, true) {
+            match sync_folder(&mut session, app, db.as_ref(), account, &folder, true) {
                 Ok(mut outcome) => {
+                    let classify_ids = std::mem::take(&mut outcome.auto_classify);
+                    if !classify_ids.is_empty() {
+                        schedule_auto_classify(
+                            app.clone(),
+                            Arc::clone(db),
+                            Arc::clone(secrets),
+                            account.id,
+                            classify_ids,
+                        );
+                    }
                     inserted.append(&mut outcome.inserted);
-                    auto_classify.append(&mut outcome.auto_classify);
                 }
                 Err(error) => {
                     if first_error.is_none() {
@@ -375,10 +386,7 @@ fn sync_account_inner(
         }
         match first_error {
             Some(error) => Err(error),
-            None => Ok(SyncResult {
-                inserted,
-                auto_classify,
-            }),
+            None => Ok(SyncResult { inserted }),
         }
     };
     let _ = session.logout();
@@ -387,25 +395,33 @@ fn sync_account_inner(
 
 fn sync_inbox_inner(
     app: &AppHandle,
-    db: &Database,
-    secrets: &dyn SecretStore,
+    db: &Arc<Database>,
+    secrets: &Arc<dyn SecretStore>,
     account: &Account,
 ) -> AppResult<SyncResult> {
-    let credential = crate::mail_auth::credential_for(account, secrets)?;
+    let credential = crate::mail_auth::credential_for(account, secrets.as_ref())?;
     let mut session = client::open_session(account, &credential)?;
-    let folders = mail::list_folders(db, Some(account.id), None)?
+    let folders = mail::list_folders(db.as_ref(), Some(account.id), None)?
         .into_iter()
         .filter(|folder| folder.role == "inbox")
         .collect::<Vec<_>>();
     let result = {
         let mut first_error = None;
         let mut inserted = Vec::new();
-        let mut auto_classify = Vec::new();
         for folder in folders {
-            match sync_folder(&mut session, app, db, account, &folder, true) {
+            match sync_folder(&mut session, app, db.as_ref(), account, &folder, true) {
                 Ok(mut outcome) => {
+                    let classify_ids = std::mem::take(&mut outcome.auto_classify);
+                    if !classify_ids.is_empty() {
+                        schedule_auto_classify(
+                            app.clone(),
+                            Arc::clone(db),
+                            Arc::clone(secrets),
+                            account.id,
+                            classify_ids,
+                        );
+                    }
                     inserted.append(&mut outcome.inserted);
-                    auto_classify.append(&mut outcome.auto_classify);
                 }
                 Err(error) => {
                     if first_error.is_none() {
@@ -416,10 +432,7 @@ fn sync_inbox_inner(
         }
         match first_error {
             Some(error) => Err(error),
-            None => Ok(SyncResult {
-                inserted,
-                auto_classify,
-            }),
+            None => Ok(SyncResult { inserted }),
         }
     };
     let _ = session.logout();
@@ -428,28 +441,26 @@ fn sync_inbox_inner(
 
 pub fn sync_inbox(
     app: &AppHandle,
-    db: &Database,
-    secrets: &dyn SecretStore,
+    db: Arc<Database>,
+    secrets: Arc<dyn SecretStore>,
     syncing: &Mutex<HashSet<i64>>,
     account_id: i64,
 ) -> AppResult<SyncResult> {
-    let Some(account) = find_account(db, account_id)? else {
+    let Some(account) = find_account(db.as_ref(), account_id)? else {
         return Ok(SyncResult {
             inserted: Vec::new(),
-            auto_classify: Vec::new(),
         });
     };
     if !begin_sync(syncing, account_id) {
         return Ok(SyncResult {
             inserted: Vec::new(),
-            auto_classify: Vec::new(),
         });
     }
     let _guard = SyncGuard {
         syncing,
         account_id,
     };
-    match sync_inbox_inner(app, db, secrets, &account) {
+    match sync_inbox_inner(app, &db, &secrets, &account) {
         Ok(result) => {
             emit_status(app, account_id, "idle", None);
             Ok(result)
@@ -678,25 +689,25 @@ pub fn start_polling(
                                 if full {
                                     sync_account(
                                         &task_app,
-                                        &task_db,
-                                        task_secrets.as_ref(),
+                                        task_db,
+                                        task_secrets,
                                         &task_syncing,
                                         account_id,
                                     )
                                 } else {
                                     sync_inbox(
                                         &task_app,
-                                        &task_db,
-                                        task_secrets.as_ref(),
+                                        task_db,
+                                        task_secrets,
                                         &task_syncing,
                                         account_id,
                                     )
                                 }
                             })
                             .await;
-                            let (inserted, auto_classify, success) = match result {
-                                Ok(Ok(result)) => (result.inserted, result.auto_classify, true),
-                                _ => (Vec::new(), Vec::new(), false),
+                            let (inserted, success) = match result {
+                                Ok(Ok(result)) => (result.inserted, true),
+                                _ => (Vec::new(), false),
                             };
                             if full && success {
                                 since_full = 0;
@@ -705,7 +716,6 @@ pub fn start_polling(
                                 fast
                             } else {
                                 next_sync_delay(fast, delay, false)
-                                    .min(interval.max(fast))
                             };
                             if !inserted.is_empty() {
                                 let sent_inserted = inserted.iter().any(|id| {
@@ -725,13 +735,6 @@ pub fn start_polling(
                                     inserted.clone(),
                                 );
                                 let rail_ids = inserted.clone();
-                                schedule_auto_classify(
-                                    app.clone(),
-                                    Arc::clone(&db),
-                                    Arc::clone(&secrets),
-                                    account_id,
-                                    auto_classify,
-                                );
                                 schedule_auto_rail(
                                     Arc::clone(&db),
                                     Arc::clone(&secrets),
@@ -776,6 +779,20 @@ impl Drop for SyncGuard<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_folder(id: i64, name: &str, role: &str) -> mail::Folder {
+        mail::Folder {
+            id,
+            account_id: 1,
+            path: name.into(),
+            name: name.into(),
+            role: role.into(),
+            delimiter: "/".into(),
+            uid_validity: 1,
+            highest_uid: 0,
+            unread_count: 0,
+        }
+    }
 
     fn sample_message(id: i64, date: i64, thread_key: &str) -> mail::Message {
         mail::Message {
@@ -892,11 +909,25 @@ mod tests {
     }
 
     #[test]
-    fn backoff_doubles_until_cap_and_resets_on_success() {
-        assert_eq!(next_sync_delay(120, 120, false), 240);
-        assert_eq!(next_sync_delay(120, 480, false), 900);
-        assert_eq!(next_sync_delay(120, 900, false), 900);
-        assert_eq!(next_sync_delay(120, 900, true), 120);
+    fn sync_failures_retry_after_ten_seconds() {
+        assert_eq!(next_sync_delay(30, 30, false), 10);
+        assert_eq!(next_sync_delay(30, 10, false), 10);
+        assert_eq!(next_sync_delay(30, 30, true), 30);
+    }
+
+    #[test]
+    fn syncs_inbox_before_other_folders() {
+        let mut folders = vec![
+            sample_folder(1, "Sent", "sent"),
+            sample_folder(2, "All Mail", "all"),
+            sample_folder(3, "INBOX", "inbox"),
+            sample_folder(4, "Archive", "archive"),
+        ];
+        sync_order(&mut folders);
+        assert_eq!(
+            folders.iter().map(|folder| folder.role.as_str()).collect::<Vec<_>>(),
+            vec!["inbox", "sent", "all", "archive"]
+        );
     }
 
     #[test]

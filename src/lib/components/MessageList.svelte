@@ -322,11 +322,11 @@
     </div>
   {/if}
 
-  {#if app.error || app.syncState === "offline" || app.syncState === "error" || app.syncState === "reauth"}
+  {#if app.error || app.syncState === "reauth"}
     <div
       class="status-banner"
-      class:error={Boolean(app.error) || app.syncState === "error" || app.syncState === "reauth"}
-      role={app.syncState === "offline" ? "status" : "alert"}
+      class:error={Boolean(app.error) || app.syncState === "reauth"}
+      role="alert"
     >
       <CircleAlert size={14} />
       {#if app.syncState === "reauth"}
@@ -344,13 +344,7 @@
         >Open account settings</button>
       {:else}
         <span>
-          {#if app.error}
-            {app.error}
-          {:else if app.syncState === "offline"}
-            You're offline. Showing cached mail.
-          {:else}
-            Sync failed. Showing cached mail.
-          {/if}
+          {app.error}
         </span>
       {/if}
     </div>

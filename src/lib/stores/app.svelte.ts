@@ -171,9 +171,9 @@ class AppStore {
     const accounts = this.activeAccounts;
     if (accounts.length === 0) return "No accounts";
     if (this.syncing) return "Syncing…";
-    if (this.syncState === "offline") return "Offline";
+    if (this.syncState === "offline") return "Offline · retrying…";
     if (this.syncState === "reauth") return "Reconnect needed";
-    if (this.syncState === "error") return "Sync error";
+    if (this.syncState === "error") return "Sync failed · retrying…";
     const count = accounts.length;
     return `Online · ${count} ${count === 1 ? "account" : "accounts"}`;
   }
@@ -1018,11 +1018,7 @@ class AppStore {
   async afterSent(accountId?: number): Promise<void> {
     this.closeCompose();
     if (accountId) {
-      try {
-        await api.syncAccount(accountId);
-      } catch (error) {
-        this.error = errorMessage(error);
-      }
+      await api.syncAccount(accountId).catch(() => {});
     }
     await this.refresh();
   }
@@ -1604,12 +1600,10 @@ class AppStore {
 
   async syncAll(): Promise<void> {
     if (!isTauri() || this.accounts.length === 0) return;
-    const results = await Promise.allSettled(
+    await Promise.allSettled(
       this.accounts.map((account) => api.syncAccount(account.id))
     );
     await this.refresh();
-    const failed = results.find((result) => result.status === "rejected");
-    if (failed?.status === "rejected") this.error = errorMessage(failed.reason);
   }
 
   async refreshAll(): Promise<void> {
