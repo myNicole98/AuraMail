@@ -27,6 +27,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/auramail-proton-bridge"],
     "icon": ["icons/icon.png"],
     "resources": {
       "../resources/matugen/auramail.toml": "matugen/auramail.toml",

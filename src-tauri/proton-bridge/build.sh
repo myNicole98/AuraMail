@@ -52,7 +52,9 @@ if ! command -v go >/dev/null 2>&1; then
 fi
 
 out="$script_dir/dist/auramail-proton-bridge"
-mkdir -p "$script_dir/dist"
+binaries_dir="$script_dir/../binaries"
+target="$binaries_dir/auramail-proton-bridge-x86_64-unknown-linux-gnu"
+mkdir -p "$script_dir/dist" "$binaries_dir"
 
 export CGO_ENABLED=0
 export GOOS=linux
@@ -63,4 +65,7 @@ export GOARCH=amd64
 go build -trimpath -buildvcs=false ./...
 go build -trimpath -buildvcs=false -ldflags='-s -w' -o "$out" ./cmd/auramail-proton-bridge
 
+install -m 755 "$out" "$target"
+
 echo "built $out"
+echo "installed $target"
