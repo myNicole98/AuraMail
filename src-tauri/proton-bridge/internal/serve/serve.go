@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
 
 	"codeberg.org/emersion/hydroxide/auth"
 	"codeberg.org/emersion/hydroxide/config"
@@ -221,6 +220,8 @@ func (w *lineWriter) write(value any) error {
 	return json.NewEncoder(w.w).Encode(value)
 }
 
+var errBridgeLocked = errors.New("another bridge process is already running")
+
 func acquireLock(dir string) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("serve: cannot create the bridge config directory %s: %w", dir, err)
@@ -236,9 +237,9 @@ func acquireLock(dir string) (*os.File, error) {
 		return nil, fmt.Errorf("serve: cannot open the bridge lock %s: %w", path, err)
 	}
 
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockFile(f); err != nil {
 		f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) {
+		if errors.Is(err, errBridgeLocked) {
 			return nil, fmt.Errorf("serve: another bridge process is already running (could not lock %s)", path)
 		}
 		return nil, fmt.Errorf("serve: cannot lock %s: %w", path, err)

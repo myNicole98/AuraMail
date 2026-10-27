@@ -246,20 +246,27 @@ impl ProtonBridge {
         &self,
         requested: BridgePorts,
     ) -> AppResult<(Child, Receiver<ReaderEvent>, StderrCapture)> {
-        let mut child = Command::new(&self.sidecar)
+        let mut command = Command::new(&self.sidecar);
+        command
             .arg("serve")
             .arg("--imap-port")
             .arg(requested.imap.to_string())
             .arg("--smtp-port")
             .arg(requested.smtp.to_string())
             .env("XDG_CONFIG_HOME", &self.config_dir)
+            .env("APPDATA", &self.config_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| {
-                AppError::Message("Proton support is unavailable in this build.".into())
-            })?;
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = command.spawn().map_err(|_| {
+            AppError::Message("Proton support is unavailable in this build.".into())
+        })?;
 
         let stdout = match child.stdout.take() {
             Some(stdout) => stdout,

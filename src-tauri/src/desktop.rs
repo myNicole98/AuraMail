@@ -343,6 +343,29 @@ fn play_path(path: &Path) -> bool {
             return true;
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Media::Audio::{
+            PlaySoundW, SND_FILENAME, SND_NODEFAULT,
+        };
+
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let played = unsafe {
+            PlaySoundW(
+                wide.as_ptr(),
+                std::ptr::null_mut(),
+                SND_FILENAME | SND_NODEFAULT,
+            )
+        };
+        if played != 0 {
+            return true;
+        }
+    }
     false
 }
 

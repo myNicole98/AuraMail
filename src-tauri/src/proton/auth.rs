@@ -885,16 +885,23 @@ impl ProtonBridge {
     }
 
     fn spawn_auth(&self) -> AppResult<AuthSpawn> {
-        let mut child = Command::new(&self.sidecar)
+        let mut command = Command::new(&self.sidecar);
+        command
             .arg("auth")
             .env("XDG_CONFIG_HOME", &self.config_dir)
+            .env("APPDATA", &self.config_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| {
-                AppError::Message("Proton support is unavailable in this build.".into())
-            })?;
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = command.spawn().map_err(|_| {
+            AppError::Message("Proton support is unavailable in this build.".into())
+        })?;
 
         let stdin = match child.stdin.take() {
             Some(stdin) => stdin,

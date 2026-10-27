@@ -51,21 +51,38 @@ if ! command -v go >/dev/null 2>&1; then
 	exit 1
 fi
 
-out="$script_dir/dist/auramail-proton-bridge"
+target_triple="${AURAMAIL_SIDECAR_TARGET:-x86_64-unknown-linux-gnu}"
+case "$target_triple" in
+	x86_64-unknown-linux-gnu)
+		export GOOS=linux
+		export GOARCH=amd64
+		extension=""
+		;;
+	x86_64-pc-windows-msvc)
+		export GOOS=windows
+		export GOARCH=amd64
+		extension=".exe"
+		;;
+	*)
+		echo "error: unsupported sidecar target: $target_triple" >&2
+		exit 1
+		;;
+esac
+
+out="$script_dir/dist/auramail-proton-bridge$extension"
 binaries_dir="$script_dir/../binaries"
-target="$binaries_dir/auramail-proton-bridge-x86_64-unknown-linux-gnu"
+target="$binaries_dir/auramail-proton-bridge-$target_triple$extension"
 mkdir -p "$script_dir/dist" "$binaries_dir"
 
 export CGO_ENABLED=0
-export GOOS=linux
-export GOARCH=amd64
 
 # Compile every vendored package so a broken patch fails the build, even when
 # the wrapper does not import every package yet.
 go build -trimpath -buildvcs=false ./...
 go build -trimpath -buildvcs=false -ldflags='-s -w' -o "$out" ./cmd/auramail-proton-bridge
 
-install -m 755 "$out" "$target"
+cp "$out" "$target"
+chmod 755 "$target" 2>/dev/null || true
 
 echo "built $out"
 echo "installed $target"
