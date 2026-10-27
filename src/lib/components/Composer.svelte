@@ -20,6 +20,7 @@
     X
   } from "lucide-svelte";
   import { api } from "../api";
+  import AttachmentIcon from "./AttachmentIcon.svelte";
   import {
     appendSignature,
     base64ByteLength,
@@ -906,7 +907,11 @@
   <div class="attachments">
     {#each attachments as attachment, index (index)}
       <span class="chip">
-        <Paperclip size={13} />
+        <AttachmentIcon
+          filename={attachment.name}
+          mimeType={attachment.mimeType}
+          size={13}
+        />
         <span class="chip-name">{attachment.name}</span>
         <span class="chip-size">{formatBytes(base64ByteLength(attachment.data))}</span>
         <button

@@ -5,14 +5,15 @@
     BrainCircuit,
     ChevronDown,
     Download,
+    FolderOpen,
     Forward,
     MoreHorizontal,
-    Paperclip,
     Reply,
     ReplyAll
   } from "lucide-svelte";
   import { api } from "../api";
   import { replyDraftInput } from "../compose";
+  import AttachmentIcon from "./AttachmentIcon.svelte";
   import AttachmentThumbnail from "./AttachmentThumbnail.svelte";
   import AuraRail from "./AuraRail.svelte";
   import MailBodyFrame from "./MailBodyFrame.svelte";
@@ -58,6 +59,11 @@
   let loadingImages = $state(false);
   let replyMenuOpen = $state(false);
   let preferencesVersion = $state(0);
+  type AttachmentDownload = {
+    status: "downloading" | "downloaded";
+    path?: string;
+  };
+  let attachmentDownloads = $state<Record<number, AttachmentDownload>>({});
   let cachedImageHtml = $derived(
     message && inlineImagesFor === message.id && inlineHtml
       ? inlineHtml
@@ -304,8 +310,43 @@
     }
   }
 
-  function download(attachment: Attachment) {
-    void app.downloadAttachment(attachment.id);
+  async function ensureDownloaded(attachment: Attachment): Promise<string | null> {
+    const current = attachmentDownloads[attachment.id];
+    if (current?.status === "downloaded" && current.path) return current.path;
+    if (current?.status === "downloading") return null;
+
+    attachmentDownloads = {
+      ...attachmentDownloads,
+      [attachment.id]: { status: "downloading" }
+    };
+    const path = await app.downloadAttachment(attachment.id);
+    if (!path) {
+      const next = { ...attachmentDownloads };
+      delete next[attachment.id];
+      attachmentDownloads = next;
+      return null;
+    }
+    attachmentDownloads = {
+      ...attachmentDownloads,
+      [attachment.id]: { status: "downloaded", path }
+    };
+    return path;
+  }
+
+  async function openAttachment(attachment: Attachment) {
+    const path = await ensureDownloaded(attachment);
+    if (!path) return;
+    try {
+      await api.openDownload(path);
+    } catch (error) {
+      app.error = errorMessage(error);
+    }
+  }
+
+  async function revealAttachment(attachment: Attachment) {
+    const path = attachmentDownloads[attachment.id]?.path;
+    if (!path) return;
+    void api.revealDownload(path).catch(() => {});
   }
 
   function remove() {
@@ -455,9 +496,6 @@
         {#if showLoading}<p>Loading message…</p>{/if}
       </div>
     {:else}
-      {#if app.attachmentNotice}
-        <p class="notice" role="status">{app.attachmentNotice}</p>
-      {/if}
       {#if app.error}
         <p class="reader-error" role="alert">{app.error}</p>
       {/if}
@@ -465,18 +503,42 @@
       {#if detail.attachments.length > 0}
         <div class="attachments" aria-label="Attachments">
           {#each detail.attachments as attachment (attachment.id)}
-            <button
-              class="chip"
-              type="button"
-              title={`Download ${attachment.filename}`}
-              onclick={() => download(attachment)}
-            >
-              <AttachmentThumbnail attachment={attachment} enabled={showThumbnails} />
-              <Paperclip size={13} />
-              <span class="chip-name">{attachment.filename}</span>
-              <span class="chip-size">{formatBytes(attachment.size)}</span>
-              <Download size={12} />
-            </button>
+            {@const downloadState = attachmentDownloads[attachment.id]}
+            <div class="chip" class:downloaded={downloadState?.status === "downloaded"}>
+              <button
+                class="chip-main"
+                type="button"
+                title={`Download and open ${attachment.filename}`}
+                aria-label={`Open ${attachment.filename}`}
+                disabled={downloadState?.status === "downloading"}
+                onclick={() => void openAttachment(attachment)}
+              >
+                <AttachmentThumbnail attachment={attachment} enabled={showThumbnails} />
+                <AttachmentIcon
+                  filename={attachment.filename}
+                  mimeType={attachment.mime_type}
+                  size={14}
+                />
+                <span class="chip-name">{attachment.filename}</span>
+                <span class="chip-size">{formatBytes(attachment.size)}</span>
+                {#if downloadState?.status === "downloading"}
+                  <span class="download-ring" aria-label="Downloading"></span>
+                {:else if downloadState?.status !== "downloaded"}
+                  <Download size={12} />
+                {/if}
+              </button>
+              {#if downloadState?.status === "downloaded" && downloadState.path}
+                <button
+                  class="chip-folder"
+                  type="button"
+                  title="Show in folder"
+                  aria-label={`Show ${attachment.filename} in folder`}
+                  onclick={() => void revealAttachment(attachment)}
+                >
+                  <FolderOpen size={13} />
+                </button>
+              {/if}
+            </div>
           {/each}
         </div>
       {/if}
@@ -822,21 +884,14 @@
   .mail-fade {
     position: relative;
   }
-  .reader-error,
-  .notice {
+  .reader-error {
     margin: 0 0 14px;
     padding: 8px 10px;
     border-radius: 8px;
     font-size: 12px;
     overflow-wrap: anywhere;
-  }
-  .reader-error {
     background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
     color: var(--danger, #e5484d);
-  }
-  .notice {
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--accent);
   }
   .attachments {
     display: flex;
@@ -847,9 +902,8 @@
   .chip {
     display: flex;
     align-items: center;
-    gap: 6px;
     max-width: 100%;
-    padding: 5px 9px;
+    overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
     border-radius: 8px;
     background: var(--bg-raised);
@@ -858,7 +912,22 @@
   }
   .chip:hover {
     border-color: var(--accent);
+  }
+  .chip-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 5px 9px;
+    color: var(--text);
+    font-size: inherit;
+  }
+  .chip-main:hover {
     color: var(--text-strong);
+  }
+  .chip-main:disabled {
+    cursor: default;
   }
   .chip :global(.attachment-thumb) {
     margin-right: 1px;
@@ -872,6 +941,34 @@
   .chip-size {
     color: var(--muted);
     font-size: 10.5px;
+  }
+  .chip-folder {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    flex: none;
+    margin-left: -1px;
+    border-left: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+    color: var(--muted);
+  }
+  .chip-folder:hover {
+    background: var(--bg-hover);
+    color: var(--accent);
+  }
+  .download-ring {
+    width: 13px;
+    height: 13px;
+    flex: none;
+    border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: download-spin 800ms linear infinite;
+  }
+  @keyframes download-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .thread-older {
     margin-top: 22px;

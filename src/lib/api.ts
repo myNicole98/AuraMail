@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type {
   Account,
   AccountDiscovery,
@@ -236,6 +236,7 @@ export const api = {
   deleteMessage: (messageId: number) => invoke<void>("delete_message", { messageId }),
   downloadAttachment: (attachmentId: number) =>
     invoke<string>("download_attachment", { attachmentId }),
+  openDownload: (path: string) => openPath(path),
   revealDownload: (path: string) => revealItemInDir(path),
   attachmentPreview: (attachmentId: number) =>
     invoke<AttachmentPreview | null>("attachment_preview", { attachmentId }),

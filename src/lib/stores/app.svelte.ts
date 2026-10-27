@@ -94,7 +94,6 @@ class AppStore {
   messageLimit = $state(200);
   loadingMore = $state(false);
   noMoreMessages = $state(false);
-  attachmentNotice = $state<string | null>(null);
   themeNotice = $state<string | null>(null);
   error = $state<string | null>(null);
   booted = $state(false);
@@ -1031,7 +1030,6 @@ class AppStore {
     this.selectedMessage = null;
     this.threadMessages = [];
     this.messageLoading = false;
-    this.attachmentNotice = null;
   }
 
   private clearMarkReadTimer(): void {
@@ -1069,7 +1067,6 @@ class AppStore {
     this.threadMessages = [];
     if (!cached) this.selectedMessage = null;
     this.messageLoading = !cached;
-    this.attachmentNotice = null;
     try {
       const detail = await api.getMessage(messageId);
       if (request !== this.selectionRequest) return;
@@ -1323,17 +1320,14 @@ class AppStore {
 
   async downloadAttachment(attachmentId: number): Promise<string | null> {
     if (!isTauri()) return null;
-    this.attachmentNotice = null;
     try {
       const path = await api.downloadAttachment(attachmentId);
-      this.attachmentNotice = `Saved to ${path}`;
       this.error = null;
       if (loadPreferences().reveal_download) {
         void api.revealDownload(path).catch(() => {});
       }
       return path;
     } catch (error) {
-      this.attachmentNotice = null;
       this.error = errorMessage(error);
       return null;
     }

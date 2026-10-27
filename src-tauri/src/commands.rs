@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -2162,21 +2163,23 @@ pub async fn download_attachment(
         if attachment.size > MAX_ATTACHMENT_SIZE {
             return Err(AppError::Message("attachment is too large".into()));
         }
-        let cache_dir = app
+        let download_dir = app
             .path()
-            .app_cache_dir()
-            .map_err(|_| AppError::Message("cache directory is unavailable".into()))?;
-        std::fs::create_dir_all(&cache_dir)?;
-        let filename = format!(
-            "{}-{}",
-            attachment.id,
-            mail::safe_attachment_name(&attachment.filename)
-        );
-        let path = cache_dir.join(filename);
-        if let Some(cached) = cached_attachment(&path)? {
-            return Ok(cached);
+            .download_dir()
+            .map_err(|_| AppError::Message("download directory is unavailable".into()))?;
+        std::fs::create_dir_all(&download_dir)?;
+
+        if let Some(cached) = mail::attachment_cache_path(&db, attachment_id)? {
+            let cached = PathBuf::from(cached);
+            if cached.parent() == Some(download_dir.as_path()) {
+                if let Some(cached) = cached_attachment(&cached)? {
+                    return Ok(cached);
+                }
+            }
         }
 
+        let filename = mail::safe_attachment_name(&attachment.filename);
+        let path = unique_download_path(&download_dir, &filename);
         let (_, bytes) = fetch_attachment_bytes(&db, secrets.as_ref(), attachment_id)?;
         std::fs::write(&path, &bytes)?;
         mail::set_attachment_cache_path(&db, attachment_id, &path.to_string_lossy())?;
@@ -2184,6 +2187,32 @@ pub async fn download_attachment(
     })
     .await
     .map_err(|_| blocking_error())?
+}
+
+fn unique_download_path(dir: &Path, filename: &str) -> PathBuf {
+    let candidate = dir.join(filename);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let name = Path::new(filename);
+    let stem = name
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("attachment");
+    let extension = name.extension().and_then(|value| value.to_str());
+    for index in 1.. {
+        let next = match extension {
+            Some(extension) => format!("{stem} ({index}).{extension}"),
+            None => format!("{stem} ({index})"),
+        };
+        let candidate = dir.join(next);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!()
 }
 
 #[tauri::command]
@@ -2346,8 +2375,8 @@ mod tests {
     use super::{
         attachment_position, cached_attachment, delete_account_record, effective_full_body,
         ensure_trash_delete, error_kind, parse_color_scheme, parse_dms_mode, preview_data_url,
-        previewable_image, reply_mail_context, trash_destination, validate_move_target,
-        voice_samples,
+        previewable_image, reply_mail_context, trash_destination, unique_download_path,
+        validate_move_target, voice_samples,
     };
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -2601,6 +2630,28 @@ mod tests {
         let link = dir.path().join("3-link");
         symlink(&target, &link).unwrap();
         assert!(cached_attachment(&link).is_err());
+    }
+
+    #[test]
+    fn download_paths_never_overwrite_existing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("report.pdf"), b"one").unwrap();
+        assert_eq!(
+            unique_download_path(dir.path(), "report.pdf"),
+            dir.path().join("report (1).pdf")
+        );
+
+        std::fs::write(dir.path().join("report (1).pdf"), b"two").unwrap();
+        assert_eq!(
+            unique_download_path(dir.path(), "report.pdf"),
+            dir.path().join("report (2).pdf")
+        );
+
+        std::fs::write(dir.path().join("notes"), b"one").unwrap();
+        assert_eq!(
+            unique_download_path(dir.path(), "notes"),
+            dir.path().join("notes (1)")
+        );
     }
 
     #[test]
