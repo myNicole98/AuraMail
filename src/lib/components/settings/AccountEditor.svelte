@@ -16,6 +16,7 @@
     canonicalAccountColor,
     isAccountHexColor
   } from "../../accountColors";
+  import { providerIconUrls } from "../../ai/providers";
   import { api } from "../../api";
   import { validateAccountForm, type AccountForm } from "../../settings";
   import ThemedSelect from "../ThemedSelect.svelte";
@@ -78,6 +79,7 @@
   const providerLabel = $derived(
     oauthProvider === "microsoft" ? "Microsoft" : "Google"
   );
+  const googleIcon = providerIconUrls("google").light;
 
   function input(passwordValue: string): AccountInput {
     return {
@@ -251,11 +253,23 @@
       <p>{account.email}</p>
     </div>
     {#if oauth}
-      <span class="provider-badge">{providerLabel}</span>
+      <span
+        class="provider-badge"
+        role="img"
+        aria-label={providerLabel}
+        title={providerLabel}
+      >
+        {#if oauthProvider === "microsoft"}
+          <span class="microsoft-mark" aria-hidden="true">
+            <i></i><i></i><i></i><i></i>
+          </span>
+        {:else if googleIcon}
+          <img src={googleIcon} alt="" />
+        {/if}
+      </span>
     {:else if proton}
-      <span class="provider-badge">
+      <span class="provider-badge" role="img" aria-label="Proton" title="Proton">
         <img src="/proton.svg" alt="" />
-        Proton
       </span>
     {/if}
   </header>
@@ -527,22 +541,34 @@
     font-size: 10.5px;
   }
   .provider-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 2px 7px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--accent);
-    font-size: 9px;
-    font-weight: 700;
-    text-transform: uppercase;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    flex: none;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
   }
   .provider-badge img {
-    width: 12px;
-    height: 12px;
-    border-radius: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
   }
+  .microsoft-mark {
+    display: grid;
+    grid-template-columns: repeat(2, 6px);
+    grid-template-rows: repeat(2, 6px);
+    gap: 1px;
+  }
+  .microsoft-mark i {
+    display: block;
+    width: 6px;
+    height: 6px;
+  }
+  .microsoft-mark i:nth-child(1) { background: #f25022; }
+  .microsoft-mark i:nth-child(2) { background: #7fba00; }
+  .microsoft-mark i:nth-child(3) { background: #00a4ef; }
+  .microsoft-mark i:nth-child(4) { background: #ffb900; }
   .grid {
     display: grid;
     gap: 12px;
