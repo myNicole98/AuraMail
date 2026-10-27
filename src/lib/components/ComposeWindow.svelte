@@ -8,9 +8,10 @@
   import { activeSpaceId } from "../spaces";
   import { applyMatugenPalette, applyThemeSettings, currentSystemPrefersDark, loadPreferences } from "../settings";
   import { appearance } from "../stores/appearance.svelte";
+  import { readWindowRoute } from "../windowRoute";
   import type { Account, ComposeMode, Draft, MessageDetail } from "../types";
 
-  const params = new URLSearchParams(window.location.search);
+  const params = readWindowRoute(window.location.search, window.location.hash).params;
   const modeParam = params.get("mode") ?? "new";
   const mode: ComposeMode =
     modeParam === "reply" || modeParam === "reply-all" || modeParam === "forward"

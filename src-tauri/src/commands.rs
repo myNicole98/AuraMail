@@ -1212,7 +1212,7 @@ pub fn list_contacts(
 }
 
 #[tauri::command]
-pub fn open_compose_window(
+pub async fn open_compose_window(
     app: AppHandle,
     mode: String,
     message_id: Option<i64>,
@@ -1237,7 +1237,7 @@ pub fn open_compose_window(
     WebviewWindowBuilder::new(
         &app,
         label,
-        WebviewUrl::App(format!("index.html?{query}").into()),
+        WebviewUrl::App(format!("index.html#compose?{query}").into()),
     )
     .title("AuraMail — Compose")
     .inner_size(760.0, 720.0)
