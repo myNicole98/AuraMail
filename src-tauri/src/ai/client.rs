@@ -7,6 +7,9 @@ use crate::ai::AiConfig;
 use crate::error::{AppError, AppResult};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
+const ANTHROPIC_HOST: &str = "api.anthropic.com";
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+const DEFAULT_ANTHROPIC_MAX_TOKENS: u32 = 2048;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -53,6 +56,43 @@ struct ChatRequest<'a> {
     max_tokens: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApiFlavor {
+    OpenAi,
+    Anthropic,
+}
+
+#[derive(Serialize)]
+struct AnthropicMessage<'a> {
+    role: &'a str,
+    content: &'a str,
+}
+
+#[derive(Serialize)]
+struct AnthropicRequest<'a> {
+    model: &'a str,
+    max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<String>,
+    messages: Vec<AnthropicMessage<'a>>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicResponse {
+    #[serde(default)]
+    content: Vec<AnthropicContent>,
+    #[serde(default)]
+    stop_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicContent {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    text: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct ChatResponse {
     choices: Vec<Choice>,
@@ -93,6 +133,92 @@ pub struct AiClient {
     endpoint: String,
     model: String,
     headers: HeaderMap,
+    flavor: ApiFlavor,
+}
+
+pub(crate) fn is_anthropic_base_url(base_url: &str) -> bool {
+    reqwest::Url::parse(base_url.trim())
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .map(|host| host.eq_ignore_ascii_case(ANTHROPIC_HOST))
+        .unwrap_or(false)
+}
+
+pub(crate) fn provider_headers(base_url: &str, api_key: &str) -> AppResult<HeaderMap> {
+    let mut headers = HeaderMap::new();
+    let api_key = api_key.trim();
+    if api_key.is_empty() {
+        return Ok(headers);
+    }
+
+    if is_anthropic_base_url(base_url) {
+        let key = HeaderValue::from_str(api_key)
+            .map_err(|_| AppError::Message("AI API key is invalid".into()))?;
+        headers.insert(HeaderName::from_static("x-api-key"), key);
+        headers.insert(
+            HeaderName::from_static("anthropic-version"),
+            HeaderValue::from_static(ANTHROPIC_VERSION),
+        );
+    } else {
+        let bearer = HeaderValue::from_str(&format!("Bearer {api_key}"))
+            .map_err(|_| AppError::Message("AI API key is invalid".into()))?;
+        headers.insert(AUTHORIZATION, bearer);
+    }
+
+    Ok(headers)
+}
+
+fn anthropic_request<'a>(
+    model: &'a str,
+    messages: &'a [ChatMessage],
+    max_tokens: u32,
+) -> AnthropicRequest<'a> {
+    let mut system_parts = Vec::new();
+    let mut mapped = Vec::new();
+    for message in messages {
+        if message.role() == "system" {
+            let content = message.content().trim();
+            if !content.is_empty() {
+                system_parts.push(content);
+            }
+        } else {
+            mapped.push(AnthropicMessage {
+                role: message.role(),
+                content: message.content(),
+            });
+        }
+    }
+
+    AnthropicRequest {
+        model,
+        max_tokens,
+        system: (!system_parts.is_empty()).then(|| system_parts.join("\n\n")),
+        messages: mapped,
+    }
+}
+
+fn parse_anthropic_response(body: &str) -> AppResult<String> {
+    let parsed = serde_json::from_str::<AnthropicResponse>(body)
+        .map_err(|_| AppError::Message("AI response was invalid".into()))?;
+    let content = parsed
+        .content
+        .into_iter()
+        .filter(|block| block.kind == "text")
+        .filter_map(|block| block.text)
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if content.is_empty() {
+        let detail = parsed
+            .stop_reason
+            .map(|reason| format!(" (stop reason: {reason})"))
+            .unwrap_or_default();
+        return Err(AppError::Message(format!("AI response was empty{detail}")));
+    }
+
+    Ok(content)
 }
 
 pub fn validate_extra_headers(headers: &[(String, String)]) -> AppResult<()> {
@@ -131,11 +257,23 @@ impl AiClient {
                 .map_err(|_| AppError::Message("AI header value is invalid".into()))?;
             headers.insert(name, value);
         }
-        if !api_key.trim().is_empty() {
-            let bearer = HeaderValue::from_str(&format!("Bearer {api_key}"))
-                .map_err(|_| AppError::Message("AI API key is invalid".into()))?;
-            headers.insert(AUTHORIZATION, bearer);
+        for (name, value) in provider_headers(base_url, api_key)?.into_iter() {
+            if let Some(name) = name {
+                if !headers.contains_key(&name) {
+                    headers.insert(name, value);
+                }
+            }
         }
+
+        let flavor = if is_anthropic_base_url(base_url) {
+            ApiFlavor::Anthropic
+        } else {
+            ApiFlavor::OpenAi
+        };
+        let endpoint = match flavor {
+            ApiFlavor::OpenAi => format!("{base_url}/chat/completions"),
+            ApiFlavor::Anthropic => format!("{base_url}/messages"),
+        };
 
         let http = reqwest::Client::builder()
             .timeout(TIMEOUT)
@@ -145,9 +283,10 @@ impl AiClient {
         Ok(Self {
             http,
             base_url: base_url.to_string(),
-            endpoint: format!("{base_url}/chat/completions"),
+            endpoint,
             model: config.model.trim().to_string(),
             headers,
+            flavor,
         })
     }
 
@@ -165,6 +304,11 @@ impl AiClient {
     }
 
     pub async fn embed(&self, model: &str, inputs: &[String]) -> AppResult<Vec<Vec<f32>>> {
+        if self.flavor == ApiFlavor::Anthropic {
+            return Err(AppError::Message(
+                "Anthropic does not provide an embeddings API".into(),
+            ));
+        }
         let model = model.trim();
         if model.is_empty() {
             return Err(AppError::Message("Embedding model is required".into()));
@@ -226,6 +370,17 @@ impl AiClient {
         messages: &[ChatMessage],
         max_tokens: Option<u32>,
     ) -> AppResult<String> {
+        match self.flavor {
+            ApiFlavor::OpenAi => self.complete_openai(messages, max_tokens).await,
+            ApiFlavor::Anthropic => self.complete_anthropic(messages, max_tokens).await,
+        }
+    }
+
+    async fn complete_openai(
+        &self,
+        messages: &[ChatMessage],
+        max_tokens: Option<u32>,
+    ) -> AppResult<String> {
         let body = ChatRequest {
             model: &self.model,
             messages,
@@ -273,6 +428,46 @@ impl AiClient {
                 .unwrap_or_default();
             AppError::Message(format!("AI response was empty{detail}"))
         })
+    }
+
+    async fn complete_anthropic(
+        &self,
+        messages: &[ChatMessage],
+        max_tokens: Option<u32>,
+    ) -> AppResult<String> {
+        let body = anthropic_request(
+            &self.model,
+            messages,
+            max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
+        );
+        let response = self
+            .http
+            .post(&self.endpoint)
+            .headers(self.headers.clone())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| {
+                if error.is_timeout() {
+                    AppError::Message("AI request timed out".into())
+                } else {
+                    AppError::Message("AI request failed".into())
+                }
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(AppError::Message(format!(
+                "AI request failed ({})",
+                status.as_u16()
+            )));
+        }
+
+        let body = response
+            .text()
+            .await
+            .map_err(|_| AppError::Message("AI response was invalid".into()))?;
+        parse_anthropic_response(&body)
     }
 }
 
@@ -458,5 +653,105 @@ mod tests {
         let mut settings = config(&server);
         settings.extra_headers = vec![("x-test".into(), "bad\nvalue".into())];
         assert!(AiClient::try_new(settings, "secret").is_err());
+    }
+
+    #[test]
+    fn detects_anthropic_from_its_host() {
+        assert!(super::is_anthropic_base_url("https://api.anthropic.com/v1"));
+        assert!(super::is_anthropic_base_url("https://api.anthropic.com/v1/"));
+        assert!(!super::is_anthropic_base_url("https://api.openai.com/v1"));
+        assert!(!super::is_anthropic_base_url("not a url"));
+    }
+
+    #[test]
+    fn builds_anthropic_messages_with_system_prompt_and_max_tokens() {
+        let messages = vec![
+            ChatMessage::system("You are concise."),
+            ChatMessage::system("Stay calm."),
+            ChatMessage::user("Hello"),
+            ChatMessage::assistant("Hi"),
+            ChatMessage::user("Weather?"),
+        ];
+
+        let body = super::anthropic_request("claude-test", &messages, 256);
+        assert_eq!(
+            serde_json::to_value(body).unwrap(),
+            json!({
+                "model": "claude-test",
+                "max_tokens": 256,
+                "system": "You are concise.\n\nStay calm.",
+                "messages": [
+                    {"role": "user", "content": "Hello"},
+                    {"role": "assistant", "content": "Hi"},
+                    {"role": "user", "content": "Weather?"}
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn parses_anthropic_text_blocks_and_ignores_other_blocks() {
+        let body = r#"{
+            "content": [
+                {"type": "text", "text": "  hello  "},
+                {"type": "tool_use", "id": "tool-1"},
+                {"type": "text", "text": "world"}
+            ],
+            "stop_reason": "end_turn"
+        }"#;
+
+        assert_eq!(
+            super::parse_anthropic_response(body).unwrap(),
+            "hello\nworld"
+        );
+    }
+
+    #[test]
+    fn reports_anthropic_stop_reason_when_no_text_is_returned() {
+        let error = super::parse_anthropic_response(
+            r#"{"content": [], "stop_reason": "max_tokens"}"#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(error, "AI response was empty (stop reason: max_tokens)");
+    }
+
+    #[test]
+    fn uses_anthropic_auth_headers_instead_of_bearer_auth() {
+        let headers =
+            super::provider_headers("https://api.anthropic.com/v1", "secret").unwrap();
+        assert_eq!(headers.get("x-api-key").unwrap(), "secret");
+        assert_eq!(headers.get("anthropic-version").unwrap(), "2023-06-01");
+        assert!(!headers.contains_key(reqwest::header::AUTHORIZATION));
+
+        let headers =
+            super::provider_headers("https://api.openai.com/v1", "secret").unwrap();
+        assert_eq!(
+            headers.get(reqwest::header::AUTHORIZATION).unwrap(),
+            "Bearer secret"
+        );
+        assert!(!headers.contains_key("x-api-key"));
+    }
+
+    #[tokio::test]
+    async fn rejects_embeddings_for_anthropic_without_network_access() {
+        let client = AiClient::new(
+            AiConfig {
+                base_url: "https://api.anthropic.com/v1".into(),
+                model: "claude-test".into(),
+                embedding_base_url: String::new(),
+                embedding_model: String::new(),
+                extra_headers: vec![],
+            },
+            "secret",
+        );
+
+        let error = client
+            .embed("embed-model", &["one".into()])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "Anthropic does not provide an embeddings API");
     }
 }

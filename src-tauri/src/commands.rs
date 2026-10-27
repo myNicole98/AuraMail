@@ -597,21 +597,30 @@ pub async fn list_ai_models(
         .or_else(|| {
             ai::stored_key_for(&state.db, state.secrets.as_ref(), space_id, &base_url)
         });
+    let headers = ai::client::provider_headers(&base_url, key.as_deref().unwrap_or(""))?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
-    let mut request = client.get(url);
-    if let Some(key) = key {
-        request = request.bearer_auth(key);
-    }
-    let response = request.send().await?;
-    if !response.status().is_success() {
+    let response = client.get(url).headers(headers).send().await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        let detail = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(|message| message.as_str())
+                    .map(str::to_string)
+            })
+            .map(|message| format!(": {message}"))
+            .unwrap_or_default();
         return Err(AppError::Message(format!(
-            "Could not load models ({})",
-            response.status().as_u16()
+            "Could not load models ({}){detail}",
+            status.as_u16()
         )));
     }
-    let body = response.text().await?;
     Ok(ai::discovery::parse_openai(&body))
 }
 
