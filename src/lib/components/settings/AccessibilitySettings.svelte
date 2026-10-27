@@ -3,6 +3,7 @@
   import {
     MAX_UI_SCALE,
     MIN_UI_SCALE,
+    normalizeUiScale,
     UI_SCALE_LABELS,
     snapUiScale
   } from "../../settings";
@@ -14,19 +15,43 @@
   const uiScaleMinorStops = [75, 125, 175, 225, 275];
 
   let uiScalePreview = $state(appearance.uiScale);
+  let uiScaleText = $state(String(appearance.uiScale));
+
+  function syncUiScale(percent: number) {
+    uiScalePreview = percent;
+    uiScaleText = String(percent);
+  }
 
   function setUiScale(percent: number) {
     const next = snapUiScale(percent);
-    uiScalePreview = next;
+    syncUiScale(next);
     appearance.setUiScale(next);
   }
 
   function previewUiScale(event: Event) {
-    uiScalePreview = snapUiScale(Number((event.currentTarget as HTMLInputElement).value));
+    const next = snapUiScale(Number((event.currentTarget as HTMLInputElement).value));
+    syncUiScale(next);
   }
 
   function commitUiScale() {
     if (uiScalePreview !== appearance.uiScale) setUiScale(uiScalePreview);
+  }
+
+  function commitUiScaleInput() {
+    const raw = uiScaleText.trim();
+    const numeric = Number(raw);
+    const next =
+      raw !== "" && Number.isFinite(numeric)
+        ? normalizeUiScale(numeric)
+        : appearance.uiScale;
+    syncUiScale(next);
+    if (next !== appearance.uiScale) appearance.setUiScale(next);
+  }
+
+  function commitUiScaleOnEnter(event: KeyboardEvent) {
+    if (event.key !== "Enter") return;
+    commitUiScaleInput();
+    (event.currentTarget as HTMLInputElement).blur();
   }
 
   function scalePosition(value: number): string {
@@ -52,14 +77,31 @@
   }
 
   onMount(() => {
-    uiScalePreview = appearance.uiScale;
+    syncUiScale(appearance.uiScale);
   });
 </script>
 
 <div class="settings-inner">
   <div class="settings-label">Display</div>
   <section class="settings-panel accessibility-panel">
-    <h4>UI size</h4>
+    <div class="ui-scale-head">
+      <h4>UI size</h4>
+      <label class="ui-scale-value">
+        <input
+          type="number"
+          min={MIN_UI_SCALE}
+          max={MAX_UI_SCALE}
+          step="1"
+          value={uiScaleText}
+          aria-label="UI size percentage"
+          oninput={(event) => (uiScaleText = event.currentTarget.value)}
+          onchange={commitUiScaleInput}
+          onblur={commitUiScaleInput}
+          onkeydown={commitUiScaleOnEnter}
+        />
+        <span>%</span>
+      </label>
+    </div>
     <div class="ui-scale-track">
       <div class="ui-scale-input-wrap">
         <span class="ui-scale-rail" aria-hidden="true">
@@ -143,11 +185,43 @@
   .accessibility-panel {
     padding: 15px 16px 8px;
   }
-  .accessibility-panel > h4 {
+  .ui-scale-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .ui-scale-head h4 {
     margin: 0;
     color: var(--text);
     font-size: 11.5px;
     font-weight: 620;
+  }
+  .ui-scale-value {
+    display: flex;
+    align-items: center;
+    flex: none;
+    gap: 4px;
+    color: var(--muted);
+    font-size: 10px;
+  }
+  .ui-scale-value input {
+    width: 76px;
+    min-width: 76px;
+    height: 28px;
+    padding: 0 6px;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bg) 55%, var(--bg-raised));
+    color: var(--text);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .ui-scale-value input:focus-visible {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
   }
   .ui-scale-track {
     margin-top: 10px;
