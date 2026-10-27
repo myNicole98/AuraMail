@@ -53,7 +53,7 @@ jobs:
         run: bash scripts/ci-appimage.sh
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: linux-appimage
           path: release/*.AppImage
@@ -75,9 +75,12 @@ jobs:
         with:
           go-version: '1.26.0'
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          "$HOME/.cargo/bin/rustup" target add x86_64-pc-windows-msvc
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Install Windows cross-build tools
         run: |
@@ -93,7 +96,7 @@ jobs:
         run: bash scripts/ci-windows.sh
 
       - name: Upload Windows installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: windows-installer
           path: release/*.exe
@@ -104,7 +107,7 @@ jobs:
     if: needs.meta.outputs.exists == 'false'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v3
         with:
           path: artifacts
 

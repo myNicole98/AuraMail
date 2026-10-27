@@ -161,7 +161,9 @@ export APPDIR="$this_dir"
 export PATH="$this_dir/usr/bin:$PATH"
 export LD_LIBRARY_PATH="$this_dir/usr/lib:$this_dir/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export XDG_DATA_DIRS="$this_dir/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-export GSETTINGS_SCHEMA_DIR="$this_dir/usr/share/glib-2.0/schemas:${GSETTINGS_SCHEMA_DIR:-}"
+if [ -d "$this_dir/usr/share/glib-2.0/schemas" ]; then
+  export GSETTINGS_SCHEMA_DIR="$this_dir/usr/share/glib-2.0/schemas:${GSETTINGS_SCHEMA_DIR:-}"
+fi
 if [ -d "$this_dir/usr/lib/x86_64-linux-gnu/gio/modules" ]; then
   export GIO_EXTRA_MODULES="$this_dir/usr/lib/x86_64-linux-gnu/gio/modules"
 fi
