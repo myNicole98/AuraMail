@@ -1,4 +1,4 @@
-name: Build AppImage
+name: Build Release
 
 on:
   push:
@@ -8,8 +8,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  appimage:
+  meta:
     runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      exists: ${{ steps.meta.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,32 +33,87 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
-          
-      - name: Verify token
+
+      - name: Verify release token
         env:
           TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          echo "Token length: ${#TOKEN}"
-          curl -s -o /dev/null -w 'GET /user -> HTTP %{http_code}\n' \
+          curl -fsS -o /dev/null \
             -H "Authorization: token $TOKEN" \
             "${{ github.server_url }}/api/v1/user"
-          
+
+  appimage:
+    needs: meta
+    if: needs.meta.outputs.exists == 'false'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Build AppImage
-        if: steps.meta.outputs.exists == 'false'
         run: bash scripts/ci-appimage.sh
 
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: release/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    needs: meta
+    if: needs.meta.outputs.exists == 'false'
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.0'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build Windows installer
+        shell: bash
+        run: bash scripts/ci-windows.sh
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: release/*.exe
+          if-no-files-found: error
+
+  publish:
+    needs: [meta, appimage, windows]
+    if: needs.meta.outputs.exists == 'false'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
       - name: Publish release
-        if: steps.meta.outputs.exists == 'false'
         env:
           TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          VERSION: ${{ steps.meta.outputs.version }}
+          VERSION: ${{ needs.meta.outputs.version }}
         run: |
           API="${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
           ID=$(curl -fsS -X POST "$API/releases" \
             -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"v$VERSION\",\"target_commitish\":\"${{ github.sha }}\",\"name\":\"v$VERSION\"}" \
+            -d "{\"tag_name\":\"v$VERSION\",\"target_commitish\":\"${{ github.sha }}\",\"name\":\"v$VERSION\",\"draft\":true}" \
             | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
-          for f in release/*.AppImage; do
+          find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' \) -print
+          for f in $(find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' \)); do
             curl -fsS -X POST "$API/releases/$ID/assets?name=$(basename "$f")" \
               -H "Authorization: token $TOKEN" -F "attachment=@$f"
           done
+          curl -fsS -X PATCH "$API/releases/$ID" \
+            -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+            -d '{"draft":false}'
