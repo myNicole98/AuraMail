@@ -64,7 +64,6 @@
   let notice = $state<string | null>(null);
   let saving = $state(false);
   let removing = $state(false);
-  let reconnecting = $state(false);
   let discovering = $state(false);
   let detected = $state(false);
   let colorTimer: ReturnType<typeof setTimeout> | undefined;
@@ -196,24 +195,6 @@
       error = caught instanceof Error ? caught.message : String(caught);
     } finally {
       discovering = false;
-    }
-  }
-
-  async function reconnect(): Promise<void> {
-    reconnecting = true;
-    error = null;
-    notice = null;
-    try {
-      const saved =
-        oauthProvider === "microsoft"
-          ? await api.reconnectMicrosoftAccount(account.id)
-          : await api.reconnectGoogleAccount(account.id);
-      notice = `${providerLabel} account reconnected.`;
-      onSaved(saved);
-    } catch (caught) {
-      error = caught instanceof Error ? caught.message : String(caught);
-    } finally {
-      reconnecting = false;
     }
   }
 
@@ -388,14 +369,9 @@
     {#if setupOpen}
       {#if oauth}
         <div class="oauth-setup">
-          <button
-            class="ghost"
-            type="button"
-            disabled={reconnecting}
-            onclick={() => void reconnect()}
-          >
+          <button class="ghost" type="button" onclick={() => onReconnect(account)}>
             <RefreshCw size={15} />
-            {reconnecting ? "Reconnecting…" : `Reconnect ${providerLabel}`}
+            Sign in again
           </button>
         </div>
       {:else if proton}
