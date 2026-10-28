@@ -27,9 +27,9 @@ export const defaultLayout: LayoutState = {
 };
 
 export const NARROW_BREAKPOINT = 760;
-export const SIDEBAR_MIN = 200;
-export const SIDEBAR_MAX = 380;
-export const LIST_MIN = 540;
+export const SIDEBAR_MIN = 70;
+export const SIDEBAR_MAX = 300;
+export const LIST_MIN = 200;
 export const LIST_MAX = 640;
 const READER_MIN = 420;
 const STACK_MIN = 140;
