@@ -690,6 +690,122 @@ html.window-inactive :focus-visible {
   }
 }
 
+/* WCAG 1.4.12 Text Spacing.
+   The toggle applies the minimum spacing values from the success criterion.
+   Layouts below relax fixed heights and truncation so text remains visible. */
+html[data-text-spacing="true"] body {
+  line-height: 1.5;
+  letter-spacing: 0.12em;
+  word-spacing: 0.16em;
+}
+
+html[data-text-spacing="true"] body * {
+  line-height: 1.5 !important;
+  letter-spacing: 0.12em !important;
+  word-spacing: 0.16em !important;
+}
+
+html[data-text-spacing="true"] p {
+  margin-block-end: 2em !important;
+}
+
+html[data-text-spacing="true"] :is(
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea
+) {
+  height: auto !important;
+  min-height: 34px;
+}
+
+html[data-text-spacing="true"] :is(
+  .nav-item,
+  .reply-main,
+  .reply-toggle,
+  .calendar-row,
+  .settings-row,
+  .toggle-row,
+  .space-head,
+  .account-row,
+  .add-account,
+  .today-button,
+  .view-switcher button,
+  .new-event-button,
+  .primary-button,
+  .detail-actions button,
+  .dialog-actions button,
+  .account-trigger,
+  .composer .primary,
+  .composer .ghost,
+  .settings-root .primary,
+  .settings-root .ghost
+) {
+  height: auto !important;
+  min-height: 34px;
+}
+
+html[data-text-spacing="true"] :is(.day-head, .time-head-spacer) {
+  height: auto !important;
+  min-height: 64px;
+}
+
+html[data-text-spacing="true"] :is(
+  .sender,
+  .subject,
+  .nav-label,
+  .account-name,
+  .status,
+  .space-name,
+  .account-meta span,
+  .account-copy span,
+  .calendar-row span,
+  .calendar-row,
+  .event-chip,
+  .all-day-chip,
+  .time-event strong,
+  .time-event span,
+  .detail-description,
+  .form-error,
+  .thread-older-who strong,
+  .thread-older-snippet,
+  .reader h1,
+  .settings-tab,
+  .all-day-list
+) {
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+}
+
+html[data-text-spacing="true"] .settings-tab {
+  flex-basis: auto !important;
+  width: auto !important;
+  min-width: 100px;
+}
+
+html[data-text-spacing="true"] .snippet {
+  display: block !important;
+  overflow: visible !important;
+  -webkit-line-clamp: unset !important;
+  line-clamp: unset !important;
+  white-space: normal !important;
+}
+
+html[data-text-spacing="true"] .row {
+  content-visibility: visible;
+  contain-intrinsic-block-size: auto;
+}
+
+html[data-text-spacing="true"] .time-event {
+  height: auto !important;
+  min-height: 34px;
+}
+
+html[data-text-spacing="true"] .month-day {
+  overflow: visible !important;
+}
+
 html[data-high-contrast="true"] {
   --bg: #000;
   --bg-raised: #000;

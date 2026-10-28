@@ -70,6 +70,27 @@
     }
   }
 
+  function applyTextSpacing(doc: Document): void {
+    const id = "auramail-text-spacing";
+    let style = doc.getElementById(id);
+    if (!appearance.textSpacing) {
+      style?.remove();
+      return;
+    }
+    if (!style) {
+      style = doc.createElement("style");
+      style.id = id;
+      style.textContent =
+        "body,body *:not(svg):not(svg *){line-height:1.5!important;letter-spacing:.12em!important;word-spacing:.16em!important}body{overflow-wrap:anywhere}p{margin-block-end:2em!important}";
+      (doc.head ?? doc.documentElement).append(style);
+    }
+  }
+
+  $effect(() => {
+    appearance.textSpacing;
+    if (documentRef) applyTextSpacing(documentRef);
+  });
+
   function onClick(event: MouseEvent) {
     const target = event.target as Element | null;
     const anchor = target?.closest?.("a");
@@ -95,6 +116,7 @@
     doc.body.innerHTML = parsed.body.innerHTML;
     doc.body.classList.toggle("auramail-show-quotes", showQuotes);
     applyAnimationPreference(doc);
+    applyTextSpacing(doc);
 
     requestAnimationFrame(() => {
       resize(true);
@@ -120,6 +142,7 @@
     if (!loadedFrame || !doc) return;
     documentRef = doc;
     applyAnimationPreference(doc);
+    applyTextSpacing(doc);
     doc.addEventListener("click", onClick, true);
     doc.addEventListener("submit", (event) => event.preventDefault());
     doc.addEventListener("load", () => resize(true), true);

@@ -133,6 +133,15 @@
       />
     </div>
     <div class="toggle-row">
+      <span class="icon"><Type size={14} /></span>
+      <span class="copy"><strong>Text spacing</strong></span>
+      <ToggleSwitch
+        checked={appearance.textSpacing}
+        label="Text spacing"
+        onchange={(value) => appearance.setTextSpacing(value)}
+      />
+    </div>
+    <div class="toggle-row">
       <span class="icon"><Eye size={14} /></span>
       <span class="copy"><strong>Color vision</strong></span>
       <select

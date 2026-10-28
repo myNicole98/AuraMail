@@ -25,6 +25,7 @@ class AppearanceStore {
   messagePreview = $state<MessagePreview>("preview");
   reduceMotion = $state(false);
   highContrast = $state(false);
+  textSpacing = $state(false);
   colorVision = $state<ColorVisionMode>("none");
   timeFormat = $state<TimeFormat>("system");
   themeDark = $state(themeIsDark());
@@ -42,6 +43,7 @@ class AppearanceStore {
     this.messagePreview = preferences.message_preview;
     this.reduceMotion = preferences.reduce_motion;
     this.highContrast = preferences.high_contrast;
+    this.textSpacing = preferences.text_spacing;
     this.colorVision = preferences.color_vision;
     this.timeFormat = preferences.time_format;
     this.watchTheme();
@@ -80,6 +82,12 @@ class AppearanceStore {
     this.applyAccessibility();
   }
 
+  setTextSpacing(value: boolean): void {
+    this.textSpacing = value;
+    this.persist();
+    this.applyAccessibility();
+  }
+
   setColorVision(mode: ColorVisionMode): void {
     this.colorVision = mode;
     this.persist();
@@ -105,6 +113,7 @@ class AppearanceStore {
       ...loadPreferences(),
       reduce_motion: this.reduceMotion,
       high_contrast: this.highContrast,
+      text_spacing: this.textSpacing,
       color_vision: this.colorVision
     });
   }
@@ -116,6 +125,7 @@ class AppearanceStore {
       message_preview: this.messagePreview,
       reduce_motion: this.reduceMotion,
       high_contrast: this.highContrast,
+      text_spacing: this.textSpacing,
       color_vision: this.colorVision,
       time_format: this.timeFormat
     });

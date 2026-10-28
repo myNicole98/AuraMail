@@ -72,6 +72,10 @@
     appearance.setHighContrast(value);
   }
 
+  function setTextSpacing(value: boolean) {
+    appearance.setTextSpacing(value);
+  }
+
   function setColorVision(mode: ColorVisionMode) {
     appearance.setColorVision(mode);
   }
@@ -164,6 +168,14 @@
         checked={appearance.highContrast}
         label="High contrast"
         onchange={setHighContrast}
+      />
+    </div>
+    <div class="settings-row">
+      <strong>Text spacing</strong>
+      <ToggleSwitch
+        checked={appearance.textSpacing}
+        label="Text spacing"
+        onchange={setTextSpacing}
       />
     </div>
     <div class="settings-row">

@@ -84,6 +84,7 @@ export type SettingsPreferences = {
   message_preview: MessagePreview;
   reduce_motion: boolean;
   high_contrast: boolean;
+  text_spacing: boolean;
   color_vision: ColorVisionMode;
   time_format: TimeFormat;
   mark_read_delay: number;
@@ -161,6 +162,7 @@ export function defaultPreferences(): SettingsPreferences {
     message_preview: "preview",
     reduce_motion: false,
     high_contrast: false,
+    text_spacing: false,
     color_vision: "none",
     time_format: "system",
     mark_read_delay: 0,
@@ -325,6 +327,10 @@ export function loadPreferences(): SettingsPreferences {
         typeof stored.high_contrast === "boolean"
           ? stored.high_contrast
           : defaults.high_contrast,
+      text_spacing:
+        typeof stored.text_spacing === "boolean"
+          ? stored.text_spacing
+          : defaults.text_spacing,
       color_vision: isColorVisionMode(stored.color_vision)
         ? stored.color_vision
         : defaults.color_vision,
@@ -393,6 +399,7 @@ export function applyAccessibilityPreferences(
   const root = document.documentElement;
   root.dataset.reduceMotion = String(preferences.reduce_motion);
   root.dataset.highContrast = String(preferences.high_contrast);
+  root.dataset.textSpacing = String(preferences.text_spacing);
   root.dataset.colorVision = preferences.color_vision;
 }
 
