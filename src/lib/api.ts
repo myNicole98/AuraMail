@@ -185,14 +185,22 @@ export const api = {
   ) => invoke<CalendarEvent[]>("list_calendar_events", { spaceId, from, to, limit }),
   listCalendarAccounts: (spaceId = currentSpaceId()) =>
     invoke<CalendarAccount[]>("list_calendar_accounts", { spaceId }),
+  reorderCalendarAccounts: (spaceId: number, ids: number[]) =>
+    invoke<CalendarAccount[]>("reorder_calendar_accounts", { spaceId, ids }),
+  moveCalendarAccount: (accountId: number, spaceId: number) =>
+    invoke<CalendarAccount>("move_calendar_account", { accountId, spaceId }),
   addCalendarAccount: (input: CalendarAccountInput) =>
     invoke<CalendarAccount>("add_calendar_account", { input }),
   removeCalendarAccount: (accountId: number) =>
     invoke<void>("remove_calendar_account", { accountId }),
+  unsubscribeCalendar: (calendarId: number) =>
+    invoke<void>("unsubscribe_calendar", { calendarId }),
   syncCalendar: (accountId: number) =>
     invoke<CalendarSyncResult>("sync_calendar", { accountId }),
   createCalendarEvent: (calendarId: number, input: CalendarEventInput) =>
     invoke<CalendarSyncResult>("create_calendar_event", { calendarId, input }),
+  updateCalendarEvent: (eventId: number, input: CalendarEventInput) =>
+    invoke<CalendarSyncResult>("update_calendar_event", { eventId, input }),
   deleteCalendarEvent: (eventId: number) =>
     invoke<CalendarSyncResult>("delete_calendar_event", { eventId }),
   tabUnreadCounts: (

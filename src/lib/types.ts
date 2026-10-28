@@ -97,6 +97,7 @@ export type CalendarAccount = {
   baseUrl: string;
   username: string;
   spaceId: number;
+  position: number;
   createdAt: number;
 };
 
@@ -116,6 +117,7 @@ export type CalendarSummary = {
   color: string | null;
   syncToken: string | null;
   lastSyncedAt: number | null;
+  readOnly: boolean;
 };
 
 export type CalendarEvent = {
@@ -132,6 +134,11 @@ export type CalendarEvent = {
   startsAt: number;
   endsAt: number | null;
   allDay: boolean;
+  readOnly: boolean;
+  recurrence: string;
+  occurrenceKey?: string;
+  seriesStartsAt?: number;
+  seriesEndsAt?: number | null;
 };
 
 export type CalendarSyncResult = {
@@ -147,6 +154,7 @@ export type CalendarEventInput = {
   startsAt: number;
   endsAt: number | null;
   allDay: boolean;
+  recurrence?: string;
 };
 
 export type AccountDiscovery = {
