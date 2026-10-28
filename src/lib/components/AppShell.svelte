@@ -96,6 +96,11 @@
   let animatingLayout = $state(false);
   let layoutTimer: ReturnType<typeof setTimeout> | undefined;
   let lastSystemDark: boolean | null = null;
+  let calendarMounted = $state(false);
+
+  $effect(() => {
+    if (app.calendarOpen) calendarMounted = true;
+  });
 
   async function applySystemTheme(force = false): Promise<void> {
     if (!app.booted || onboardingDue) return;
@@ -527,9 +532,12 @@
   style:grid-template-rows={gridRows}
 >
   <AppRail collapsed={columns.collapsed} onOpenSettings={() => openSettings()} />
-  {#if app.calendarOpen}
-    <Calendar />
-  {:else}
+  {#if calendarMounted}
+    <div class="calendar-host" class:hidden={!app.calendarOpen}>
+      <Calendar />
+    </div>
+  {/if}
+  {#if !app.calendarOpen}
     <Sidebar
       collapsed={columns.collapsed}
       canToggle={canToggle}
@@ -615,6 +623,22 @@
     height: 100dvh;
     overflow: hidden;
     background: var(--bg);
+  }
+  .calendar-host {
+    grid-column: 2;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+  }
+  .calendar-host.hidden {
+    display: none;
+  }
+  .calendar-host :global(.calendar-workspace) {
+    grid-column: 1;
+    width: 100%;
+    height: 100%;
   }
   .open-fade {
     position: fixed;
