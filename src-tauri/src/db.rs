@@ -1037,6 +1037,71 @@ impl Database {
             )?;
             conn.pragma_update(None, "user_version", 34)?;
         }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 35 {
+            let has_read_only: i64 = conn.query_row(
+                "select count(*) from pragma_table_info('calendars') where name = 'read_only'",
+                [],
+                |row| row.get(0),
+            )?;
+            if has_read_only == 0 {
+                conn.execute(
+                    "alter table calendars add column read_only integer not null default 0",
+                    [],
+                )?;
+            }
+            let has_unsubscribed: i64 = conn.query_row(
+                "select count(*) from pragma_table_info('calendars') where name = 'unsubscribed'",
+                [],
+                |row| row.get(0),
+            )?;
+            if has_unsubscribed == 0 {
+                conn.execute(
+                    "alter table calendars add column unsubscribed integer not null default 0",
+                    [],
+                )?;
+            }
+            conn.pragma_update(None, "user_version", 35)?;
+        }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 36 {
+            let has_recurrence: i64 = conn.query_row(
+                "select count(*) from pragma_table_info('calendar_events') where name = 'recurrence'",
+                [],
+                |row| row.get(0),
+            )?;
+            if has_recurrence == 0 {
+                conn.execute(
+                    "alter table calendar_events add column recurrence text not null default ''",
+                    [],
+                )?;
+            }
+            conn.pragma_update(None, "user_version", 36)?;
+        }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 37 {
+            let has_position: i64 = conn.query_row(
+                "select count(*) from pragma_table_info('calendar_accounts') where name = 'position'",
+                [],
+                |row| row.get(0),
+            )?;
+            if has_position == 0 {
+                conn.execute(
+                    "alter table calendar_accounts add column position integer not null default 0",
+                    [],
+                )?;
+                conn.execute(
+                    "update calendar_accounts
+                     set position = (
+                        select count(*) from calendar_accounts previous
+                        where previous.space_id = calendar_accounts.space_id
+                          and previous.id < calendar_accounts.id
+                     )",
+                    [],
+                )?;
+            }
+            conn.pragma_update(None, "user_version", 37)?;
+        }
         conn.execute_batch(
             "create index if not exists idx_messages_folder_date on messages(folder_id, date desc);
              create index if not exists idx_messages_account_date on messages(account_id, date desc);
@@ -1153,7 +1218,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 34);
+        assert_eq!(version, 37);
         let tabs: i64 = conn
             .query_row("select count(*) from tabs", [], |row| row.get(0))
             .unwrap();
@@ -1309,7 +1374,7 @@ mod tests {
             .unwrap();
         assert_eq!(bodies, 0);
         assert_eq!(cached, 0);
-        assert_eq!(version, 34);
+        assert_eq!(version, 37);
     }
 
     #[test]
@@ -1336,7 +1401,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table, 1);
-        assert_eq!(version, 34);
+        assert_eq!(version, 37);
     }
 
     #[test]
@@ -1363,7 +1428,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(cached, 0);
-        assert_eq!(version, 34);
+        assert_eq!(version, 37);
     }
 
     #[test]
@@ -1406,7 +1471,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 34);
+        assert_eq!(version, 37);
     }
 
     #[test]
@@ -1487,6 +1552,6 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!((auth_type, provider, version), (1, 1, 34));
+        assert_eq!((auth_type, provider, version), (1, 1, 37));
     }
 }

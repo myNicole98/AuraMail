@@ -4,6 +4,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use fast_dav_rs::webdav::sync::SyncEntry;
+use fast_dav_rs::webdav::Privilege;
 use fast_dav_rs::CalDavClient;
 use icalendar::{Calendar as ICalendar, CalendarDateTime, Component, DatePerhapsTime, EventLike};
 use rusqlite::{params, OptionalExtension};
@@ -21,6 +22,7 @@ pub struct CalendarAccount {
     pub base_url: String,
     pub username: String,
     pub space_id: i64,
+    pub position: i64,
     pub created_at: i64,
 }
 
@@ -45,6 +47,7 @@ pub struct CalendarSummary {
     pub color: Option<String>,
     pub sync_token: Option<String>,
     pub last_synced_at: Option<i64>,
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -57,12 +60,14 @@ pub struct CalendarEvent {
     pub href: String,
     pub etag: Option<String>,
     pub uid: String,
+    pub read_only: bool,
     pub summary: String,
     pub description: String,
     pub location: String,
     pub starts_at: i64,
     pub ends_at: Option<i64>,
     pub all_day: bool,
+    pub recurrence: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -85,6 +90,8 @@ pub struct CalendarEventInput {
     pub ends_at: Option<i64>,
     #[serde(default)]
     pub all_day: bool,
+    #[serde(default)]
+    pub recurrence: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +107,7 @@ struct CalendarWriteTarget {
     href: String,
     base_url: String,
     calendar_account_id: i64,
+    read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +115,7 @@ struct EventWriteTarget {
     calendar_account_id: i64,
     href: String,
     etag: Option<String>,
+    read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +124,7 @@ pub(crate) struct RemoteCalendar {
     pub name: String,
     pub color: Option<String>,
     pub components: Vec<String>,
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,12 +143,13 @@ struct ParsedEvent {
     starts_at: i64,
     ends_at: Option<i64>,
     all_day: bool,
+    recurrence: String,
 }
 
 fn calendar_account_by_id(db: &Database, id: i64) -> AppResult<CalendarAccount> {
     db.read()
         .query_row(
-            "select id, display_name, base_url, username, space_id, created_at
+            "select id, display_name, base_url, username, space_id, position, created_at
              from calendar_accounts where id = ?1",
             params![id],
             |row| {
@@ -148,7 +159,8 @@ fn calendar_account_by_id(db: &Database, id: i64) -> AppResult<CalendarAccount> 
                     base_url: row.get(2)?,
                     username: row.get(3)?,
                     space_id: row.get(4)?,
-                    created_at: row.get(5)?,
+                    position: row.get(5)?,
+                    created_at: row.get(6)?,
                 })
             },
         )
@@ -159,9 +171,9 @@ fn calendar_account_by_id(db: &Database, id: i64) -> AppResult<CalendarAccount> 
 pub fn list_accounts(db: &Database, space_id: i64) -> AppResult<Vec<CalendarAccount>> {
     let conn = db.read();
     let mut stmt = conn.prepare(
-        "select id, display_name, base_url, username, space_id, created_at
+        "select id, display_name, base_url, username, space_id, position, created_at
          from calendar_accounts where space_id = ?1
-         order by display_name collate nocase, id",
+         order by position, id",
     )?;
     let rows = stmt.query_map(params![space_id], |row| {
         Ok(CalendarAccount {
@@ -170,10 +182,73 @@ pub fn list_accounts(db: &Database, space_id: i64) -> AppResult<Vec<CalendarAcco
             base_url: row.get(2)?,
             username: row.get(3)?,
             space_id: row.get(4)?,
-            created_at: row.get(5)?,
+            position: row.get(5)?,
+            created_at: row.get(6)?,
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn reorder_accounts(
+    db: &Database,
+    space_id: i64,
+    ids: &[i64],
+) -> AppResult<Vec<CalendarAccount>> {
+    let current = list_accounts(db, space_id)?;
+    let current_ids = current
+        .iter()
+        .map(|account| account.id)
+        .collect::<std::collections::HashSet<_>>();
+    let requested_ids = ids.iter().copied().collect::<std::collections::HashSet<_>>();
+    if current_ids != requested_ids || current_ids.len() != ids.len() {
+        return Err(AppError::Message(
+            "calendar account order must include every account in the space exactly once".into(),
+        ));
+    }
+    let mut conn = db.conn.lock().unwrap();
+    let tx = conn.transaction()?;
+    for (position, id) in ids.iter().enumerate() {
+        tx.execute(
+            "update calendar_accounts set position = ?1 where id = ?2 and space_id = ?3",
+            params![position as i64, id, space_id],
+        )?;
+    }
+    tx.commit()?;
+    drop(conn);
+    list_accounts(db, space_id)
+}
+
+pub fn move_account_to_space(
+    db: &Database,
+    id: i64,
+    space_id: i64,
+) -> AppResult<CalendarAccount> {
+    crate::spaces::by_id(db, space_id)?;
+    let conn = db.conn.lock().unwrap();
+    let current_space: Option<i64> = conn
+        .query_row(
+            "select space_id from calendar_accounts where id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let current_space =
+        current_space.ok_or_else(|| AppError::Message("calendar account not found".into()))?;
+    if current_space == space_id {
+        drop(conn);
+        return calendar_account_by_id(db, id);
+    }
+    let position: i64 = conn.query_row(
+        "select coalesce(max(position) + 1, 0) from calendar_accounts where space_id = ?1",
+        params![space_id],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "update calendar_accounts set space_id = ?1, position = ?2 where id = ?3",
+        params![space_id, position, id],
+    )?;
+    drop(conn);
+    calendar_account_by_id(db, id)
 }
 
 fn calendar_password(secrets: &dyn SecretStore, account_id: i64) -> AppResult<String> {
@@ -246,17 +321,33 @@ fn discovery_candidates(base_url: &str) -> Vec<String> {
     candidates
 }
 
+fn privileges_allow_write(privileges: &[Privilege]) -> bool {
+    privileges.iter().any(|privilege| match privilege {
+        Privilege::All | Privilege::Write | Privilege::WriteContent => true,
+        Privilege::Other(name) => matches!(
+            name.to_ascii_lowercase().as_str(),
+            "all" | "write" | "write-content"
+        ),
+        _ => false,
+    })
+}
+
 fn remote_calendars(calendars: Vec<fast_dav_rs::caldav::types::CalendarInfo>) -> Vec<RemoteCalendar> {
     calendars
         .into_iter()
-        .map(|calendar| RemoteCalendar {
-            href: calendar.href,
-            name: calendar
-                .displayname
-                .filter(|name| !name.trim().is_empty())
-                .unwrap_or_else(|| "Calendar".into()),
-            color: calendar.color,
-            components: calendar.supported_components,
+        .map(|calendar| {
+            let read_only =
+                !calendar.privileges.is_empty() && !privileges_allow_write(&calendar.privileges);
+            RemoteCalendar {
+                href: calendar.href,
+                name: calendar
+                    .displayname
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or_else(|| "Calendar".into()),
+                color: calendar.color,
+                components: calendar.supported_components,
+                read_only,
+            }
         })
         .collect()
 }
@@ -304,7 +395,7 @@ fn calendar_targets(db: &Database, account_id: i64) -> AppResult<Vec<CalendarTar
         "select c.id, c.href, c.sync_token, ca.base_url
          from calendars c
          join calendar_accounts ca on ca.id = c.calendar_account_id
-         where ca.id = ?1
+         where ca.id = ?1 and c.unsubscribed = 0
          order by c.id",
     )?;
     let rows = stmt.query_map(params![account_id], |row| {
@@ -321,16 +412,17 @@ fn calendar_targets(db: &Database, account_id: i64) -> AppResult<Vec<CalendarTar
 fn calendar_write_target(db: &Database, calendar_id: i64) -> AppResult<CalendarWriteTarget> {
     db.read()
         .query_row(
-            "select c.href, ca.base_url, ca.id
+            "select c.href, ca.base_url, ca.id, c.read_only
              from calendars c
              join calendar_accounts ca on ca.id = c.calendar_account_id
-             where c.id = ?1",
+             where c.id = ?1 and c.unsubscribed = 0",
             params![calendar_id],
             |row| {
                 Ok(CalendarWriteTarget {
                     href: row.get(0)?,
                     base_url: row.get(1)?,
                     calendar_account_id: row.get(2)?,
+                    read_only: row.get::<_, i64>(3)? != 0,
                 })
             },
         )
@@ -341,17 +433,18 @@ fn calendar_write_target(db: &Database, calendar_id: i64) -> AppResult<CalendarW
 fn event_write_target(db: &Database, event_id: i64) -> AppResult<EventWriteTarget> {
     db.read()
         .query_row(
-            "select ca.id, e.href, e.etag
+            "select ca.id, e.href, e.etag, c.read_only
              from calendar_events e
              join calendars c on c.id = e.calendar_id
              join calendar_accounts ca on ca.id = c.calendar_account_id
-             where e.id = ?1",
+             where e.id = ?1 and c.unsubscribed = 0",
             params![event_id],
             |row| {
                 Ok(EventWriteTarget {
                     calendar_account_id: row.get(0)?,
                     href: row.get(1)?,
                     etag: row.get(2)?,
+                    read_only: row.get::<_, i64>(3)? != 0,
                 })
             },
         )
@@ -386,6 +479,23 @@ fn event_path(calendar_href: &str, uid: &str) -> String {
     } else {
         format!("{calendar_href}/{uid}.ics")
     }
+}
+
+fn recurrence_rule(value: &str) -> AppResult<Option<String>> {
+    let value = value.trim().to_ascii_uppercase();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let valid = value.starts_with("FREQ=")
+        && value.chars().all(|character| {
+            character.is_ascii_uppercase()
+                || character.is_ascii_digit()
+                || matches!(character, '=' | ';' | ',' | ':' | '+' | '-')
+        });
+    if !valid {
+        return Err(AppError::Message("invalid repeat rule".into()));
+    }
+    Ok(Some(value))
 }
 
 fn build_event_ics(input: &CalendarEventInput, uid: &str) -> AppResult<String> {
@@ -437,6 +547,9 @@ fn build_event_ics(input: &CalendarEventInput, uid: &str) -> AppResult<String> {
     if !input.location.trim().is_empty() {
         lines.push(format!("LOCATION:{}", escape_ics(input.location.trim())));
     }
+    if let Some(rule) = recurrence_rule(&input.recurrence)? {
+        lines.push(format!("RRULE:{rule}"));
+    }
     lines.push("END:VEVENT".to_string());
     lines.push("END:VCALENDAR".to_string());
     Ok(lines.join("\r\n") + "\r\n")
@@ -449,6 +562,9 @@ pub async fn create_event(
     input: CalendarEventInput,
 ) -> AppResult<CalendarSyncResult> {
     let target = calendar_write_target(db, calendar_id)?;
+    if target.read_only {
+        return Err(AppError::Message("this calendar is read-only".into()));
+    }
     let account = calendar_account_by_id(db, target.calendar_account_id)?;
     let password = calendar_password(secrets, account.id)?;
     let client = client_for(&account, &password)?;
@@ -467,12 +583,55 @@ pub async fn create_event(
     sync_account(db, secrets, target.calendar_account_id).await
 }
 
+pub async fn update_event(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    event_id: i64,
+    input: CalendarEventInput,
+) -> AppResult<CalendarSyncResult> {
+    let target = event_write_target(db, event_id)?;
+    if target.read_only {
+        return Err(AppError::Message("this calendar is read-only".into()));
+    }
+    let etag = target
+        .etag
+        .clone()
+        .ok_or_else(|| AppError::Message("event has no ETag".into()))?;
+    let uid = db
+        .read()
+        .query_row(
+            "select uid from calendar_events where id = ?1",
+            params![event_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Message("event not found".into()))?;
+    let account = calendar_account_by_id(db, target.calendar_account_id)?;
+    let password = calendar_password(secrets, account.id)?;
+    let client = client_for(&account, &password)?;
+    let body = build_event_ics(&input, &uid)?;
+    let response = client
+        .put_if_match(&target.href, Bytes::from(body), &etag)
+        .await
+        .map_err(calendar_error)?;
+    if !response.status().is_success() {
+        return Err(AppError::Message(format!(
+            "calendar server rejected the update ({})",
+            response.status()
+        )));
+    }
+    sync_account(db, secrets, target.calendar_account_id).await
+}
+
 pub async fn delete_event(
     db: &Database,
     secrets: &dyn SecretStore,
     event_id: i64,
 ) -> AppResult<CalendarSyncResult> {
     let target = event_write_target(db, event_id)?;
+    if target.read_only {
+        return Err(AppError::Message("this calendar is read-only".into()));
+    }
     let etag = target
         .etag
         .ok_or_else(|| AppError::Message("event has no ETag".into()))?;
@@ -543,14 +702,27 @@ pub async fn add_account(
         }
     })?;
     let created_at = db::now();
-    let id = {
+    let (id, position) = {
         let conn = db.conn.lock().unwrap();
-        conn.execute(
-            "insert into calendar_accounts (display_name, base_url, username, space_id, created_at)
-             values (?1, ?2, ?3, ?4, ?5)",
-            params![display_name, base_url, username, input.space_id, created_at],
+        let position: i64 = conn.query_row(
+            "select coalesce(max(position) + 1, 0) from calendar_accounts where space_id = ?1",
+            params![input.space_id],
+            |row| row.get(0),
         )?;
-        conn.last_insert_rowid()
+        conn.execute(
+            "insert into calendar_accounts
+                (display_name, base_url, username, space_id, position, created_at)
+             values (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                display_name,
+                base_url,
+                username,
+                input.space_id,
+                position,
+                created_at
+            ],
+        )?;
+        (conn.last_insert_rowid(), position)
     };
 
     if let Err(error) = secrets.set(&calendar_account_key(id), &input.password) {
@@ -567,6 +739,7 @@ pub async fn add_account(
         base_url,
         username: username.to_string(),
         space_id: input.space_id,
+        position,
         created_at,
     };
     if let Err(error) = save_calendars(db, id, &remote) {
@@ -579,6 +752,24 @@ pub async fn add_account(
         return Err(error);
     }
     Ok(account)
+}
+
+pub fn unsubscribe_calendar(db: &Database, calendar_id: i64) -> AppResult<()> {
+    let mut conn = db.conn.lock().unwrap();
+    let tx = conn.transaction()?;
+    let changed = tx.execute(
+        "update calendars set unsubscribed = 1, sync_token = null where id = ?1",
+        params![calendar_id],
+    )?;
+    if changed == 0 {
+        return Err(AppError::Message("calendar not found".into()));
+    }
+    tx.execute(
+        "delete from calendar_events where calendar_id = ?1",
+        params![calendar_id],
+    )?;
+    tx.commit()?;
+    Ok(())
 }
 
 pub fn remove_account(db: &Database, secrets: &dyn SecretStore, account_id: i64) -> AppResult<()> {
@@ -598,17 +789,24 @@ pub async fn sync_account(
 ) -> AppResult<CalendarSyncResult> {
     let account = calendar_account_by_id(db, account_id)?;
     let password = calendar_password(secrets, account_id)?;
-    let targets = calendar_targets(db, account_id)?;
-    if targets.is_empty() {
-        return Err(AppError::Message("no calendars connected".into()));
-    }
-
+    let client = client_for(&account, &password)?;
     let mut result = CalendarSyncResult {
         calendars: 0,
         events: 0,
         errors: Vec::new(),
     };
-    let client = client_for(&account, &password)?;
+
+    // Refresh collection metadata as well as events so server-side changes to
+    // read-only status and calendar names reach the existing account.
+    match discover_calendars(&client).await {
+        Ok(remote) => save_calendars(db, account_id, &remote)?,
+        Err(error) => result.errors.push(error.to_string()),
+    }
+
+    let targets = calendar_targets(db, account_id)?;
+    if targets.is_empty() {
+        return Err(AppError::Message("no calendars connected".into()));
+    }
 
     for target in targets {
         let session = client
@@ -669,6 +867,7 @@ fn row_to_calendar(row: &rusqlite::Row<'_>) -> rusqlite::Result<CalendarSummary>
         color: row.get(4)?,
         sync_token: row.get(5)?,
         last_synced_at: row.get(6)?,
+        read_only: row.get::<_, i64>(7)? != 0,
     })
 }
 
@@ -676,10 +875,10 @@ pub fn list_calendars(db: &Database, space_id: i64) -> AppResult<Vec<CalendarSum
     let conn = db.read();
     let mut stmt = conn.prepare(
         "select c.id, c.calendar_account_id, c.href, c.name,
-                c.color, c.sync_token, c.last_synced_at
+                c.color, c.sync_token, c.last_synced_at, c.read_only
          from calendars c
          join calendar_accounts ca on ca.id = c.calendar_account_id
-         where ca.space_id = ?1
+         where ca.space_id = ?1 and c.unsubscribed = 0
          order by c.name collate nocase, c.id",
     )?;
     let rows = stmt.query_map(params![space_id], row_to_calendar)?;
@@ -697,13 +896,14 @@ pub fn list_events(
     let mut stmt = conn.prepare(
         "select e.id, e.calendar_id, c.name, c.color, e.href,
                 e.etag, e.uid, e.summary, e.description, e.location,
-                e.starts_at, e.ends_at, e.all_day
+                e.starts_at, e.ends_at, e.all_day, c.read_only, e.recurrence
          from calendar_events e
          join calendars c on c.id = e.calendar_id
          join calendar_accounts ca on ca.id = c.calendar_account_id
          where ca.space_id = ?1
+           and c.unsubscribed = 0
            and e.starts_at < ?3
-           and coalesce(e.ends_at, e.starts_at) >= ?2
+           and (coalesce(e.ends_at, e.starts_at) >= ?2 or e.recurrence <> '')
          order by e.starts_at, e.id
          limit ?4",
     )?;
@@ -724,6 +924,8 @@ pub fn list_events(
                 starts_at: row.get(10)?,
                 ends_at: row.get(11)?,
                 all_day: row.get::<_, i64>(12)? != 0,
+                read_only: row.get::<_, i64>(13)? != 0,
+                recurrence: row.get(14)?,
             })
         },
     )?;
@@ -741,18 +943,20 @@ pub(crate) fn save_calendars(
         let components = serde_json::to_string(&calendar.components)?;
         tx.execute(
             "insert into calendars
-                (calendar_account_id, href, name, color, supported_components)
-             values (?1, ?2, ?3, ?4, ?5)
+                (calendar_account_id, href, name, color, supported_components, read_only)
+             values (?1, ?2, ?3, ?4, ?5, ?6)
              on conflict(calendar_account_id, href) do update set
                 name = excluded.name,
                 color = excluded.color,
-                supported_components = excluded.supported_components",
+                supported_components = excluded.supported_components,
+                read_only = excluded.read_only",
             params![
                 calendar_account_id,
                 calendar.href,
                 calendar.name,
                 calendar.color,
-                components
+                components,
+                calendar.read_only as i64
             ],
         )?;
     }
@@ -813,12 +1017,13 @@ fn upsert_event(
         starts_at: 0,
         ends_at: None,
         all_day: false,
+        recurrence: String::new(),
     });
     tx.execute(
         "insert into calendar_events
             (calendar_id, href, etag, uid, summary, description, location,
-             starts_at, ends_at, all_day, ical, updated_at)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             starts_at, ends_at, all_day, ical, updated_at, recurrence)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          on conflict(calendar_id, href) do update set
             etag = excluded.etag,
             uid = excluded.uid,
@@ -829,7 +1034,8 @@ fn upsert_event(
             ends_at = excluded.ends_at,
             all_day = excluded.all_day,
             ical = excluded.ical,
-            updated_at = excluded.updated_at",
+            updated_at = excluded.updated_at,
+            recurrence = excluded.recurrence",
         params![
             calendar_id,
             event.href,
@@ -843,6 +1049,7 @@ fn upsert_event(
             parsed.all_day as i64,
             event.data,
             db::now(),
+            parsed.recurrence,
         ],
     )?;
     Ok(())
@@ -890,6 +1097,7 @@ fn parse_event(ics: &str) -> AppResult<ParsedEvent> {
         starts_at,
         ends_at,
         all_day,
+        recurrence: event.property_value("RRULE").unwrap_or_default().to_string(),
     })
 }
 
@@ -951,6 +1159,7 @@ END:VCALENDAR
                 name: "Work".into(),
                 color: Some("#6da4ff".into()),
                 components: vec!["VEVENT".into()],
+                read_only: false,
             }],
         )
         .unwrap();
@@ -976,6 +1185,35 @@ END:VCALENDAR
     }
 
     #[test]
+    fn reorders_calendar_accounts_within_a_space() {
+        let db = Database::open_memory().unwrap();
+        let (space_id, first) = seed_account(&db);
+        let (_, second) = seed_account(&db);
+
+        let reordered = reorder_accounts(&db, space_id, &[second, first]).unwrap();
+
+        assert_eq!(
+            reordered.iter().map(|account| account.id).collect::<Vec<_>>(),
+            vec![second, first]
+        );
+    }
+
+    #[test]
+    fn detects_read_only_privilege_sets() {
+        assert!(!privileges_allow_write(&[
+            Privilege::Read,
+            Privilege::WriteProperties,
+            Privilege::Other("read-acl".into()),
+        ]));
+        assert!(privileges_allow_write(&[
+            Privilege::Read,
+            Privilege::Write,
+            Privilege::WriteContent,
+        ]));
+        assert!(privileges_allow_write(&[Privilege::Other("write".into())]));
+    }
+
+    #[test]
     fn parses_a_timed_event() {
         let event = parse_event(TIMED_EVENT).unwrap();
 
@@ -997,6 +1235,7 @@ END:VCALENDAR
                 starts_at: 1_793_178_000,
                 ends_at: Some(1_793_179_800),
                 all_day: false,
+                recurrence: "FREQ=WEEKLY;BYDAY=MO".into(),
             },
             "event-3",
         )
@@ -1008,6 +1247,7 @@ END:VCALENDAR
         assert!(ics.contains("DESCRIPTION:Line one\\nLine two"));
         assert!(ics.contains("DTSTART:20261028T090000Z"));
         assert!(ics.contains("DTEND:20261028T093000Z"));
+        assert!(ics.contains("RRULE:FREQ=WEEKLY;BYDAY=MO"));
     }
 
     #[test]
@@ -1052,6 +1292,20 @@ END:VCALENDAR
         .unwrap();
 
         assert!(list_events(&db, space_id, 1_793_000_000, 1_794_000_000, 50)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn unsubscribing_hides_a_calendar_and_its_events() {
+        let db = Database::open_memory().unwrap();
+        let (space_id, account_id) = seed_account(&db);
+        let calendar_id = seed_calendar(&db, space_id, account_id);
+
+        unsubscribe_calendar(&db, calendar_id).unwrap();
+
+        assert!(list_calendars(&db, space_id).unwrap().is_empty());
+        assert!(list_events(&db, space_id, 0, i64::MAX, 50)
             .unwrap()
             .is_empty());
     }
@@ -1245,6 +1499,7 @@ END:VCALENDAR</C:calendar-data>
                 starts_at: 1_793_178_000,
                 ends_at: Some(1_793_179_800),
                 all_day: false,
+                recurrence: String::new(),
             },
         )
         .await
@@ -1252,6 +1507,24 @@ END:VCALENDAR</C:calendar-data>
         assert_eq!(created.events, 1);
 
         let event_id = events[0].id;
+        let updated = update_event(
+            &db,
+            &secrets,
+            event_id,
+            CalendarEventInput {
+                summary: "Team standup updated".into(),
+                description: "Updated".into(),
+                location: String::new(),
+                starts_at: 1_793_178_000,
+                ends_at: Some(1_793_179_800),
+                all_day: false,
+                recurrence: "FREQ=WEEKLY".into(),
+            },
+        )
+        .await
+        .expect("update event");
+        assert_eq!(updated.events, 1);
+
         delete_event(&db, &secrets, event_id)
             .await
             .expect("delete event");

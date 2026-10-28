@@ -1687,6 +1687,34 @@ pub async fn list_calendar_accounts(
 }
 
 #[tauri::command]
+pub async fn reorder_calendar_accounts(
+    state: State<'_, AppState>,
+    space_id: i64,
+    ids: Vec<i64>,
+) -> AppResult<Vec<CalendarAccount>> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || {
+        calendar::reorder_accounts(&db, space_id, &ids)
+    })
+    .await
+    .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
+pub async fn move_calendar_account(
+    state: State<'_, AppState>,
+    account_id: i64,
+    space_id: i64,
+) -> AppResult<CalendarAccount> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || {
+        calendar::move_account_to_space(&db, account_id, space_id)
+    })
+    .await
+    .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
 pub async fn add_calendar_account(
     state: State<'_, AppState>,
     input: CalendarAccountInput,
@@ -1694,6 +1722,17 @@ pub async fn add_calendar_account(
     let db = Arc::clone(&state.db);
     let secrets = Arc::clone(&state.secrets);
     calendar::add_account(&db, secrets.as_ref(), input).await
+}
+
+#[tauri::command]
+pub async fn unsubscribe_calendar(
+    state: State<'_, AppState>,
+    calendar_id: i64,
+) -> AppResult<()> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || calendar::unsubscribe_calendar(&db, calendar_id))
+        .await
+        .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
@@ -1729,6 +1768,17 @@ pub async fn create_calendar_event(
     let db = Arc::clone(&state.db);
     let secrets = Arc::clone(&state.secrets);
     calendar::create_event(&db, secrets.as_ref(), calendar_id, input).await
+}
+
+#[tauri::command]
+pub async fn update_calendar_event(
+    state: State<'_, AppState>,
+    event_id: i64,
+    input: CalendarEventInput,
+) -> AppResult<CalendarSyncResult> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    calendar::update_event(&db, secrets.as_ref(), event_id, input).await
 }
 
 #[tauri::command]
