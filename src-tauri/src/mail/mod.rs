@@ -14,9 +14,9 @@ use parse::ParsedHeaders;
 
 const MESSAGE_COLUMNS: &str = "m.id, m.account_id, m.folder_id, m.uid, m.message_id, m.from_addr, m.from_name, m.to_addrs, m.cc_addrs, m.subject, m.date, m.snippet, m.is_seen, m.is_starred, m.has_attachments, m.body_cached, m.references_header, m.thread_key, (select c.tab_id from classifications c where c.message_id = m.id) as tab_id";
 
-const SEARCH_MATCH: &str = r"lower(m.from_addr || ' ' || m.from_name || ' ' || m.to_addrs || ' ' || m.cc_addrs || ' ' || m.subject || ' ' || m.snippet || ' ' || coalesce(mb.text_body, '') || ' ' || coalesce(mb.html_body, '')) like ? escape '\'";
-
-const DEDUPED_MESSAGES: &str = "select m.*, row_number() over (partition by m.account_id, coalesce(nullif(m.message_id, ''), 'id:' || m.id) order by case f.role when 'inbox' then 0 when 'sent' then 1 when 'archive' then 2 when 'all' then 9 else 5 end, m.body_cached desc, m.id) rn from messages m join folders f on f.id = m.folder_id";
+const SEARCH_MATCH_FTS: &str =
+    "m.id in (select rowid from message_search where message_search match ?)";
+const SEARCH_MATCH_LIKE: &str = r"lower(m.from_addr || ' ' || m.from_name || ' ' || m.to_addrs || ' ' || m.cc_addrs || ' ' || m.subject || ' ' || m.snippet || ' ' || coalesce(mb.text_body, '') || ' ' || coalesce(mb.html_body, '')) like ? escape '\'";
 
 /// Archive is the archive folders plus All Mail messages that do not have a
 /// copy in another actionable folder. Keep the correlated lookup indexed by
@@ -177,7 +177,7 @@ pub fn reconcile_folders(db: &Database, account_id: i64, remote_paths: &[String]
 }
 
 pub fn folder_by_id(db: &Database, id: i64) -> AppResult<Option<Folder>> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     folder_by_id_conn(&conn, id)
 }
 
@@ -196,7 +196,7 @@ pub fn list_folders(
     account_id: Option<i64>,
     space_id: Option<i64>,
 ) -> AppResult<Vec<Folder>> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let sql = format!(
         "select {FOLDER_COLUMNS}, coalesce(sum(case when m.is_seen = 0 then 1 else 0 end), 0) from folders f left join messages m on m.folder_id = f.id where (?1 is null or f.account_id = ?1) and (?2 is null or f.account_id in (select id from accounts where space_id = ?2)) group by f.id order by f.account_id, case f.role when 'inbox' then 0 when 'drafts' then 1 when 'sent' then 2 when 'trash' then 3 else 4 end, f.name collate nocase"
     );
@@ -206,7 +206,7 @@ pub fn list_folders(
 }
 
 pub fn folder_cursor(db: &Database, folder_id: i64) -> AppResult<(u32, u32)> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let cursor = conn.query_row(
         "select uid_validity, highest_uid from folders where id = ?1",
         params![folder_id],
@@ -286,37 +286,35 @@ fn write_message(
     is_seen: bool,
     is_starred: bool,
 ) -> AppResult<Option<i64>> {
-    let exists: bool = conn.query_row(
-        "select exists(select 1 from messages where folder_id = ?1 and uid = ?2)",
-        params![folder_id, uid],
-        |row| row.get(0),
-    )?;
+    let exists: bool = conn
+        .prepare_cached("select exists(select 1 from messages where folder_id = ?1 and uid = ?2)")?
+        .query_row(params![folder_id, uid], |row| row.get(0))?;
     let to_addrs = serde_json::to_string(&headers.to_addrs)?;
     let cc_addrs = serde_json::to_string(&headers.cc_addrs)?;
     let thread_key =
         crate::db::message_thread_key(headers.message_id.as_deref(), headers.references.as_deref())
             .unwrap_or_else(|| format!("local:{account_id}:{folder_id}:{uid}"));
-    conn.execute(
+    conn.prepare_cached(
         "insert into messages (account_id, folder_id, uid, message_id, references_header, thread_key, from_addr, from_name, to_addrs, cc_addrs, subject, date, snippet, is_seen, is_starred, has_attachments, body_cached) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 0) on conflict(folder_id, uid) do update set account_id = excluded.account_id, message_id = excluded.message_id, references_header = excluded.references_header, thread_key = excluded.thread_key, from_addr = excluded.from_addr, from_name = excluded.from_name, to_addrs = excluded.to_addrs, cc_addrs = excluded.cc_addrs, subject = excluded.subject, date = excluded.date, snippet = excluded.snippet, is_seen = excluded.is_seen, is_starred = excluded.is_starred, has_attachments = excluded.has_attachments",
-        params![
-            account_id,
-            folder_id,
-            uid,
-            headers.message_id,
-            headers.references,
-            thread_key,
-            headers.from_addr,
-            headers.from_name,
-            to_addrs,
-            cc_addrs,
-            headers.subject,
-            headers.date,
-            headers.snippet,
-            is_seen as i64,
-            is_starred as i64,
-            headers.has_attachments as i64,
-        ],
-    )?;
+    )?
+    .execute(params![
+        account_id,
+        folder_id,
+        uid,
+        headers.message_id,
+        headers.references,
+        thread_key,
+        headers.from_addr,
+        headers.from_name,
+        to_addrs,
+        cc_addrs,
+        headers.subject,
+        headers.date,
+        headers.snippet,
+        is_seen as i64,
+        is_starred as i64,
+        headers.has_attachments as i64,
+    ])?;
     Ok((!exists).then(|| conn.last_insert_rowid()))
 }
 
@@ -334,7 +332,7 @@ fn write_cursor(
 }
 
 pub fn unread_inbox_count(db: &Database) -> AppResult<i64> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     Ok(conn.query_row(
         "select count(*) from messages m join folders f on f.id = m.folder_id where f.role = 'inbox' and m.is_seen = 0",
         [],
@@ -343,7 +341,7 @@ pub fn unread_inbox_count(db: &Database) -> AppResult<i64> {
 }
 
 pub fn unread_inbox_count_for_space(db: &Database, space_id: i64) -> AppResult<i64> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     Ok(conn.query_row(
         "select count(*) from messages m join folders f on f.id = m.folder_id join accounts a on a.id = m.account_id where f.role = 'inbox' and m.is_seen = 0 and a.space_id = ?1",
         params![space_id],
@@ -352,6 +350,7 @@ pub fn unread_inbox_count_for_space(db: &Database, space_id: i64) -> AppResult<i
 }
 
 pub fn tab_unread_counts(db: &Database, query: &MessageQuery) -> AppResult<TabUnreadCounts> {
+
     let mut conditions = vec!["m.is_seen = 0".to_string()];
     let mut values: Vec<Value> = Vec::new();
     match query.folder_id {
@@ -383,7 +382,7 @@ pub fn tab_unread_counts(db: &Database, query: &MessageQuery) -> AppResult<TabUn
     }
     let scope = conditions.join(" and ");
     let thread = "m.account_id || ':' || coalesce(nullif(m.thread_key, ''), 'id:' || m.id)";
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let all = conn.query_row(
         &format!(
             "select count(distinct {thread}) from messages m join folders f on f.id = m.folder_id where {scope}"
@@ -458,8 +457,7 @@ pub fn list_messages(db: &Database, query: &MessageQuery) -> AppResult<Vec<Messa
         values.push(Value::Integer(space_id));
     }
     if let Some(search) = search {
-        conditions.push(SEARCH_MATCH.to_string());
-        values.push(Value::Text(like_pattern(search)));
+        push_search_condition(&mut conditions, &mut values, search);
     }
 
     if !conditions.is_empty() {
@@ -480,7 +478,7 @@ pub fn list_messages(db: &Database, query: &MessageQuery) -> AppResult<Vec<Messa
     values.push(Value::Integer(limit as i64));
     values.push(Value::Integer(offset as i64));
 
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_from_iter(values.iter()), row_to_message)?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -539,8 +537,7 @@ pub fn list_threads(db: &Database, query: &MessageQuery) -> AppResult<Vec<Thread
         values.push(Value::Integer(space_id));
     }
     if let Some(search) = search {
-        conditions.push(SEARCH_MATCH.to_string());
-        values.push(Value::Text(like_pattern(search)));
+        push_search_condition(&mut conditions, &mut values, search);
     }
 
     if !conditions.is_empty() {
@@ -554,7 +551,7 @@ pub fn list_threads(db: &Database, query: &MessageQuery) -> AppResult<Vec<Thread
         "desc"
     };
     let sql = format!(
-        "with matched as ({matched}), deduped as ({DEDUPED_MESSAGES}), threads as (select d.id, d.account_id, d.thread_key, row_number() over(partition by d.account_id, d.thread_key order by d.date desc, d.id desc) rn from deduped d join matched mt on mt.account_id = d.account_id and mt.thread_key = d.thread_key where d.rn = 1) select {MESSAGE_COLUMNS}, (select count(distinct coalesce(nullif(mx.message_id, ''), 'id:' || mx.id)) from messages mx where mx.account_id = m.account_id and mx.thread_key = m.thread_key), (select count(distinct case when mx.is_seen = 0 then coalesce(nullif(mx.message_id, ''), 'id:' || mx.id) end) from messages mx where mx.account_id = m.account_id and mx.thread_key = m.thread_key), (select exists(select 1 from messages mx join folders fx on fx.id = mx.folder_id where mx.account_id = m.account_id and mx.thread_key = m.thread_key and fx.role = 'inbox')) from deduped m join threads t on t.id = m.id and t.rn = 1 where m.rn = 1 order by m.date {direction}, m.id {direction} limit ? offset ?"
+        "with matched as ({matched}), deduped as (select m.*, row_number() over (partition by m.account_id, coalesce(nullif(m.message_id, ''), 'id:' || m.id) order by case f.role when 'inbox' then 0 when 'sent' then 1 when 'archive' then 2 when 'all' then 9 else 5 end, m.body_cached desc, m.id) rn from messages m join folders f on f.id = m.folder_id join matched mt on mt.account_id = m.account_id and mt.thread_key = m.thread_key), threads as (select d.id, d.account_id, d.thread_key, row_number() over(partition by d.account_id, d.thread_key order by d.date desc, d.id desc) rn from deduped d join matched mt on mt.account_id = d.account_id and mt.thread_key = d.thread_key where d.rn = 1) select {MESSAGE_COLUMNS}, (select count(distinct coalesce(nullif(mx.message_id, ''), 'id:' || mx.id)) from messages mx where mx.account_id = m.account_id and mx.thread_key = m.thread_key), (select count(distinct case when mx.is_seen = 0 then coalesce(nullif(mx.message_id, ''), 'id:' || mx.id) end) from messages mx where mx.account_id = m.account_id and mx.thread_key = m.thread_key), (select exists(select 1 from messages mx join folders fx on fx.id = mx.folder_id where mx.account_id = m.account_id and mx.thread_key = m.thread_key and fx.role = 'inbox')) from deduped m join threads t on t.id = m.id and t.rn = 1 where m.rn = 1 order by m.date {direction}, m.id {direction} limit ? offset ?"
     );
 
     let limit = query.limit.unwrap_or(100).clamp(1, 5000);
@@ -562,7 +559,7 @@ pub fn list_threads(db: &Database, query: &MessageQuery) -> AppResult<Vec<Thread
     values.push(Value::Integer(limit as i64));
     values.push(Value::Integer(offset as i64));
 
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_from_iter(values.iter()), |row| {
         Ok(ThreadMessage {
@@ -581,7 +578,7 @@ pub fn thread_message_ids_in_role(
     thread_key: &str,
     role: &str,
 ) -> AppResult<Vec<i64>> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let mut stmt = conn.prepare(
         "select m.id from messages m join folders f on f.id = m.folder_id where m.account_id = ?1 and m.thread_key = ?2 and f.role = ?3 order by m.date desc, m.id desc",
     )?;
@@ -595,9 +592,9 @@ pub fn list_thread_messages(
     thread_key: &str,
 ) -> AppResult<Vec<Message>> {
     let sql = format!(
-        "with deduped as ({DEDUPED_MESSAGES}) select {MESSAGE_COLUMNS} from deduped m where m.rn = 1 and m.account_id = ?1 and m.thread_key = ?2 order by m.date desc, m.id desc"
+        "with deduped as (select m.*, row_number() over (partition by m.account_id, coalesce(nullif(m.message_id, ''), 'id:' || m.id) order by case f.role when 'inbox' then 0 when 'sent' then 1 when 'archive' then 2 when 'all' then 9 else 5 end, m.body_cached desc, m.id) rn from messages m join folders f on f.id = m.folder_id where m.account_id = ?1 and m.thread_key = ?2) select {MESSAGE_COLUMNS} from deduped m where m.rn = 1 and m.account_id = ?1 and m.thread_key = ?2 order by m.date desc, m.id desc"
     );
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![account_id, thread_key], row_to_message)?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -638,7 +635,7 @@ pub fn unclassified_message_ids_before(
 }
 
 pub fn get_message_detail(db: &Database, message_id: i64) -> AppResult<MessageDetail> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let sql = format!("select {MESSAGE_COLUMNS} from messages m where m.id = ?1");
     let message = conn
         .query_row(&sql, params![message_id], row_to_message)
@@ -677,7 +674,7 @@ pub fn get_message_detail(db: &Database, message_id: i64) -> AppResult<MessageDe
 }
 
 pub fn message_by_id(db: &Database, message_id: i64) -> AppResult<Message> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let sql = format!("select {MESSAGE_COLUMNS} from messages m where m.id = ?1");
     conn.query_row(&sql, params![message_id], row_to_message)
         .optional()?
@@ -795,22 +792,25 @@ pub fn reconcile_folder_messages(
     };
     let tx = conn.transaction()?;
     let mut changed = 0;
-    for (id, uid, seen, starred) in local {
-        match remote_flags.get(&uid) {
-            None => {
-                tx.execute("delete from messages where id = ?1", params![id])?;
-                changed += 1;
+    {
+        let mut delete = tx.prepare_cached("delete from messages where id = ?1")?;
+        let mut update = tx.prepare_cached(
+            "update messages set is_seen = ?2, is_starred = ?3 where id = ?1",
+        )?;
+        for (id, uid, seen, starred) in local {
+            match remote_flags.get(&uid) {
+                None => {
+                    delete.execute(params![id])?;
+                    changed += 1;
+                }
+                Some((remote_seen, remote_starred))
+                    if *remote_seen != seen || *remote_starred != starred =>
+                {
+                    update.execute(params![id, *remote_seen as i64, *remote_starred as i64])?;
+                    changed += 1;
+                }
+                Some(_) => {}
             }
-            Some((remote_seen, remote_starred))
-                if *remote_seen != seen || *remote_starred != starred =>
-            {
-                tx.execute(
-                    "update messages set is_seen = ?2, is_starred = ?3 where id = ?1",
-                    params![id, *remote_seen as i64, *remote_starred as i64],
-                )?;
-                changed += 1;
-            }
-            Some(_) => {}
         }
     }
     tx.commit()?;
@@ -835,7 +835,7 @@ pub fn remove_message(db: &Database, message_id: i64) -> AppResult<()> {
 }
 
 pub fn attachment_by_id(db: &Database, attachment_id: i64) -> AppResult<Attachment> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     conn.query_row(
         "select id, message_id, filename, mime_type, size, content_id from attachments where id = ?1",
         params![attachment_id],
@@ -867,7 +867,7 @@ pub fn set_attachment_cache_path(
 }
 
 pub fn attachment_cache_path(db: &Database, attachment_id: i64) -> AppResult<Option<String>> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     Ok(conn
         .query_row(
             "select cache_path from attachments where id = ?1",
@@ -879,7 +879,7 @@ pub fn attachment_cache_path(db: &Database, attachment_id: i64) -> AppResult<Opt
 }
 
 fn folder_path_by_role(db: &Database, account_id: i64, role: &str) -> AppResult<Option<String>> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     Ok(conn
         .query_row(
             "select path from folders where account_id = ?1 and role = ?2 order by id limit 1",
@@ -915,6 +915,35 @@ pub fn safe_attachment_name(filename: &str) -> String {
         "attachment".into()
     } else {
         truncated
+    }
+}
+
+fn fts_query(search: &str) -> String {
+    search
+        .split_whitespace()
+        .filter_map(|term| {
+            let term = term.trim_matches(|character: char| {
+                !character.is_alphanumeric()
+                    && !matches!(character, '@' | '.' | '_' | '-' | '+' | '\'')
+            });
+            if term.is_empty() {
+                None
+            } else {
+                Some(format!("\"{}\"*", term.replace('"', "\"\"")))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
+fn push_search_condition(conditions: &mut Vec<String>, values: &mut Vec<Value>, search: &str) {
+    let fts = fts_query(search);
+    if fts.is_empty() {
+        conditions.push(SEARCH_MATCH_LIKE.to_string());
+        values.push(Value::Text(like_pattern(search)));
+    } else {
+        conditions.push(SEARCH_MATCH_FTS.to_string());
+        values.push(Value::Text(fts));
     }
 }
 
