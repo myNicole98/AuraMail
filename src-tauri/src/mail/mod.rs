@@ -223,6 +223,37 @@ pub fn apply_folder_headers(
     uid_validity: u32,
     highest_uid: u32,
 ) -> AppResult<Vec<i64>> {
+    apply_folder_headers_inner(
+        db,
+        account_id,
+        folder_id,
+        headers,
+        uid_validity,
+        highest_uid,
+        true,
+    )
+}
+
+/// Insert one streamed batch of headers without advancing the folder cursor.
+/// The caller advances the cursor once the complete sync has finished.
+pub fn apply_folder_headers_batch(
+    db: &Database,
+    account_id: i64,
+    folder_id: i64,
+    headers: &[MessageHeader],
+) -> AppResult<Vec<i64>> {
+    apply_folder_headers_inner(db, account_id, folder_id, headers, 0, 0, false)
+}
+
+fn apply_folder_headers_inner(
+    db: &Database,
+    account_id: i64,
+    folder_id: i64,
+    headers: &[MessageHeader],
+    uid_validity: u32,
+    highest_uid: u32,
+    advance_cursor: bool,
+) -> AppResult<Vec<i64>> {
     let mut conn = db.conn.lock().unwrap();
     let tx = conn.transaction()?;
     let mut inserted = Vec::new();
@@ -239,9 +270,29 @@ pub fn apply_folder_headers(
             inserted.push(id);
         }
     }
-    write_cursor(&tx, folder_id, uid_validity, highest_uid)?;
+    if advance_cursor {
+        write_cursor(&tx, folder_id, uid_validity, highest_uid)?;
+    }
     tx.commit()?;
     Ok(inserted)
+}
+
+pub fn clear_folder_messages(db: &Database, folder_id: i64) -> AppResult<()> {
+    db.conn.lock().unwrap().execute(
+        "delete from messages where folder_id = ?1",
+        params![folder_id],
+    )?;
+    Ok(())
+}
+
+pub fn set_folder_cursor(
+    db: &Database,
+    folder_id: i64,
+    uid_validity: u32,
+    highest_uid: u32,
+) -> AppResult<()> {
+    let conn = db.conn.lock().unwrap();
+    write_cursor(&conn, folder_id, uid_validity, highest_uid)
 }
 
 pub fn replace_folder_messages(

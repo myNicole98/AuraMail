@@ -243,6 +243,25 @@ pub fn fetch_headers(
     folder_path: &str,
     from_uid: u32,
 ) -> AppResult<Vec<FetchedHeader>> {
+    let mut headers = Vec::new();
+    fetch_headers_batched(session, folder_path, from_uid, |batch| {
+        headers.extend(batch);
+        Ok(())
+    })?;
+    Ok(headers)
+}
+
+/// Fetch headers in batches so the caller can persist and publish the first
+/// results before a large mailbox has finished downloading.
+pub fn fetch_headers_batched<F>(
+    session: &mut ImapSession,
+    folder_path: &str,
+    from_uid: u32,
+    mut on_batch: F,
+) -> AppResult<()>
+where
+    F: FnMut(Vec<FetchedHeader>) -> AppResult<()>,
+{
     session
         .select(folder_path)
         .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
@@ -251,8 +270,7 @@ pub fn fetch_headers(
         .map_err(|_| AppError::Message("IMAP header search failed".into()))?;
     let mut uids: Vec<u32> = found.into_iter().collect();
     uids.sort_unstable();
-    let mut headers = Vec::new();
-    for chunk in uids.chunks(500) {
+    for chunk in uids.chunks(200) {
         let set = chunk
             .iter()
             .map(u32::to_string)
@@ -261,19 +279,23 @@ pub fn fetch_headers(
         let fetches = session
             .uid_fetch(set, "(UID FLAGS BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.4096>)")
             .map_err(|_| AppError::Message("IMAP header fetch failed".into()))?;
+        let mut batch = Vec::new();
         for fetch in fetches.iter() {
             let (Some(uid), Some(raw)) = (fetch.uid, fetch.header()) else {
                 continue;
             };
-            headers.push(FetchedHeader {
+            batch.push(FetchedHeader {
                 uid,
                 flags: fetch.flags().iter().map(ToString::to_string).collect(),
                 raw: raw.to_vec(),
                 preview: fetch.text().map(Vec::from).unwrap_or_default(),
             });
         }
+        if !batch.is_empty() {
+            on_batch(batch)?;
+        }
     }
-    Ok(headers)
+    Ok(())
 }
 
 pub fn fetch_message(

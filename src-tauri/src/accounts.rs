@@ -333,6 +333,16 @@ pub fn set_sync_interval(db: &Database, seconds: i64) -> AppResult<Vec<Account>>
     list(db)
 }
 
+fn ensure_inbox_folder(db: &Database, account_id: i64) -> AppResult<()> {
+    db.conn.lock().unwrap().execute(
+        "insert into folders (account_id, path, name, role)
+         values (?1, 'INBOX', 'Inbox', 'inbox')
+         on conflict(account_id, path) do nothing",
+        rusqlite::params![account_id],
+    )?;
+    Ok(())
+}
+
 pub fn create(db: &Database, secrets: &dyn SecretStore, input: AccountInput) -> AppResult<Account> {
     input.validate()?;
     if find_by_email_ci(db, &input.email)?.is_some() {
@@ -388,6 +398,11 @@ pub fn create(db: &Database, secrets: &dyn SecretStore, input: AccountInput) -> 
         (conn.last_insert_rowid(), position)
     };
 
+    if let Err(err) = ensure_inbox_folder(db, id) {
+        let conn = db.conn.lock().unwrap();
+        let _ = conn.execute("delete from accounts where id = ?1", rusqlite::params![id]);
+        return Err(err);
+    }
     if let Err(err) = secrets.set(&account_key(id), &input.password) {
         let conn = db.conn.lock().unwrap();
         let _ = conn.execute("delete from accounts where id = ?1", rusqlite::params![id]);
@@ -477,6 +492,11 @@ pub fn create_oauth(
         (conn.last_insert_rowid(), position)
     };
 
+    if let Err(err) = ensure_inbox_folder(db, id) {
+        let conn = db.conn.lock().unwrap();
+        let _ = conn.execute("delete from accounts where id = ?1", rusqlite::params![id]);
+        return Err(err);
+    }
     if let Err(err) = secrets.set(&account_key(id), secret_json) {
         let conn = db.conn.lock().unwrap();
         let _ = conn.execute("delete from accounts where id = ?1", rusqlite::params![id]);
@@ -564,6 +584,11 @@ pub fn create_proton(
         (conn.last_insert_rowid(), position)
     };
 
+    if let Err(err) = ensure_inbox_folder(db, id) {
+        let conn = db.conn.lock().unwrap();
+        let _ = conn.execute("delete from accounts where id = ?1", rusqlite::params![id]);
+        return Err(err);
+    }
     if let Err(err) = secrets.set(&account_key(id), &input.bridge_password) {
         let conn = db.conn.lock().unwrap();
         let _ = conn.execute("delete from accounts where id = ?1", rusqlite::params![id]);
@@ -1514,12 +1539,13 @@ mod tests {
         let account = accounts::create(&db, &secrets, input_in_space(personal.id)).unwrap();
         let (folder_id, message_id) = {
             let conn = db.conn.lock().unwrap();
-            conn.execute(
-                "insert into folders (account_id, path, name, role) values (?1, 'INBOX', 'Inbox', 'inbox')",
-                rusqlite::params![account.id],
-            )
-            .unwrap();
-            let folder_id = conn.last_insert_rowid();
+            let folder_id: i64 = conn
+                .query_row(
+                    "select id from folders where account_id = ?1 and path = 'INBOX'",
+                    rusqlite::params![account.id],
+                    |row| row.get(0),
+                )
+                .unwrap();
             conn.execute(
                 "insert into messages (account_id, folder_id, uid, subject) values (?1, ?2, 1, 'Hello')",
                 rusqlite::params![account.id, folder_id],

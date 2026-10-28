@@ -1553,10 +1553,13 @@ class AppStore {
   private scheduleSyncRefresh(accountId: number): void {
     const account = this.accounts.find((candidate) => candidate.id === accountId);
     if (!account || account.space_id !== this.activeSpaceId) return;
-    clearTimeout(this.syncRefreshTimer);
+    // Throttle instead of debounce: a long initial sync emits many batches,
+    // and each one should keep the visible message list moving forward.
+    if (this.syncRefreshTimer !== undefined) return;
     this.syncRefreshTimer = setTimeout(() => {
+      this.syncRefreshTimer = undefined;
       void this.runSyncRefresh();
-    }, 650);
+    }, 300);
   }
 
   private async runSyncRefresh(): Promise<void> {
@@ -1729,6 +1732,14 @@ class AppStore {
       else delete next[payload.folderId];
       this.syncingFolders = next;
     });
+    const foldersChanged = await listen<{ accountId: number }>(
+      "sync://folders",
+      ({ payload }) => {
+        if (typeof payload?.accountId === "number") {
+          void this.refreshFolders();
+        }
+      }
+    );
     const created = await listen<{ accountId: number; inserted: number }>(
       "sync://new",
       ({ payload }) => {
@@ -1791,6 +1802,7 @@ class AppStore {
     this.unlisteners.push(
       status,
       folderStatus,
+      foldersChanged,
       created,
       composeChanged,
       composeSent,

@@ -56,6 +56,12 @@ pub struct SyncFolderStatus {
     pub syncing: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncFolders {
+    pub account_id: i64,
+}
+
 struct SyncOutcome {
     inserted: Vec<i64>,
     auto_classify: Vec<i64>,
@@ -359,6 +365,13 @@ fn sync_account_inner(
     }
     mail::reconcile_folders(db.as_ref(), account.id, &remote_paths)?;
     sync_order(&mut folders);
+    app.emit(
+        "sync://folders",
+        SyncFolders {
+            account_id: account.id,
+        },
+    )
+    .ok();
 
     let result = {
         let mut first_error = None;
@@ -474,6 +487,29 @@ pub fn sync_inbox(
     }
 }
 
+fn store_header_batch(
+    app: &AppHandle,
+    db: &Database,
+    account_id: i64,
+    folder_id: i64,
+    headers: &[mail::MessageHeader],
+) -> AppResult<Vec<i64>> {
+    let inserted = mail::apply_folder_headers_batch(db, account_id, folder_id, headers)?;
+    if !inserted.is_empty() {
+        app.emit(
+            "sync://new",
+            SyncNew {
+                account_id,
+                folder_id,
+                count: inserted.len() as u32,
+                inserted: inserted.len() as u32,
+            },
+        )
+        .ok();
+    }
+    Ok(inserted)
+}
+
 fn sync_folder(
     session: &mut client::ImapSession,
     app: &AppHandle,
@@ -519,61 +555,65 @@ fn sync_folder(
         SyncAction::Noop => Vec::new(),
         SyncAction::Reset => {
             if state.latest_uid == 0 {
-                mail::replace_folder_messages(
-                    db,
-                    account.id,
-                    folder.id,
-                    &[],
-                    state.uid_validity,
-                    0,
-                )?
+                mail::clear_folder_messages(db, folder.id)?;
+                mail::set_folder_cursor(db, folder.id, state.uid_validity, 0)?;
+                Vec::new()
             } else {
-                let fetched = client::fetch_headers(session, &folder.path, 1)?;
+                let mut inserted = Vec::new();
+                let mut highest = state.latest_uid;
+                let mut first_batch = true;
+                client::fetch_headers_batched(session, &folder.path, 1, |fetched| {
+                    if first_batch {
+                        mail::clear_folder_messages(db, folder.id)?;
+                        first_batch = false;
+                    }
+                    highest = highest
+                        .max(fetched.iter().map(|header| header.uid).max().unwrap_or(0));
+                    let headers = build_headers(&fetched);
+                    inserted.extend(store_header_batch(
+                        app,
+                        db,
+                        account.id,
+                        folder.id,
+                        &headers,
+                    )?);
+                    Ok(())
+                })?;
+                if first_batch {
+                    mail::clear_folder_messages(db, folder.id)?;
+                }
+                mail::set_folder_cursor(db, folder.id, state.uid_validity, highest)?;
+                inserted
+            }
+        }
+        SyncAction::Incremental { from_uid } => {
+            let mut inserted = Vec::new();
+            let mut highest = state.latest_uid;
+            client::fetch_headers_batched(session, &folder.path, from_uid, |fetched| {
+                highest = highest.max(fetched.iter().map(|header| header.uid).max().unwrap_or(0));
                 let headers = build_headers(&fetched);
-                let highest = fetched
-                    .iter()
-                    .map(|header| header.uid)
-                    .max()
-                    .unwrap_or(0)
-                    .max(state.latest_uid);
-                mail::replace_folder_messages(
+                inserted.extend(store_header_batch(
+                    app,
                     db,
                     account.id,
                     folder.id,
                     &headers,
-                    state.uid_validity,
-                    highest,
-                )?
-            }
-        }
-        SyncAction::Incremental { from_uid } => {
-            let fetched = client::fetch_headers(session, &folder.path, from_uid)?;
-            let headers = build_headers(&fetched);
-            let highest = fetched
-                .iter()
-                .map(|header| header.uid)
-                .max()
-                .unwrap_or(0)
-                .max(state.latest_uid);
-            mail::apply_folder_headers(
-                db,
-                account.id,
-                folder.id,
-                &headers,
-                state.uid_validity,
-                highest,
-            )?
+                )?);
+                Ok(())
+            })?;
+            mail::set_folder_cursor(db, folder.id, state.uid_validity, highest)?;
+            inserted
         }
     };
 
-    if !inserted.is_empty() || changed > 0 {
+    if changed > 0 {
         app.emit(
             "sync://new",
             SyncNew {
                 account_id: account.id,
                 folder_id: folder.id,
-                count: (inserted.len() + changed) as u32,
-                inserted: inserted.len() as u32,
+                count: changed as u32,
+                inserted: 0,
             },
         )
         .ok();

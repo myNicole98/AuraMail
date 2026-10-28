@@ -325,6 +325,7 @@
         await api.addAccount(input);
       }
       await app.refresh();
+      if (!editing) void app.syncAll();
       accountForm = blankAccount();
       showAccountForm = false;
       accountEditingId = null;
