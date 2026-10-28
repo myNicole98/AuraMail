@@ -49,6 +49,15 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        // Must be registered before other plugins. A launch from a second
+        // process focuses the existing instance instead of creating another.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
