@@ -15,6 +15,7 @@ use crate::mail::{self, parse};
 use crate::secrets::SecretStore;
 
 const SYNC_RETRY_SECS: u64 = 10;
+const FULL_FLAG_RECONCILE_FLOOR_SECS: i64 = 5 * 60;
 const VOICE_REFRESH_SECS: i64 = 60 * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -409,7 +410,7 @@ fn sync_inbox_inner(
         let mut first_error = None;
         let mut inserted = Vec::new();
         for folder in folders {
-            match sync_folder(&mut session, app, db.as_ref(), account, &folder, true) {
+            match sync_folder(&mut session, app, db.as_ref(), account, &folder, false) {
                 Ok(mut outcome) => {
                     let classify_ids = std::mem::take(&mut outcome.auto_classify);
                     if !classify_ids.is_empty() {
@@ -658,6 +659,7 @@ pub fn start_polling(
 ) {
     tauri::async_runtime::spawn(async move {
         let mut started = HashSet::new();
+        let sync_gate = Arc::new(tokio::sync::Mutex::new(()));
         loop {
             if let Ok(accounts) = accounts::list(&db) {
                 for account in accounts {
@@ -668,23 +670,30 @@ pub fn start_polling(
                     let db = Arc::clone(&db);
                     let secrets = Arc::clone(&secrets);
                     let syncing = Arc::clone(&syncing);
+                    let gate = Arc::clone(&sync_gate);
                     let account_id = account.id;
-                    let mut delay = 30u64;
+                    let full_interval = account
+                        .sync_interval_secs
+                        .max(FULL_FLAG_RECONCILE_FLOOR_SECS)
+                        .clamp(60, 3600) as u64;
+                    let fast = accounts::fast_sync_interval(&db)
+                        .unwrap_or(30)
+                        .clamp(15, 3600) as u64;
                     tauri::async_runtime::spawn(async move {
                         let mut since_full = 0u64;
+                        let mut delay = fast;
                         loop {
                             tokio::time::sleep(Duration::from_secs(delay)).await;
                             if find_account(&db, account_id).ok().flatten().is_none() {
                                 break;
                             }
-                            let interval = 120u64;
-                            let fast = 30u64;
                             since_full = since_full.saturating_add(delay);
-                            let full = since_full >= interval;
+                            let full = since_full >= full_interval;
                             let task_app = app.clone();
                             let task_db = Arc::clone(&db);
                             let task_secrets = Arc::clone(&secrets);
                             let task_syncing = Arc::clone(&syncing);
+                            let _gate = gate.lock().await;
                             let result = tauri::async_runtime::spawn_blocking(move || {
                                 if full {
                                     sync_account(

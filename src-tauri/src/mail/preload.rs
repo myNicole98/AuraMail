@@ -14,7 +14,7 @@ use crate::spaces;
 
 const MAX_REMOTE_IMAGES: usize = 12;
 const MAX_REMOTE_IMAGE_BYTES: usize = 8 * 1024 * 1024;
-const PRELOAD_BATCH: usize = 20;
+const PRELOAD_BATCH: usize = 10;
 pub const TRUSTED_SENDERS_KEY: &str = "mail.trusted_senders";
 pub const ALWAYS_LOAD_IMAGES_KEY: &str = "mail.always_load_images";
 pub const PROFILE_PICTURES_KEY: &str = "mail.profile_pictures";
@@ -118,20 +118,10 @@ pub fn schedule_preload(db: Arc<Database>, secrets: Arc<dyn SecretStore>, messag
                 load_detail(&task_db, task_secrets.as_ref(), message_id)
             })
             .await;
-            let Ok(Ok(detail)) = detail else {
-                continue;
-            };
-            let Ok(space_id) =
-                accounts::space_for_account(&db, detail.message.account_id)
-            else {
-                continue;
-            };
-            let trusted = trusted_senders(&db, space_id).unwrap_or_default();
-            let always = always_load_images(&db, space_id).unwrap_or(false);
-            let sender = detail.message.from_addr.trim().to_ascii_lowercase();
-            if always || trusted.iter().any(|address| address == &sender) {
-                let _ = load_images(&db, message_id).await;
-            }
+            // Preloading is only for the body. Remote images are loaded when
+            // the message is opened so a background sync cannot turn into a
+            // large image-download and cache-write burst.
+            let _ = detail;
         }
     });
 }
