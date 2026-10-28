@@ -172,6 +172,44 @@ html[data-theme-panes="rounded"] .shell > .reader {
 }
 
 /* Keep the border on the outer edges, but leave the facing gap edges open. */
+html[data-theme-panes="rounded"] .shell > .app-rail {
+  border: 1px solid var(--pane-border);
+  border-radius: 16px;
+  box-shadow: var(--pane-highlight), var(--pane-shadow);
+}
+
+/* Calendar mode is a workspace inside the shell; treat its two panes like
+   the mail panes instead of one square grid. */
+html[data-theme-panes="rounded"] .calendar-workspace {
+  gap: 5px;
+  background: transparent;
+}
+
+html[data-theme-panes="rounded"] .calendar-sidebar,
+html[data-theme-panes="rounded"] .calendar-main {
+  border: 1px solid var(--pane-border);
+  border-radius: 16px;
+  box-shadow: var(--pane-highlight), var(--pane-shadow);
+}
+
+html[data-theme-panes="rounded"] .calendar-main {
+  overflow: hidden;
+}
+
+html[data-theme-panes="rounded"]:not([data-theme-glass="true"]) .calendar-sidebar {
+  background-color: var(--bg-raised);
+}
+
+html[data-theme-panes="rounded"]:not([data-theme-glass="true"]) .calendar-main {
+  background-color: color-mix(in srgb, var(--bg) 84%, var(--bg-raised));
+}
+
+html[data-high-contrast="true"][data-theme-panes="rounded"] .calendar-sidebar,
+html[data-high-contrast="true"][data-theme-panes="rounded"] .calendar-main {
+  border-color: var(--border);
+  box-shadow: none;
+}
+
 html[data-theme-panes="rounded"] .shell > .sidebar {
   border-right: 0;
 }

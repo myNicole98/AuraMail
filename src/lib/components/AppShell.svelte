@@ -3,7 +3,9 @@
   import { cubicOut } from "svelte/easing";
   import { fade } from "svelte/transition";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import AppRail from "./AppRail.svelte";
   import BootSplash from "./BootSplash.svelte";
+  import Calendar from "./Calendar.svelte";
   import GlowBackdrop from "./GlowBackdrop.svelte";
   import MessageList from "./MessageList.svelte";
   import Reader from "./Reader.svelte";
@@ -65,18 +67,24 @@
   let canToggle = $derived(width > 1100);
   let readerFocus = $derived(mode === "reader" && app.selectedMessageId !== null);
   let gridTemplate = $derived.by(() => {
+    const rail = "48px";
+    if (app.calendarOpen) {
+      return `${rail} minmax(0, 1fr)`;
+    }
     if (mode === "stacked") {
-      return `${columns.sidebar}px ${columns.collapsed ? 0 : 1}px minmax(0, 1fr)`;
+      return `${rail} ${columns.sidebar}px ${columns.collapsed ? 0 : 1}px minmax(0, 1fr)`;
     }
     if (readerFocus) {
-      return `${columns.sidebar}px ${columns.collapsed ? 0 : 1}px 0px 0px minmax(0, 1fr)`;
+      return `${rail} ${columns.sidebar}px ${columns.collapsed ? 0 : 1}px 0px 0px minmax(0, 1fr)`;
     }
-    return `${columns.sidebar}px ${columns.collapsed ? 0 : 1}px ${columns.list}px 1px minmax(0, 1fr)`;
+    return `${rail} ${columns.sidebar}px ${columns.collapsed ? 0 : 1}px ${columns.list}px 1px minmax(0, 1fr)`;
   });
   let gridRows = $derived(
-    mode === "stacked"
-      ? `${layout.stackHeight}px 1px minmax(0, 1fr)`
-      : "minmax(0, 1fr)"
+    app.calendarOpen
+      ? "minmax(0, 1fr)"
+      : mode === "stacked"
+        ? `${layout.stackHeight}px 1px minmax(0, 1fr)`
+        : "minmax(0, 1fr)"
   );
   let narrow = $derived(narrowPane(width, app.selectedMessageId !== null));
   let dragging = $state<{
@@ -512,42 +520,47 @@
   class:animating={animatingLayout}
   class:narrow={narrow !== null}
   class:reader-open={narrow === "reader"}
-  class:stacked={mode === "stacked"}
+  class:stacked={mode === "stacked" && !app.calendarOpen}
   class:reader-focus={readerFocus}
+  class:calendar-open={app.calendarOpen}
   style:grid-template-columns={gridTemplate}
   style:grid-template-rows={gridRows}
 >
-  <Sidebar
-    collapsed={columns.collapsed}
-    canToggle={canToggle}
-    onToggle={toggleSidebar}
-    onOpenSettings={() => openSettings()}
-  />
-  <div class="sidebar-splitter" class:hidden={columns.collapsed} inert={columns.collapsed} aria-hidden={columns.collapsed}>
-    <Splitter
-      label="Resize sidebar"
-      value={columns.sidebar}
-      min={SIDEBAR_MIN}
-      max={SIDEBAR_MAX}
-      onPointerDown={(event) => startDrag("sidebar", event)}
-      onKeyboardResize={(delta) => resize("sidebar", delta)}
+  <AppRail collapsed={columns.collapsed} onOpenSettings={() => openSettings()} />
+  {#if app.calendarOpen}
+    <Calendar />
+  {:else}
+    <Sidebar
+      collapsed={columns.collapsed}
+      canToggle={canToggle}
+      onToggle={toggleSidebar}
     />
-  </div>
-  <MessageList />
-  <div class="list-splitter">
-    <Splitter
-      label={mode === "stacked" ? "Resize stacked panes" : "Resize message list"}
-      value={mode === "stacked" ? layout.stackHeight : columns.list}
-      min={mode === "stacked" ? 140 : LIST_MIN}
-      max={mode === "stacked" ? 900 : LIST_MAX}
-      orientation={mode === "stacked" ? "horizontal" : "vertical"}
-      onPointerDown={(event) =>
-        startDrag(mode === "stacked" ? "stack" : "list", event)}
-      onKeyboardResize={(delta) =>
-        resize(mode === "stacked" ? "stack" : "list", delta)}
-    />
-  </div>
-  <Reader />
+    <div class="sidebar-splitter" class:hidden={columns.collapsed} inert={columns.collapsed} aria-hidden={columns.collapsed}>
+      <Splitter
+        label="Resize sidebar"
+        value={columns.sidebar}
+        min={SIDEBAR_MIN}
+        max={SIDEBAR_MAX}
+        onPointerDown={(event) => startDrag("sidebar", event)}
+        onKeyboardResize={(delta) => resize("sidebar", delta)}
+      />
+    </div>
+    <MessageList />
+    <div class="list-splitter">
+      <Splitter
+        label={mode === "stacked" ? "Resize stacked panes" : "Resize message list"}
+        value={mode === "stacked" ? layout.stackHeight : columns.list}
+        min={mode === "stacked" ? 140 : LIST_MIN}
+        max={mode === "stacked" ? 900 : LIST_MAX}
+        orientation={mode === "stacked" ? "horizontal" : "vertical"}
+        onPointerDown={(event) =>
+          startDrag(mode === "stacked" ? "stack" : "list", event)}
+        onKeyboardResize={(delta) =>
+          resize(mode === "stacked" ? "stack" : "list", delta)}
+      />
+    </div>
+    <Reader />
+  {/if}
 </div>
 
 <div
@@ -692,24 +705,24 @@
     background: var(--bg-hover);
   }
   .shell.stacked :global(.sidebar) {
-    grid-column: 1;
-    grid-row: 1 / 4;
-  }
-  .shell.stacked .sidebar-splitter {
     grid-column: 2;
     grid-row: 1 / 4;
   }
-  .shell.stacked :global(.message-list) {
+  .shell.stacked .sidebar-splitter {
     grid-column: 3;
+    grid-row: 1 / 4;
+  }
+  .shell.stacked :global(.message-list) {
+    grid-column: 4;
     grid-row: 1;
   }
   .shell.stacked .list-splitter {
-    grid-column: 3;
+    grid-column: 4;
     grid-row: 2;
     height: 1px;
   }
   .shell.stacked :global(.reader) {
-    grid-column: 3;
+    grid-column: 4;
     grid-row: 3;
   }
   .shell.reader-focus :global(.message-list),
@@ -717,17 +730,22 @@
     display: none;
   }
   .shell.reader-focus :global(.reader) {
-    grid-column: 5;
+    grid-column: 6;
   }
   .shell.narrow {
     grid-template-columns: 1fr !important;
     grid-template-rows: minmax(0, 1fr) !important;
   }
+  .shell.narrow :global(.app-rail),
   .shell.narrow :global(.sidebar),
   .shell.narrow .sidebar-splitter,
   .shell.narrow .list-splitter,
   .shell.narrow :global(.splitter) {
     display: none;
+  }
+  .shell.narrow :global(.calendar-workspace) {
+    grid-column: 1;
+    grid-row: 1;
   }
   .shell.narrow :global(.message-list),
   .shell.narrow :global(.reader) {

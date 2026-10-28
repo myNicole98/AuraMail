@@ -11,7 +11,6 @@
     PanelLeftOpen,
     RefreshCw,
     Send,
-    Settings,
     Star,
     Trash2
   } from "lucide-svelte";
@@ -23,13 +22,11 @@
   let {
     collapsed,
     canToggle,
-    onToggle,
-    onOpenSettings
+    onToggle
   }: {
     collapsed: boolean;
     canToggle: boolean;
     onToggle: () => void;
-    onOpenSettings: () => void;
   } = $props();
 
   let accounts = $derived(app.activeAccounts);
@@ -110,7 +107,7 @@
     <SpaceSelector {collapsed} onOpenAccountSettings={openAccountSettings} />
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && app.unified === "inbox"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "inbox"}
       type="button"
       aria-label="Inbox"
       title="Inbox"
@@ -127,7 +124,7 @@
 
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && app.unified === "sent"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "sent"}
       type="button"
       aria-label="Sent"
       title="Sent"
@@ -141,7 +138,7 @@
 
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && app.unified === "archive"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "archive"}
       type="button"
       aria-label="Archive"
       title="Archive"
@@ -155,7 +152,7 @@
 
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && app.unified === "spam"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "spam"}
       type="button"
       aria-label="Spam"
       title="Spam"
@@ -172,7 +169,7 @@
 
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && app.unified === "trash"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "trash"}
       type="button"
       aria-label="Trash"
       title="Trash"
@@ -186,7 +183,7 @@
 
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && app.unified === "starred"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "starred"}
       type="button"
       aria-label="Starred"
       title="Starred"
@@ -200,7 +197,7 @@
 
     <button
       class="nav-item"
-      class:active={app.draftsOpen}
+      class:active={app.draftsOpen && !app.calendarOpen}
       type="button"
       aria-label="Drafts"
       title="Drafts"
@@ -307,15 +304,6 @@
           {:else}
             <PanelLeftClose size={16} />
           {/if}
-        </button>
-        <button
-          class="icon-btn"
-          type="button"
-          aria-label="Settings"
-          title="Settings"
-          onclick={onOpenSettings}
-        >
-          <Settings size={17} />
         </button>
       </div>
     </div>
@@ -494,6 +482,7 @@
     align-items: center;
     gap: 6px;
     min-width: 0;
+    min-height: 34px;
   }
   .foot-row .status {
     flex: 1;
