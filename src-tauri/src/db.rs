@@ -947,6 +947,96 @@ impl Database {
             )?;
             conn.pragma_update(None, "user_version", 32)?;
         }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 33 {
+            conn.execute_batch(
+                "create table if not exists calendar_accounts (
+                    id integer primary key autoincrement,
+                    account_id integer not null unique references accounts(id) on delete cascade,
+                    base_url text not null,
+                    created_at integer not null
+                 );
+                 create table if not exists calendars (
+                    id integer primary key autoincrement,
+                    calendar_account_id integer not null references calendar_accounts(id) on delete cascade,
+                    href text not null,
+                    name text not null,
+                    color text,
+                    supported_components text not null default '[]',
+                    sync_token text,
+                    last_synced_at integer,
+                    unique(calendar_account_id, href)
+                 );
+                 create table if not exists calendar_events (
+                    id integer primary key autoincrement,
+                    calendar_id integer not null references calendars(id) on delete cascade,
+                    href text not null,
+                    etag text,
+                    uid text not null default '',
+                    summary text not null default '',
+                    description text not null default '',
+                    location text not null default '',
+                    starts_at integer not null default 0,
+                    ends_at integer,
+                    all_day integer not null default 0,
+                    ical text not null,
+                    updated_at integer not null,
+                    unique(calendar_id, href)
+                 );
+                 create index if not exists idx_calendar_events_calendar_start on calendar_events(calendar_id, starts_at);
+                 create index if not exists idx_calendar_events_start on calendar_events(starts_at);",
+            )?;
+            conn.pragma_update(None, "user_version", 33)?;
+        }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 34 {
+            // Calendar accounts are independent of mail accounts and keep their
+            // own CalDAV credentials in the keyring.
+            conn.execute_batch(
+                "drop table if exists calendar_events;
+                 drop table if exists calendars;
+                 drop table if exists calendar_accounts;
+                 create table calendar_accounts (
+                    id integer primary key autoincrement,
+                    display_name text not null,
+                    base_url text not null,
+                    username text not null,
+                    space_id integer not null references spaces(id) on delete cascade,
+                    created_at integer not null
+                 );
+                 create table calendars (
+                    id integer primary key autoincrement,
+                    calendar_account_id integer not null references calendar_accounts(id) on delete cascade,
+                    href text not null,
+                    name text not null,
+                    color text,
+                    supported_components text not null default '[]',
+                    sync_token text,
+                    last_synced_at integer,
+                    unique(calendar_account_id, href)
+                 );
+                 create table calendar_events (
+                    id integer primary key autoincrement,
+                    calendar_id integer not null references calendars(id) on delete cascade,
+                    href text not null,
+                    etag text,
+                    uid text not null default '',
+                    summary text not null default '',
+                    description text not null default '',
+                    location text not null default '',
+                    starts_at integer not null default 0,
+                    ends_at integer,
+                    all_day integer not null default 0,
+                    ical text not null,
+                    updated_at integer not null,
+                    unique(calendar_id, href)
+                 );
+                 create index if not exists idx_calendar_accounts_space on calendar_accounts(space_id);
+                 create index if not exists idx_calendar_events_calendar_start on calendar_events(calendar_id, starts_at);
+                 create index if not exists idx_calendar_events_start on calendar_events(starts_at);",
+            )?;
+            conn.pragma_update(None, "user_version", 34)?;
+        }
         conn.execute_batch(
             "create index if not exists idx_messages_folder_date on messages(folder_id, date desc);
              create index if not exists idx_messages_account_date on messages(account_id, date desc);
@@ -1063,7 +1153,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 34);
         let tabs: i64 = conn
             .query_row("select count(*) from tabs", [], |row| row.get(0))
             .unwrap();
@@ -1219,7 +1309,7 @@ mod tests {
             .unwrap();
         assert_eq!(bodies, 0);
         assert_eq!(cached, 0);
-        assert_eq!(version, 32);
+        assert_eq!(version, 34);
     }
 
     #[test]
@@ -1246,7 +1336,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table, 1);
-        assert_eq!(version, 32);
+        assert_eq!(version, 34);
     }
 
     #[test]
@@ -1273,7 +1363,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(cached, 0);
-        assert_eq!(version, 32);
+        assert_eq!(version, 34);
     }
 
     #[test]
@@ -1316,7 +1406,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 34);
     }
 
     #[test]
@@ -1397,6 +1487,6 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!((auth_type, provider, version), (1, 1, 32));
+        assert_eq!((auth_type, provider, version), (1, 1, 34));
     }
 }

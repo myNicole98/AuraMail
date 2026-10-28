@@ -37,6 +37,11 @@ sha2 = "0.10"
 rand = "0.8"
 hickory-resolver = "0.24"
 fs2 = "0.4"
+fast-dav-rs = "=0.19.0"
+icalendar = { version = "0.17", default-features = false, features = ["parser"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -12,6 +12,10 @@ pub fn account_key(id: i64) -> String {
     format!("account:{id}")
 }
 
+pub fn calendar_account_key(id: i64) -> String {
+    format!("calendar-account:{id}")
+}
+
 pub trait SecretStore: Send + Sync {
     fn set(&self, key: &str, value: &str) -> AppResult<()>;
     fn get(&self, key: &str) -> AppResult<String>;
