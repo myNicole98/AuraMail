@@ -91,6 +91,64 @@ export type Account = {
   created_at: number;
 };
 
+export type CalendarAccount = {
+  id: number;
+  displayName: string;
+  baseUrl: string;
+  username: string;
+  spaceId: number;
+  createdAt: number;
+};
+
+export type CalendarAccountInput = {
+  displayName: string;
+  baseUrl: string;
+  username: string;
+  password: string;
+  spaceId: number;
+};
+
+export type CalendarSummary = {
+  id: number;
+  calendarAccountId: number;
+  href: string;
+  name: string;
+  color: string | null;
+  syncToken: string | null;
+  lastSyncedAt: number | null;
+};
+
+export type CalendarEvent = {
+  id: number;
+  calendarId: number;
+  calendarName: string;
+  calendarColor: string | null;
+  href: string;
+  etag: string | null;
+  uid: string;
+  summary: string;
+  description: string;
+  location: string;
+  startsAt: number;
+  endsAt: number | null;
+  allDay: boolean;
+};
+
+export type CalendarSyncResult = {
+  calendars: number;
+  events: number;
+  errors: string[];
+};
+
+export type CalendarEventInput = {
+  summary: string;
+  description: string;
+  location: string;
+  startsAt: number;
+  endsAt: number | null;
+  allDay: boolean;
+};
+
 export type AccountDiscovery = {
   imap_host: string;
   imap_port: number;

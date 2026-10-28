@@ -5,6 +5,12 @@ import type {
   AccountDiscovery,
   AccountInput,
   AttachmentPreview,
+  CalendarAccount,
+  CalendarAccountInput,
+  CalendarEvent,
+  CalendarEventInput,
+  CalendarSummary,
+  CalendarSyncResult,
   AiAuraAskResponse,
   AiAuraRail,
   AiChatRequest,
@@ -169,6 +175,26 @@ export const api = {
     invoke<Message[]>("list_thread_messages", { accountId, threadKey }),
   listTabs: (spaceId = currentSpaceId()) =>
     invoke<Tab[]>("list_tabs", { spaceId }),
+  listCalendars: (spaceId = currentSpaceId()) =>
+    invoke<CalendarSummary[]>("list_calendars", { spaceId }),
+  listCalendarEvents: (
+    from: number,
+    to: number,
+    spaceId = currentSpaceId(),
+    limit = 200
+  ) => invoke<CalendarEvent[]>("list_calendar_events", { spaceId, from, to, limit }),
+  listCalendarAccounts: (spaceId = currentSpaceId()) =>
+    invoke<CalendarAccount[]>("list_calendar_accounts", { spaceId }),
+  addCalendarAccount: (input: CalendarAccountInput) =>
+    invoke<CalendarAccount>("add_calendar_account", { input }),
+  removeCalendarAccount: (accountId: number) =>
+    invoke<void>("remove_calendar_account", { accountId }),
+  syncCalendar: (accountId: number) =>
+    invoke<CalendarSyncResult>("sync_calendar", { accountId }),
+  createCalendarEvent: (calendarId: number, input: CalendarEventInput) =>
+    invoke<CalendarSyncResult>("create_calendar_event", { calendarId, input }),
+  deleteCalendarEvent: (eventId: number) =>
+    invoke<CalendarSyncResult>("delete_calendar_event", { eventId }),
   tabUnreadCounts: (
     params: Pick<MessageQuery, "folder_id" | "account_id" | "space_id" | "unified">
   ) => invoke<TabUnreadCounts>("tab_unread_counts", params),

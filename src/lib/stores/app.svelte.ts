@@ -63,6 +63,7 @@ class AppStore {
   messages = $state<ThreadMessage[]>([]);
   drafts = $state<DraftSummary[]>([]);
   draftsOpen = $state(false);
+  calendarOpen = $state(false);
   draftsLoading = $state(false);
   selectedFolderId = $state<number | null>(null);
   selectedTabId = $state<number | null>(null);
@@ -398,7 +399,7 @@ class AppStore {
       ) {
         this.selectedTabId = null;
       }
-      if (this.draftsOpen || !includeMessages) return;
+      if (this.draftsOpen || this.calendarOpen || !includeMessages) return;
       const query = this.messageQuery();
       const key = JSON.stringify(query);
       this.invalidateMessageCache();
@@ -450,6 +451,7 @@ class AppStore {
       this.loadingMore ||
       this.noMoreMessages ||
       this.draftsOpen ||
+      this.calendarOpen ||
       this.messageScopeLoading ||
       this.progressiveRenderActive
     ) {
@@ -542,6 +544,7 @@ class AppStore {
       this.selectedTabId = null;
       this.unified = workflow.unified;
       this.draftsOpen = false;
+      this.calendarOpen = false;
       this.resetPagination();
       // Let the fade cover the content swap before loading the new space.
       const fadeDelay = loadPreferences().reduce_motion ? 0 : 180;
@@ -576,6 +579,7 @@ class AppStore {
 
   async selectFolder(folderId: number | null): Promise<void> {
     this.clearSelection();
+    this.calendarOpen = false;
     this.draftsOpen = false;
     this.search = "";
     this.selectedFolderId = folderId;
@@ -587,6 +591,7 @@ class AppStore {
 
   async selectUnified(unified: "inbox" | "sent" | "archive" | "spam" | "trash" | "starred"): Promise<void> {
     this.clearSelection();
+    this.calendarOpen = false;
     this.draftsOpen = false;
     this.search = "";
     this.selectedFolderId = null;
@@ -599,6 +604,7 @@ class AppStore {
 
   async selectTab(tabId: number | null): Promise<void> {
     this.selectedTabId = tabId;
+    this.calendarOpen = false;
     this.draftsOpen = false;
     this.search = "";
     this.resetPagination();
@@ -940,8 +946,23 @@ class AppStore {
     }
   }
 
+  selectCalendar(): void {
+    this.clearSelection();
+    this.calendarOpen = true;
+    this.draftsOpen = false;
+    this.search = "";
+    this.resetPagination();
+  }
+
+  selectMail(): void {
+    if (!this.calendarOpen) return;
+    this.calendarOpen = false;
+    void this.reloadMessageScope();
+  }
+
   async selectDrafts(): Promise<void> {
     this.clearSelection();
+    this.calendarOpen = false;
     this.draftsOpen = true;
     this.search = "";
     this.selectedFolderId = null;
@@ -1449,6 +1470,7 @@ class AppStore {
       !isTauri() ||
       this.activeSpaceId === null ||
       this.draftsOpen ||
+      this.calendarOpen ||
       this.searchActive ||
       this.syncState === "syncing"
     ) {
@@ -1470,6 +1492,7 @@ class AppStore {
       if (
         this.activeSpaceId !== spaceId ||
         this.draftsOpen ||
+        this.calendarOpen ||
         this.searchActive ||
         this.syncState === "syncing"
       ) {
@@ -1544,7 +1567,7 @@ class AppStore {
     this.syncRefreshRunning = true;
     try {
       await this.refreshFolders();
-      if (!this.draftsOpen) await this.reloadMessages();
+      if (!this.draftsOpen && !this.calendarOpen) await this.reloadMessages();
       this.error = null;
     } catch (error) {
       this.error = errorMessage(error);
