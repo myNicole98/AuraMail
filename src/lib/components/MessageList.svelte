@@ -465,7 +465,7 @@
         </div>
       {:else}
         <div class="empty">
-          {#if app.loading}
+          {#if app.draftsLoading}
             Loading drafts…
           {:else}
             No drafts yet.

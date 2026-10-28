@@ -63,6 +63,7 @@ class AppStore {
   messages = $state<ThreadMessage[]>([]);
   drafts = $state<DraftSummary[]>([]);
   draftsOpen = $state(false);
+  draftsLoading = $state(false);
   selectedFolderId = $state<number | null>(null);
   selectedTabId = $state<number | null>(null);
   unified = $state<"inbox" | "sent" | "archive" | "spam" | "trash" | "starred">("inbox");
@@ -105,6 +106,11 @@ class AppStore {
   private tabRequest = 0;
   private messageCache = new Map<string, ThreadMessage[]>();
   private prefetchTimer: ReturnType<typeof setTimeout> | undefined;
+  private syncRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  private syncRefreshRunning = false;
+  private syncRefreshQueued = false;
+  private refreshPromise: Promise<void> | null = null;
+  private draftsRequest = 0;
   private messageScopeLoading = false;
   private progressiveRenderActive = false;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -338,8 +344,18 @@ class AppStore {
     return true;
   }
 
-  async refresh(): Promise<void> {
+  async refresh(includeMessages = true): Promise<void> {
     if (!isTauri()) return;
+    if (this.refreshPromise) return this.refreshPromise;
+    this.refreshPromise = this.runRefresh(includeMessages);
+    try {
+      await this.refreshPromise;
+    } finally {
+      this.refreshPromise = null;
+    }
+  }
+
+  private async runRefresh(includeMessages: boolean): Promise<void> {
     if (this.spaces.length === 0) await this.loadSpaces();
     if (this.activeSpaceId === null) {
       this.accounts = [];
@@ -357,7 +373,9 @@ class AppStore {
       const [accounts, folders, drafts, tabs] = await Promise.all([
         api.listAccounts(),
         api.listFolders(undefined, spaceId),
-        api.listDrafts(undefined, spaceId),
+        this.draftsOpen
+          ? api.listDrafts(undefined, spaceId)
+          : Promise.resolve(null),
         api.listTabs(spaceId)
       ]);
       this.accounts = accounts;
@@ -369,7 +387,7 @@ class AppStore {
         this.protonAccessLimited = null;
       }
       this.folders = folders;
-      this.drafts = drafts;
+      if (drafts) this.drafts = drafts;
       this.tabs = tabs;
       this.tabUnreadCounts = await counts;
       await this.refreshSpaceUnreadCounts();
@@ -380,12 +398,16 @@ class AppStore {
       ) {
         this.selectedTabId = null;
       }
+      if (this.draftsOpen || !includeMessages) return;
       const query = this.messageQuery();
       const key = JSON.stringify(query);
       this.invalidateMessageCache();
       const threads = await api.listThreads(query);
       const request = ++this.messageRequest;
-      this.applyMessages(this.filterHidden(threads), request, false);
+      const visible = this.filterHidden(threads);
+      if (!this.sameMessages(this.messages, visible)) {
+        this.applyMessages(visible, request, true);
+      }
       this.rememberMessages(key, threads);
       this.scheduleUnifiedPrefetch();
       this.error = null;
@@ -536,7 +558,7 @@ class AppStore {
         }
       }
       await appearance.load();
-      await this.refresh();
+      await this.refresh(false);
       this.restoreWorkflow(workflow);
       if (this.draftsOpen) await this.loadDrafts();
       else await this.reloadMessages();
@@ -923,9 +945,10 @@ class AppStore {
     this.draftsOpen = true;
     this.search = "";
     this.selectedFolderId = null;
+    this.selectedTabId = null;
     this.resetPagination();
     this.saveCurrentWorkflow();
-    await this.refresh();
+    await this.loadDrafts();
   }
 
   async openCompose(
@@ -994,10 +1017,18 @@ class AppStore {
 
   async loadDrafts(): Promise<void> {
     if (!isTauri()) return;
+    const request = ++this.draftsRequest;
+    this.draftsLoading = true;
     try {
-      this.drafts = await api.listDrafts(undefined, this.activeSpaceId ?? undefined);
+      const drafts = await api.listDrafts(
+        undefined,
+        this.activeSpaceId ?? undefined
+      );
+      if (request === this.draftsRequest) this.drafts = drafts;
     } catch {
       return;
+    } finally {
+      if (request === this.draftsRequest) this.draftsLoading = false;
     }
   }
 
@@ -1409,12 +1440,20 @@ class AppStore {
 
   async reloadMessages(): Promise<void> {
     this.invalidateMessageCache();
-    await this.loadMessages(false);
+    await this.loadMessages(true);
     await this.refreshTabCounts();
   }
 
   private scheduleUnifiedPrefetch(): void {
-    if (!isTauri() || this.activeSpaceId === null || this.searchActive) return;
+    if (
+      !isTauri() ||
+      this.activeSpaceId === null ||
+      this.draftsOpen ||
+      this.searchActive ||
+      this.syncState === "syncing"
+    ) {
+      return;
+    }
     const spaceId = this.activeSpaceId;
     const order = loadPreferences().message_order;
     clearTimeout(this.prefetchTimer);
@@ -1428,7 +1467,14 @@ class AppStore {
     order: MessageQuery["order"]
   ): Promise<void> {
     for (const unified of ["inbox", "archive", "spam"] as const) {
-      if (this.activeSpaceId !== spaceId || this.searchActive) return;
+      if (
+        this.activeSpaceId !== spaceId ||
+        this.draftsOpen ||
+        this.searchActive ||
+        this.syncState === "syncing"
+      ) {
+        return;
+      }
       const query: MessageQuery = {
         space_id: spaceId,
         unified,
@@ -1479,6 +1525,36 @@ class AppStore {
 
   private refreshTrayUnread(): void {
     void Promise.resolve(api.refreshTrayUnread()).catch(() => {});
+  }
+
+  private scheduleSyncRefresh(accountId: number): void {
+    const account = this.accounts.find((candidate) => candidate.id === accountId);
+    if (!account || account.space_id !== this.activeSpaceId) return;
+    clearTimeout(this.syncRefreshTimer);
+    this.syncRefreshTimer = setTimeout(() => {
+      void this.runSyncRefresh();
+    }, 650);
+  }
+
+  private async runSyncRefresh(): Promise<void> {
+    if (this.syncRefreshRunning) {
+      this.syncRefreshQueued = true;
+      return;
+    }
+    this.syncRefreshRunning = true;
+    try {
+      await this.refreshFolders();
+      if (!this.draftsOpen) await this.reloadMessages();
+      this.error = null;
+    } catch (error) {
+      this.error = errorMessage(error);
+    } finally {
+      this.syncRefreshRunning = false;
+      if (this.syncRefreshQueued) {
+        this.syncRefreshQueued = false;
+        this.scheduleSyncRefresh(this.activeAccounts[0]?.id ?? -1);
+      }
+    }
   }
 
   private filterHidden<T extends Message>(messages: T[]): T[] {
@@ -1571,7 +1647,7 @@ class AppStore {
         (message) =>
           !message.snippet.trim() && !this.snippetAttempts.has(message.id)
       )
-      .slice(0, 80)
+      .slice(0, 40)
       .map((message) => message.id);
     if (ids.length === 0) return;
     for (const id of ids) this.snippetAttempts.add(id);
@@ -1609,6 +1685,7 @@ class AppStore {
     clearTimeout(this.noticeTimer);
     clearTimeout(this.themeTimer);
     clearTimeout(this.prefetchTimer);
+    clearTimeout(this.syncRefreshTimer);
     this.messageCache.clear();
     this.clearMarkReadTimer();
     for (const timer of this.flashTimers.values()) clearTimeout(timer);
@@ -1635,7 +1712,9 @@ class AppStore {
         if (payload?.inserted > 0 && typeof payload.accountId === "number") {
           this.noteSpaceActivity(payload.accountId);
         }
-        void this.refresh();
+        if (typeof payload?.accountId === "number") {
+          this.scheduleSyncRefresh(payload.accountId);
+        }
       }
     );
     const composeChanged = await listen("compose://changed", () => {
