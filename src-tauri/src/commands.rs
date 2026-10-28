@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::accounts::{self, Account, AccountAuth, AccountInput, MailSecurity};
+use crate::calendar::{
+    self, CalendarAccount, CalendarAccountInput, CalendarEvent, CalendarEventInput,
+    CalendarSummary, CalendarSyncResult,
+};
 use crate::ai::classification::{self, Classification};
 use crate::ai::client::ChatMessage;
 use crate::ai::{
@@ -1642,6 +1646,99 @@ pub async fn sync_account(
         }
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_calendars(
+    state: State<'_, AppState>,
+    space_id: i64,
+) -> AppResult<Vec<CalendarSummary>> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || calendar::list_calendars(&db, space_id))
+        .await
+        .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
+pub async fn list_calendar_events(
+    state: State<'_, AppState>,
+    space_id: i64,
+    from: i64,
+    to: i64,
+    limit: Option<usize>,
+) -> AppResult<Vec<CalendarEvent>> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || {
+        calendar::list_events(&db, space_id, from, to, limit.unwrap_or(200))
+    })
+    .await
+    .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
+pub async fn list_calendar_accounts(
+    state: State<'_, AppState>,
+    space_id: i64,
+) -> AppResult<Vec<CalendarAccount>> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || calendar::list_accounts(&db, space_id))
+        .await
+        .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
+pub async fn add_calendar_account(
+    state: State<'_, AppState>,
+    input: CalendarAccountInput,
+) -> AppResult<CalendarAccount> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    calendar::add_account(&db, secrets.as_ref(), input).await
+}
+
+#[tauri::command]
+pub async fn remove_calendar_account(
+    state: State<'_, AppState>,
+    account_id: i64,
+) -> AppResult<()> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    tauri::async_runtime::spawn_blocking(move || {
+        calendar::remove_account(&db, secrets.as_ref(), account_id)
+    })
+    .await
+    .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
+pub async fn sync_calendar(
+    state: State<'_, AppState>,
+    account_id: i64,
+) -> AppResult<CalendarSyncResult> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    calendar::sync_account(&db, secrets.as_ref(), account_id).await
+}
+
+#[tauri::command]
+pub async fn create_calendar_event(
+    state: State<'_, AppState>,
+    calendar_id: i64,
+    input: CalendarEventInput,
+) -> AppResult<CalendarSyncResult> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    calendar::create_event(&db, secrets.as_ref(), calendar_id, input).await
+}
+
+#[tauri::command]
+pub async fn delete_calendar_event(
+    state: State<'_, AppState>,
+    event_id: i64,
+) -> AppResult<CalendarSyncResult> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    calendar::delete_event(&db, secrets.as_ref(), event_id).await
 }
 
 #[tauri::command]

@@ -1,6 +1,7 @@
 mod accounts;
 mod ai;
 mod avatars;
+mod calendar;
 mod commands;
 mod compose;
 mod contacts;
@@ -206,6 +207,14 @@ pub fn run() {
             commands::set_desktop_preferences,
             commands::refresh_tray_unread,
             commands::sync_account,
+            commands::list_calendars,
+            commands::list_calendar_events,
+            commands::list_calendar_accounts,
+            commands::add_calendar_account,
+            commands::remove_calendar_account,
+            commands::sync_calendar,
+            commands::create_calendar_event,
+            commands::delete_calendar_event,
             commands::list_folders,
             commands::list_messages,
             commands::list_threads,
