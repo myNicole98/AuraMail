@@ -17,6 +17,7 @@
   import type { Account, AccountInput, SignatureFields, Space } from "../../types";
   import AddAccountDialog from "../account/AddAccountDialog.svelte";
   import AccountEditor from "./AccountEditor.svelte";
+  import CalendarAccountSettings from "./CalendarAccountSettings.svelte";
   import DeleteSpaceDialog from "./DeleteSpaceDialog.svelte";
   import SpaceCard from "./SpaceCard.svelte";
   import SpaceDialog from "./SpaceDialog.svelte";
@@ -713,6 +714,8 @@
       {/if}
     </div>
   </div>
+
+  <CalendarAccountSettings />
 
   {#if dialog}
     <AddAccountDialog
