@@ -210,6 +210,89 @@ html[data-high-contrast="true"][data-theme-panes="rounded"] .calendar-main {
   box-shadow: none;
 }
 
+/* Calendar surfaces use the same translucent glass language as the mail
+   panes in every view, not just the month grid. */
+html[data-theme-glass="true"] .calendar-workspace {
+  background: transparent;
+}
+
+html[data-theme-glass="true"] .calendar-sidebar {
+  background-color: var(--glass-nav);
+  border-color: var(--glass-border);
+}
+
+html[data-theme-glass="true"] .calendar-main {
+  background-color: var(--glass-reader);
+  border-color: var(--glass-border);
+}
+
+html[data-theme-glass="true"] .calendar-toolbar,
+html[data-theme-glass="true"] .time-head-spacer,
+html[data-theme-glass="true"] .day-head,
+html[data-theme-glass="true"] .month-header-row {
+  background-color: var(--glass-raised);
+  border-color: color-mix(in srgb, var(--text) 8%, transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+html[data-theme-glass="true"] .time-axis {
+  background-color: var(--glass-nav);
+  border-color: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+html[data-theme-glass="true"] .time-column {
+  background-color: color-mix(in srgb, var(--bg) 24%, transparent);
+  border-color: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+html[data-theme-glass="true"] .month-day {
+  border-color: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+html[data-theme-glass="true"] .time-event {
+  background-color: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: var(--glass-highlight);
+}
+
+html[data-theme-glass="true"] .view-switcher {
+  background-color: color-mix(in srgb, var(--bg) 34%, transparent);
+  border-color: var(--glass-border);
+}
+
+html[data-theme-glass="true"] .view-switcher button.active,
+html[data-theme-glass="true"] .mini-day.selected {
+  background-color: var(--glass-selected);
+}
+
+html[data-theme-glass="true"] .day-head:hover,
+html[data-theme-glass="true"] .month-day:hover,
+html[data-theme-glass="true"] .calendar-row:hover,
+html[data-theme-glass="true"] .mini-day:hover,
+html[data-theme-glass="true"] .icon-button:hover:not(:disabled),
+html[data-theme-glass="true"] .mini-nav:hover:not(:disabled),
+html[data-theme-glass="true"] .add-calendar-button:hover {
+  background-color: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+html[data-theme-glass="true"] .calendar-context-menu,
+html[data-theme-glass="true"] .date-picker,
+html[data-theme-glass="true"] .event-popover {
+  background: var(--glass-raised);
+  border-color: var(--glass-border);
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur-strong)) saturate(var(--glass-saturate));
+  box-shadow: 0 18px 46px color-mix(in srgb, #000 26%, transparent);
+}
+
+/* Keep the event editor free of backdrop-filter: it would become the
+   containing block for the fixed date picker and clip it. */
+html[data-theme-glass="true"] .event-dialog {
+  background: var(--glass-raised);
+  border-color: var(--glass-border);
+  box-shadow: 0 18px 46px color-mix(in srgb, #000 26%, transparent);
+}
+
 html[data-theme-panes="rounded"] .shell > .sidebar {
   border-right: 0;
 }
@@ -487,7 +570,15 @@ html[data-theme-glass="true"][data-high-contrast="true"] .settings-tabs,
 html[data-theme-glass="true"][data-high-contrast="true"] .composer-head,
 html[data-theme-glass="true"][data-high-contrast="true"] .composer-foot,
 html[data-theme-glass="true"][data-high-contrast="true"] .mail-context-menu,
-html[data-theme-glass="true"][data-high-contrast="true"] .provider-menu {
+html[data-theme-glass="true"][data-high-contrast="true"] .provider-menu,
+html[data-theme-glass="true"][data-high-contrast="true"] .calendar-toolbar,
+html[data-theme-glass="true"][data-high-contrast="true"] .time-head-spacer,
+html[data-theme-glass="true"][data-high-contrast="true"] .day-head,
+html[data-theme-glass="true"][data-high-contrast="true"] .month-header-row,
+html[data-theme-glass="true"][data-high-contrast="true"] .calendar-context-menu,
+html[data-theme-glass="true"][data-high-contrast="true"] .date-picker,
+html[data-theme-glass="true"][data-high-contrast="true"] .event-dialog,
+html[data-theme-glass="true"][data-high-contrast="true"] .event-popover {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
