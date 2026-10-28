@@ -79,6 +79,10 @@ AuraAI is an optional companion ran through a local or an OpenAI cloud provider 
 * [ ] Localization support with human assisted translation
 * [ ] Calendar and contacts
 
+## License
+
+AuraMail is released under the [MIT License](LICENSE).
+
 ## Contributing
 
 Contributions are welcome. If you find a bug or have a suggestion, feel free to open an issue, or reach out on our <a href="https://t.me/auramail">Telegram</a> channel
