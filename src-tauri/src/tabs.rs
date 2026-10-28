@@ -105,7 +105,7 @@ pub fn seed_space(db: &Database, space_id: i64) -> AppResult<()> {
 }
 
 pub fn list(db: &Database, space_id: i64) -> AppResult<Vec<Tab>> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let sql = format!("select {COLUMNS} from tabs where space_id = ?1 order by position, id");
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![space_id], row_to_tab)?;

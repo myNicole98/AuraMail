@@ -260,8 +260,11 @@ fn fetch_attachment_bytes(
 }
 
 #[tauri::command]
-pub fn list_accounts(state: State<'_, AppState>) -> AppResult<Vec<Account>> {
-    accounts::list(&state.db)
+pub async fn list_accounts(state: State<'_, AppState>) -> AppResult<Vec<Account>> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || accounts::list(&db))
+        .await
+        .map_err(|_| blocking_error())?
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -271,25 +274,32 @@ pub struct SpaceUnread {
 }
 
 #[tauri::command]
-pub fn list_spaces(state: State<'_, AppState>) -> AppResult<Vec<Space>> {
-    spaces::list(&state.db)
+pub async fn list_spaces(state: State<'_, AppState>) -> AppResult<Vec<Space>> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || spaces::list(&db))
+        .await
+        .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
-pub fn space_unread_counts(
+pub async fn space_unread_counts(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<SpaceUnread>> {
-    Ok(spaces::list(&state.db)?
-        .into_iter()
-        .map(|space| {
-            let unread = mail::unread_inbox_count_for_space(&state.db, space.id)
-                .unwrap_or(0);
-            SpaceUnread {
-                space_id: space.id,
-                unread,
-            }
-        })
-        .collect())
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(spaces::list(&db)?
+            .into_iter()
+            .map(|space| {
+                let unread = mail::unread_inbox_count_for_space(&db, space.id).unwrap_or(0);
+                SpaceUnread {
+                    space_id: space.id,
+                    unread,
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
@@ -1213,12 +1223,17 @@ pub async fn ai_compose(
 }
 
 #[tauri::command]
-pub fn list_contacts(
+pub async fn list_contacts(
     state: State<'_, AppState>,
     query: Option<String>,
     limit: Option<usize>,
 ) -> AppResult<Vec<Contact>> {
-    contacts::list_contacts(&state.db, query.as_deref(), limit)
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || {
+        contacts::list_contacts(&db, query.as_deref(), limit)
+    })
+    .await
+    .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
@@ -1565,9 +1580,17 @@ pub fn set_desktop_preferences(
 }
 
 #[tauri::command]
-pub fn refresh_tray_unread(app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult<()> {
-    crate::desktop::refresh_tray_unread(&app, &state.db);
-    Ok(())
+pub async fn refresh_tray_unread(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::desktop::refresh_tray_unread(&app, &db);
+        Ok(())
+    })
+    .await
+    .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
@@ -1622,17 +1645,23 @@ pub async fn sync_account(
 }
 
 #[tauri::command]
-pub fn list_folders(
+pub async fn list_folders(
     state: State<'_, AppState>,
     account_id: Option<i64>,
     space_id: Option<i64>,
 ) -> AppResult<Vec<Folder>> {
-    mail::list_folders(&state.db, account_id, space_id)
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || mail::list_folders(&db, account_id, space_id))
+        .await
+        .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
-pub fn list_tabs(state: State<'_, AppState>, space_id: i64) -> AppResult<Vec<Tab>> {
-    tabs::list(&state.db, space_id)
+pub async fn list_tabs(state: State<'_, AppState>, space_id: i64) -> AppResult<Vec<Tab>> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || tabs::list(&db, space_id))
+        .await
+        .map_err(|_| blocking_error())?
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -2110,22 +2139,33 @@ pub async fn save_draft(
 }
 
 #[tauri::command]
-pub fn list_drafts(
+pub async fn list_drafts(
     state: State<'_, AppState>,
     account_id: Option<i64>,
     space_id: Option<i64>,
 ) -> AppResult<Vec<DraftSummary>> {
-    compose::list_drafts_for_space(&state.db, account_id, space_id)
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || {
+        compose::list_drafts_for_space(&db, account_id, space_id)
+    })
+    .await
+    .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
-pub fn get_draft(state: State<'_, AppState>, draft_id: i64) -> AppResult<Draft> {
-    compose::get_draft(&state.db, draft_id)
+pub async fn get_draft(state: State<'_, AppState>, draft_id: i64) -> AppResult<Draft> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || compose::get_draft(&db, draft_id))
+        .await
+        .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
-pub fn delete_draft(state: State<'_, AppState>, draft_id: i64) -> AppResult<()> {
-    compose::delete_draft(&state.db, draft_id)
+pub async fn delete_draft(state: State<'_, AppState>, draft_id: i64) -> AppResult<()> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || compose::delete_draft(&db, draft_id))
+        .await
+        .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
@@ -2248,31 +2288,43 @@ pub struct MailPreferences {
 }
 
 #[tauri::command]
-pub fn get_mail_preferences(
+pub async fn get_mail_preferences(
     state: State<'_, AppState>,
     space_id: i64,
 ) -> AppResult<MailPreferences> {
-    Ok(MailPreferences {
-        trusted_senders: mail::preload::trusted_senders(&state.db, space_id)?,
-        always_load_images: mail::preload::always_load_images(&state.db, space_id)?,
-        profile_pictures: mail::preload::profile_pictures(&state.db, space_id)?,
-    })
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || mail_preferences(&db, space_id))
+        .await
+        .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
-pub fn set_mail_preferences(
+pub async fn set_mail_preferences(
     state: State<'_, AppState>,
     space_id: i64,
     preferences: MailPreferences,
 ) -> AppResult<MailPreferences> {
-    mail::preload::set_preferences(
-        &state.db,
-        space_id,
-        &preferences.trusted_senders,
-        preferences.always_load_images,
-        preferences.profile_pictures,
-    )?;
-    get_mail_preferences(state, space_id)
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || {
+        mail::preload::set_preferences(
+            &db,
+            space_id,
+            &preferences.trusted_senders,
+            preferences.always_load_images,
+            preferences.profile_pictures,
+        )?;
+        mail_preferences(&db, space_id)
+    })
+    .await
+    .map_err(|_| blocking_error())?
+}
+
+fn mail_preferences(db: &Database, space_id: i64) -> AppResult<MailPreferences> {
+    Ok(MailPreferences {
+        trusted_senders: mail::preload::trusted_senders(db, space_id)?,
+        always_load_images: mail::preload::always_load_images(db, space_id)?,
+        profile_pictures: mail::preload::profile_pictures(db, space_id)?,
+    })
 }
 
 fn parse_color_scheme(value: &str) -> Option<bool> {

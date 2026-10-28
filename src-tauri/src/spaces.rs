@@ -69,14 +69,14 @@ fn is_unique_violation(err: &rusqlite::Error) -> bool {
 }
 
 pub fn list(db: &Database) -> AppResult<Vec<Space>> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let mut stmt = conn.prepare("select id, name, icon, position, created_at from spaces order by position, id")?;
     let rows = stmt.query_map([], row_to_space)?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 pub fn by_id(db: &Database, id: i64) -> AppResult<Space> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     conn.query_row(
         "select id, name, icon, position, created_at from spaces where id = ?1",
         params![id],

@@ -334,7 +334,7 @@ fn list_drafts_in_scope(
     account_id: Option<i64>,
     space_id: Option<i64>,
 ) -> AppResult<Vec<DraftSummary>> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let mut stmt = conn.prepare(
         "select id, account_id, to_addrs, cc_addrs, subject, substr(body, 1, 200), case when substr(attachments, 1, 1) = '[' then case when attachments = '[]' then 0 else 1 end else -1 end, updated_at from drafts d where (?1 is null or d.account_id = ?1) and (?2 is null or d.account_id in (select id from accounts where space_id = ?2)) order by d.updated_at desc, d.id desc",
     )?;
@@ -386,7 +386,7 @@ pub fn delete_draft(db: &Database, draft_id: i64) -> AppResult<()> {
 }
 
 fn draft_by_id(db: &Database, draft_id: i64) -> AppResult<Draft> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let row = conn
         .query_row(
             "select id, account_id, to_addrs, cc_addrs, subject, body, body_html, inline_images, in_reply_to, references_header, attachments, updated_at from drafts where id = ?1",

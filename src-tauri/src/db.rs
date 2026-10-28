@@ -1,5 +1,6 @@
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension};
 
@@ -165,6 +166,7 @@ pub(crate) const SEED_TABS: &[(&str, &str, bool, &str, &str)] = &[
 
 pub struct Database {
     pub(crate) conn: Mutex<Connection>,
+    read_conn: Option<Mutex<Connection>>,
 }
 
 impl Database {
@@ -174,10 +176,14 @@ impl Database {
         }
         let conn = Connection::open(path)?;
         Self::configure(&conn)?;
-        let db = Self {
+        let mut db = Self {
             conn: Mutex::new(conn),
+            read_conn: None,
         };
         db.migrate()?;
+        let read = Connection::open(path)?;
+        read.busy_timeout(Duration::from_secs(5))?;
+        db.read_conn = Some(Mutex::new(read));
         Ok(db)
     }
 
@@ -186,9 +192,18 @@ impl Database {
         Self::configure(&conn)?;
         let db = Self {
             conn: Mutex::new(conn),
+            read_conn: None,
         };
         db.migrate()?;
         Ok(db)
+    }
+
+    pub(crate) fn read(&self) -> MutexGuard<'_, Connection> {
+        self.read_conn
+            .as_ref()
+            .unwrap_or(&self.conn)
+            .lock()
+            .unwrap()
     }
 
     pub fn migrate(&self) -> AppResult<()> {
@@ -873,6 +888,65 @@ impl Database {
             )?;
             conn.pragma_update(None, "user_version", 31)?;
         }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 32 {
+            conn.execute_batch(
+                "create virtual table if not exists message_search using fts5(
+                   from_addr, from_name, to_addrs, cc_addrs, subject, snippet, body_text, body_html,
+                   tokenize = 'unicode61'
+                 );
+                 insert into message_search(rowid, from_addr, from_name, to_addrs, cc_addrs, subject, snippet, body_text, body_html)
+                 select m.id, m.from_addr, m.from_name, m.to_addrs, m.cc_addrs, m.subject, m.snippet,
+                        coalesce(mb.text_body, ''), coalesce(mb.html_body, '')
+                 from messages m
+                 left join message_bodies mb on mb.message_id = m.id
+                 where not exists (select 1 from message_search s where s.rowid = m.id);
+                 create trigger if not exists message_search_messages_ai after insert on messages begin
+                   insert into message_search(rowid, from_addr, from_name, to_addrs, cc_addrs, subject, snippet, body_text, body_html)
+                   values (new.id, new.from_addr, new.from_name, new.to_addrs, new.cc_addrs, new.subject, new.snippet, '', '');
+                 end;
+                 create trigger if not exists message_search_messages_au after update of from_addr, from_name, to_addrs, cc_addrs, subject, snippet on messages
+                 when old.from_addr is not new.from_addr
+                   or old.from_name is not new.from_name
+                   or old.to_addrs is not new.to_addrs
+                   or old.cc_addrs is not new.cc_addrs
+                   or old.subject is not new.subject
+                   or old.snippet is not new.snippet
+                 begin
+                   delete from message_search where rowid = old.id;
+                   insert into message_search(rowid, from_addr, from_name, to_addrs, cc_addrs, subject, snippet, body_text, body_html)
+                   select new.id, new.from_addr, new.from_name, new.to_addrs, new.cc_addrs, new.subject, new.snippet,
+                          coalesce(mb.text_body, ''), coalesce(mb.html_body, '')
+                   from messages m
+                   left join message_bodies mb on mb.message_id = m.id
+                   where m.id = new.id;
+                 end;
+                 create trigger if not exists message_search_messages_ad after delete on messages begin
+                   delete from message_search where rowid = old.id;
+                 end;
+                 create trigger if not exists message_search_bodies_ai after insert on message_bodies begin
+                   delete from message_search where rowid = new.message_id;
+                   insert into message_search(rowid, from_addr, from_name, to_addrs, cc_addrs, subject, snippet, body_text, body_html)
+                   select m.id, m.from_addr, m.from_name, m.to_addrs, m.cc_addrs, m.subject, m.snippet,
+                          coalesce(new.text_body, ''), coalesce(new.html_body, '')
+                   from messages m where m.id = new.message_id;
+                 end;
+                 create trigger if not exists message_search_bodies_au after update of text_body, html_body on message_bodies begin
+                   delete from message_search where rowid = new.message_id;
+                   insert into message_search(rowid, from_addr, from_name, to_addrs, cc_addrs, subject, snippet, body_text, body_html)
+                   select m.id, m.from_addr, m.from_name, m.to_addrs, m.cc_addrs, m.subject, m.snippet,
+                          coalesce(new.text_body, ''), coalesce(new.html_body, '')
+                   from messages m where m.id = new.message_id;
+                 end;
+                 create trigger if not exists message_search_bodies_ad after delete on message_bodies begin
+                   delete from message_search where rowid = old.message_id;
+                   insert into message_search(rowid, from_addr, from_name, to_addrs, cc_addrs, subject, snippet, body_text, body_html)
+                   select m.id, m.from_addr, m.from_name, m.to_addrs, m.cc_addrs, m.subject, m.snippet, '', ''
+                   from messages m where m.id = old.message_id;
+                 end;",
+            )?;
+            conn.pragma_update(None, "user_version", 32)?;
+        }
         conn.execute_batch(
             "create index if not exists idx_messages_folder_date on messages(folder_id, date desc);
              create index if not exists idx_messages_account_date on messages(account_id, date desc);
@@ -889,6 +963,7 @@ impl Database {
     }
 
     fn configure(conn: &Connection) -> AppResult<()> {
+        conn.busy_timeout(Duration::from_secs(5))?;
         conn.execute_batch("pragma foreign_keys=on; pragma journal_mode=wal;")?;
         Ok(())
     }
@@ -988,7 +1063,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
         let tabs: i64 = conn
             .query_row("select count(*) from tabs", [], |row| row.get(0))
             .unwrap();
@@ -1144,7 +1219,7 @@ mod tests {
             .unwrap();
         assert_eq!(bodies, 0);
         assert_eq!(cached, 0);
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
     }
 
     #[test]
@@ -1171,7 +1246,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table, 1);
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
     }
 
     #[test]
@@ -1198,7 +1273,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(cached, 0);
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
     }
 
     #[test]
@@ -1241,7 +1316,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
     }
 
     #[test]
@@ -1322,6 +1397,6 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!((auth_type, provider, version), (1, 1, 31));
+        assert_eq!((auth_type, provider, version), (1, 1, 32));
     }
 }

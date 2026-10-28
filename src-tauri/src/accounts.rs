@@ -1079,7 +1079,7 @@ pub fn move_to_space(db: &Database, id: i64, space_id: i64) -> AppResult<Account
 }
 
 pub fn list(db: &Database) -> AppResult<Vec<Account>> {
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let mut stmt = conn.prepare(
         "select id, display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, color, signature, signature_fields, signature_on_new, sync_interval_secs, created_at, auth_type, oauth_provider, space_id, position from accounts order by space_id, position, id",
     )?;

@@ -303,7 +303,7 @@ pub fn related(
     if query.is_empty() || model.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let conn = db.conn.lock().unwrap();
+    let conn = db.read();
     let mut stmt = conn.prepare(
         "select e.message_id, e.vector, e.dim, m.thread_key
          from message_embeddings e
