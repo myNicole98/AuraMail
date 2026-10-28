@@ -75,7 +75,7 @@ AuraAI is an optional companion ran through a local or an OpenAI cloud provider 
 * [x] Support for local and cloud AI providers
 * [ ] Mail routing rules
 * [ ] CSD work
-* [ ] WCAG 1.4.12 compliance
+* [x] WCAG 1.4.12 compliance
 * [ ] Localization support with human assisted translation
 * [~] Calendar and contacts
 
