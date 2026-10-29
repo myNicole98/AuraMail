@@ -252,6 +252,11 @@
   let aiInstruction = $state("");
   let aiBusy = $state(false);
   let aiError = $state<string | null>(null);
+  let linkOpen = $state(false);
+  let linkUrl = $state("");
+  let linkError = $state<string | null>(null);
+  let linkPosition = $state<{ left: number; top: number } | null>(null);
+  let linkInput = $state<HTMLInputElement | null>(null);
   let suggestions = $state<Contact[]>([]);
   let contactRequest = 0;
   let contactTimer: ReturnType<typeof setTimeout> | undefined;
@@ -369,14 +374,72 @@
     captureSelection();
   }
 
-  function addLink() {
-    const value = window.prompt("Link URL");
-    if (!value) return;
-    if (!/^(https?:\/\/|mailto:)/i.test(value.trim())) {
-      error = "Links must start with http://, https://, or mailto:.";
+  function closeLinkPopover(): void {
+    linkOpen = false;
+    linkError = null;
+  }
+
+  function openLinkPopover(event: MouseEvent): void {
+    if (linkOpen) {
+      closeLinkPopover();
       return;
     }
-    format("createLink", value.trim());
+    captureSelection();
+    const selection = window.getSelection();
+    const node = selection?.anchorNode;
+    const element =
+      node?.nodeType === Node.ELEMENT_NODE
+        ? (node as Element)
+        : node?.parentElement ?? null;
+    const anchor = element?.closest("a");
+    linkUrl =
+      anchor && bodyInput?.contains(anchor)
+        ? (anchor.getAttribute("href") ?? "")
+        : "";
+    linkError = null;
+    aiOpen = false;
+    colorOpen = false;
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const width = 330;
+    const gap = 10;
+    linkPosition = {
+      left: Math.max(
+        gap,
+        Math.min(rect.left, window.innerWidth - width - gap)
+      ),
+      top: rect.bottom + 8
+    };
+    linkOpen = true;
+    requestAnimationFrame(() => linkInput?.focus());
+  }
+
+  function applyLink(): void {
+    const value = linkUrl.trim();
+    if (!value) {
+      linkError = "Enter a URL for the link.";
+      return;
+    }
+    const href = /^(https?:\/\/|mailto:)/i.test(value)
+      ? value
+      : /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+        ? `mailto:${value}`
+        : /^[^\s]+\.[^\s]+$/.test(value)
+          ? `https://${value}`
+          : "";
+    if (!href) {
+      linkError = "Use an http://, https://, or mailto: URL.";
+      return;
+    }
+    const selected = savedRange?.toString().trim() ?? "";
+    if (selected) {
+      format("createLink", href);
+    } else {
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.textContent = href;
+      insertHtml(anchor.outerHTML);
+    }
+    closeLinkPopover();
   }
 
   function preventToolbarBlur(event: MouseEvent) {
@@ -710,6 +773,25 @@
   });
 </script>
 
+<svelte:window
+  onpointerdown={(event) => {
+    if (!linkOpen) return;
+    const target = event.target as Element | null;
+    if (
+      !target?.closest(".link-popover") &&
+      !target?.closest(".toolbar-link")
+    ) {
+      closeLinkPopover();
+    }
+  }}
+  onkeydown={(event) => {
+    if (event.key === "Escape" && linkOpen) {
+      event.preventDefault();
+      closeLinkPopover();
+    }
+  }}
+/>
+
 <section class="composer" aria-label="Compose message">
   <header class="composer-head">
     <h2>{title}</h2>
@@ -845,7 +927,16 @@
       <button type="button" title="Numbered list" aria-label="Numbered list" onmousedown={preventToolbarBlur} onclick={() => format("insertOrderedList")}>
         <ListOrdered size={15} />
       </button>
-      <button type="button" title="Link" aria-label="Insert link" onmousedown={preventToolbarBlur} onclick={addLink}>
+      <button
+        class="toolbar-link"
+        type="button"
+        title="Link"
+        aria-label="Insert link"
+        aria-haspopup="dialog"
+        aria-expanded={linkOpen}
+        onmousedown={preventToolbarBlur}
+        onclick={openLinkPopover}
+      >
         <Link2 size={15} />
       </button>
       <button type="button" title="Insert image" aria-label="Insert image" onmousedown={preventToolbarBlur} onclick={() => imageInput?.click()}>
@@ -948,6 +1039,45 @@
           }}
         ></textarea>
         {#if aiError}<p class="ai-error" role="alert">{aiError}</p>{/if}
+      </div>
+    {/if}
+    {#if linkOpen && linkPosition}
+      <div
+        class="link-popover"
+        role="dialog"
+        aria-label="Insert link"
+        style:left={`${linkPosition.left}px`}
+        style:top={`${linkPosition.top}px`}
+      >
+        <form
+          class="link-form"
+          onsubmit={(event) => {
+            event.preventDefault();
+            applyLink();
+          }}
+        >
+          <label>
+            Link URL
+            <input
+              bind:this={linkInput}
+              bind:value={linkUrl}
+              placeholder="https://example.com"
+              autocomplete="off"
+              aria-label="Link URL"
+              onkeydown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeLinkPopover();
+                }
+              }}
+            />
+          </label>
+          {#if linkError}<p class="link-error" role="alert">{linkError}</p>{/if}
+          <div class="link-actions">
+            <button type="button" onclick={closeLinkPopover}>Cancel</button>
+            <button class="primary" type="submit">Add link</button>
+          </div>
+        </form>
       </div>
     {/if}
   </div>
@@ -1315,6 +1445,76 @@
     margin: 8px 0 0;
     color: var(--danger, #e5484d);
     font-size: 11.5px;
+  }
+  .link-popover {
+    position: fixed;
+    z-index: 30;
+    width: min(330px, calc(100vw - 20px));
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border-radius: 10px;
+    background: var(--bg-raised);
+    box-shadow: 0 16px 40px color-mix(in srgb, #000 28%, transparent);
+  }
+  .link-form {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .link-popover label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 550;
+  }
+  .link-popover input {
+    width: 100%;
+    height: 32px;
+    padding: 0 9px;
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border-radius: 7px;
+    outline: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+  }
+  .link-popover input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  .link-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .link-actions button {
+    height: 30px;
+    padding: 0 11px;
+    border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .link-actions button:hover {
+    background: var(--bg-hover);
+  }
+  .link-actions .primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--bg);
+  }
+  .link-actions .primary:hover {
+    filter: brightness(1.06);
+  }
+  .link-error {
+    margin: 0;
+    color: var(--danger, #e5484d);
+    font-size: 10.5px;
   }
   .body {
     flex: 1;
