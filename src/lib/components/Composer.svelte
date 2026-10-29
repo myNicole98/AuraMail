@@ -10,12 +10,12 @@
     Link2,
     List,
     ListOrdered,
-    LoaderCircle,
     Paperclip,
     Palette,
     RemoveFormatting,
     PenLine,
     Send,
+    WandSparkles,
     Underline,
     X
   } from "lucide-svelte";
@@ -584,7 +584,7 @@
   }
 
   async function runAi(
-    aiMode: "rewrite" | "generate",
+    aiMode: "fix" | "generate",
     instruction = aiInstruction.trim()
   ) {
     if (aiBusy) return;
@@ -598,7 +598,7 @@
         text: textWithoutSignature(),
         subject
       });
-      if (aiMode === "rewrite") {
+      if (aiMode === "fix") {
         bodyHtml = appendSignature(textToHtml(response.text), signature);
         if (bodyInput) bodyInput.innerHTML = bodyHtml;
         syncBody();
@@ -610,7 +610,7 @@
       }
     } catch (caught) {
       const message = errorMessage(caught);
-      if (aiMode === "rewrite") {
+      if (aiMode === "fix") {
         aiOpen = false;
         error = message;
       } else {
@@ -886,6 +886,38 @@
       <button type="button" title="Clear formatting" aria-label="Clear formatting" onmousedown={preventToolbarBlur} onclick={() => format("removeFormat")}>
         <RemoveFormatting size={15} />
       </button>
+      <span class="toolbar-spacer"></span>
+      <button
+        class="toolbar-ai ai-draft"
+        class:active={aiOpen}
+        type="button"
+        title="AI Draft"
+        aria-label="AI Draft"
+        aria-haspopup="dialog"
+        aria-expanded={aiOpen}
+        disabled={aiBusy}
+        onmousedown={preventToolbarBlur}
+        onclick={() => {
+          captureSelection();
+          aiOpen = !aiOpen;
+          aiError = null;
+        }}
+      >
+        <BrainCircuit size={15} />
+      </button>
+      <button
+        class="toolbar-ai fix"
+        type="button"
+        title="Fix grammar, spelling, and wording"
+        aria-label="Fix grammar, spelling, and wording"
+        disabled={aiBusy || !body.trim()}
+        onclick={() => {
+          aiOpen = false;
+          void runAi("fix", "");
+        }}
+      >
+        <WandSparkles size={15} />
+      </button>
     </div>
 
     <div
@@ -902,6 +934,22 @@
       onkeyup={captureSelection}
       onmouseup={captureSelection}
     ></div>
+    {#if aiOpen}
+      <div class="ai-popover" role="dialog" aria-label="AI Draft">
+        <textarea
+          bind:value={aiInstruction}
+          placeholder="Describe what to write…"
+          rows="3"
+          onkeydown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              if (aiInstruction.trim()) void runAi("generate");
+            }
+          }}
+        ></textarea>
+        {#if aiError}<p class="ai-error" role="alert">{aiError}</p>{/if}
+      </div>
+    {/if}
   </div>
 
   <div class="attachments">
@@ -965,50 +1013,6 @@
     >
       <Paperclip size={16} />
     </button>
-    <span class="foot-spacer"></span>
-    <button
-      class="ai-draft"
-      class:active={aiOpen}
-      type="button"
-      aria-haspopup="dialog"
-      aria-expanded={aiOpen}
-      disabled={aiBusy}
-      onmousedown={preventToolbarBlur}
-      onclick={() => {
-        captureSelection();
-        aiOpen = !aiOpen;
-        aiError = null;
-      }}
-    >
-      {#if aiBusy}<LoaderCircle class="spin" size={15} />{:else}<BrainCircuit size={15} />{/if}
-      AI Draft
-    </button>
-    <button
-      class="ghost rewrite"
-      type="button"
-      disabled={aiBusy || !body.trim()}
-      onclick={() => void runAi("rewrite", "")}
-    >
-      <PenLine size={15} />
-      Rewrite
-    </button>
-
-    {#if aiOpen}
-      <div class="ai-popover" role="dialog" aria-label="AI Draft">
-        <textarea
-          bind:value={aiInstruction}
-          placeholder="Describe what to write…"
-          rows="3"
-          onkeydown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              if (aiInstruction.trim()) void runAi("generate");
-            }
-          }}
-        ></textarea>
-        {#if aiError}<p class="ai-error" role="alert">{aiError}</p>{/if}
-      </div>
-    {/if}
   </footer>
 </section>
 
@@ -1195,6 +1199,7 @@
     font-size: 10.5px;
   }
   .editor-shell {
+    position: relative;
     display: flex;
     flex: 1;
     flex-direction: column;
@@ -1224,7 +1229,7 @@
     border-radius: 6px;
     color: var(--muted);
   }
-  .toolbar button:hover {
+  .toolbar button:hover:not(:disabled) {
     color: var(--text);
     background: var(--bg-hover);
   }
@@ -1233,6 +1238,26 @@
     height: 18px;
     margin: 0 3px;
     background: color-mix(in srgb, var(--border) 65%, transparent);
+  }
+  .toolbar-spacer {
+    flex: 1;
+  }
+  .toolbar-ai.ai-draft {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  .toolbar-ai.ai-draft:hover:not(:disabled),
+  .toolbar-ai.ai-draft.active {
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+  .toolbar-ai.fix {
+    color: var(--text);
+  }
+  .toolbar-ai:disabled {
+    color: var(--muted);
+    background: transparent;
+    cursor: default;
+    opacity: 0.35;
   }
   .color-picker {
     position: relative;
@@ -1258,10 +1283,10 @@
   }
   .ai-popover {
     position: absolute;
-    right: 16px;
-    bottom: 56px;
+    top: 39px;
+    right: 6px;
     z-index: 10;
-    width: min(360px, calc(100% - 32px));
+    width: min(360px, calc(100% - 12px));
     padding: 10px;
     border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
     border-radius: 10px;
@@ -1344,12 +1369,6 @@
   :global(html[data-theme-dark="true"]) .body :global([data-auramail-signature] a) {
     color: var(--accent) !important;
   }
-  :global(.spin) {
-    animation: spin 0.9s linear infinite;
-  }
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
   .attachments {
     display: flex;
     flex-wrap: wrap;
@@ -1411,13 +1430,9 @@
     flex: none;
     padding: 12px 16px;
   }
-  .foot-spacer {
-    flex: 1;
-  }
   .file-input {
     display: none;
   }
-  .ghost,
   .send {
     display: flex;
     align-items: center;
@@ -1427,16 +1442,6 @@
     border-radius: 8px;
     font-size: 12px;
     font-weight: 600;
-  }
-  .ghost {
-    color: var(--muted);
-    border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  }
-  .ghost:hover:not(:disabled) {
-    color: var(--text);
-    background: var(--bg-hover);
-  }
-  .send {
     background: var(--accent);
     color: var(--bg);
   }
@@ -1456,38 +1461,8 @@
   .icon-action:hover {
     background: var(--bg-hover);
   }
-  .ai-draft {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: 32px;
-    padding: 0 12px;
-    border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--accent) 13%, transparent);
-    color: var(--accent);
-    font-size: 12px;
-    font-weight: 650;
-  }
-  .ai-draft:hover:not(:disabled),
-  .ai-draft.active {
-    background: color-mix(in srgb, var(--accent) 22%, transparent);
-  }
-  .ai-draft:disabled {
-    opacity: 0.55;
-  }
-  .rewrite {
-    color: var(--text);
-    background: var(--bg-raised);
-  }
-  .rewrite:hover:not(:disabled) {
-    background: var(--bg-hover);
-  }
-  .ghost:disabled,
   .send:disabled,
-  .icon-action:disabled,
-  .ai-draft:disabled,
-  .rewrite:disabled {
+  .icon-action:disabled {
     cursor: default;
     opacity: 0.5;
   }

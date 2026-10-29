@@ -161,7 +161,9 @@ pub fn compose_prompt(
         )
     } else {
         let mut prompt = format!(
-            "Rewrite the email body below.\n\nSubject: {}\n\nDraft:\n{}",
+            "Fix the grammar, spelling, and lexical mistakes in the email body below. \
+             Preserve the original meaning, structure, tone, language, formatting, and all facts. \
+             Do not rewrite for style and do not add or remove information.\n\nSubject: {}\n\nDraft:\n{}",
             untrusted(subject.trim()),
             untrusted(current.trim())
         );
@@ -808,10 +810,10 @@ mod review_tests {
     }
 
     #[test]
-    fn compose_prompt_supports_rewrite_and_generate() {
-        let rewrite = compose_prompt("rewrite", "", "Hello team", "Status");
-        let joined = format!("{rewrite:?}");
-        assert!(joined.contains("Rewrite"));
+    fn compose_prompt_supports_fix_and_generate() {
+        let fix = compose_prompt("fix", "", "Hello team", "Status");
+        let joined = format!("{fix:?}");
+        assert!(joined.contains("Fix the grammar"));
         assert!(joined.contains("Hello team"));
 
         let generate = compose_prompt("generate", "Say we ship tomorrow", "", "Launch");

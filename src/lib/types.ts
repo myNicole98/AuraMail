@@ -528,7 +528,7 @@ export type Contact = {
 };
 
 export type AiComposeRequest = {
-  mode: "rewrite" | "generate";
+  mode: "fix" | "generate";
   instruction: string;
   text: string;
   subject: string;

@@ -1201,15 +1201,15 @@ pub async fn ai_compose(
     request: AiComposeRequest,
 ) -> AppResult<AiComposeResponse> {
     let mode = request.mode.trim().to_ascii_lowercase();
-    if mode != "rewrite" && mode != "generate" {
+    if mode != "fix" && mode != "rewrite" && mode != "generate" {
         return Err(AppError::Message("AI compose mode is invalid".into()));
     }
     if mode == "generate" && request.instruction.trim().is_empty() {
         return Err(AppError::Message("Describe what to generate first".into()));
     }
-    if mode == "rewrite" && request.text.trim().is_empty() {
+    if (mode == "fix" || mode == "rewrite") && request.text.trim().is_empty() {
         return Err(AppError::Message(
-            "Write something before rewriting it".into(),
+            "Write something before fixing it".into(),
         ));
     }
     let db = Arc::clone(&state.db);
