@@ -10,7 +10,8 @@ use crate::accounts::{Account, AccountAuth, MailSecurity};
 use crate::error::{AppError, AppResult};
 use crate::mail_auth::MailCredential;
 
-const TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const IO_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Raw messages above this size are refused so opening mail cannot exhaust memory.
 const MAX_MESSAGE_BYTES: u64 = 60 * 1024 * 1024;
@@ -167,38 +168,48 @@ fn validate_with(
 pub fn list_folders(session: &mut ImapSession) -> AppResult<Vec<RemoteFolder>> {
     let names = session
         .list(None, Some("*"))
-        .map_err(|_| AppError::Message("IMAP folder list failed".into()))?;
-    let mut folders = Vec::new();
-    for name in names.iter() {
-        if name
-            .attributes()
-            .iter()
-            .any(|attribute| matches!(attribute, NameAttribute::NoSelect))
-        {
-            continue;
+        .map_err(|error| AppError::Message(format!("IMAP folder list failed: {error}")))?;
+    let mut folders = names.iter().filter_map(remote_folder).collect::<Vec<_>>();
+    // Some providers (Yandex) do not reliably include the special INBOX name in
+    // a wildcard listing. INBOX always exists, so ask for it explicitly.
+    if !folders
+        .iter()
+        .any(|folder| folder.path.eq_ignore_ascii_case("INBOX"))
+    {
+        if let Ok(inbox) = session.list(None, Some("INBOX")) {
+            folders.extend(inbox.iter().filter_map(remote_folder));
         }
-        let path = name.name().to_string();
-        if path.is_empty() {
-            continue;
-        }
-        let delimiter = name.delimiter().unwrap_or("/").to_string();
-        let display = display_name(&path, &delimiter);
-        let role =
-            special_use_role(name.attributes()).unwrap_or_else(|| folder_role(&path, &display));
-        folders.push(RemoteFolder {
-            role: role.to_string(),
-            path,
-            name: display,
-            delimiter,
-        });
     }
     Ok(folders)
+}
+
+fn remote_folder(name: &imap::types::Name) -> Option<RemoteFolder> {
+    if name
+        .attributes()
+        .iter()
+        .any(|attribute| matches!(attribute, NameAttribute::NoSelect))
+    {
+        return None;
+    }
+    let path = name.name().to_string();
+    if path.is_empty() {
+        return None;
+    }
+    let delimiter = name.delimiter().unwrap_or("/").to_string();
+    let display = display_name(&path, &delimiter);
+    let role = special_use_role(name.attributes()).unwrap_or_else(|| folder_role(&path, &display));
+    Some(RemoteFolder {
+        role: role.to_string(),
+        path,
+        name: display,
+        delimiter,
+    })
 }
 
 pub fn folder_state(session: &mut ImapSession, folder_path: &str) -> AppResult<FolderState> {
     let mailbox = session
         .status(folder_path, "(UIDNEXT UIDVALIDITY)")
-        .map_err(|_| AppError::Message("IMAP folder status failed".into()))?;
+        .map_err(|error| AppError::Message(format!("IMAP folder status failed: {error}")))?;
     if let Some(next_uid) = mailbox.uid_next {
         return Ok(FolderState {
             uid_validity: mailbox.uid_validity.unwrap_or(0),
@@ -207,10 +218,10 @@ pub fn folder_state(session: &mut ImapSession, folder_path: &str) -> AppResult<F
     }
     let mailbox = session
         .select(folder_path)
-        .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+        .map_err(|error| AppError::Message(format!("IMAP folder select failed: {error}")))?;
     let uids = session
         .uid_search("ALL")
-        .map_err(|_| AppError::Message("IMAP UID search failed".into()))?;
+        .map_err(|error| AppError::Message(format!("IMAP UID search failed: {error}")))?;
     Ok(FolderState {
         uid_validity: mailbox.uid_validity.unwrap_or(0),
         latest_uid: uids.into_iter().max().unwrap_or(0),
@@ -240,49 +251,85 @@ pub fn folder_flags(
 
 /// Fetch headers in batches so the caller can persist and publish the first
 /// results before a large mailbox has finished downloading.
+///
+/// The initial pass pages through the mailbox with sequence-number FETCH
+/// commands instead of `UID SEARCH`: Yandex intermittently answers SEARCH with
+/// `NO [BACKEND]`, which used to fail the whole folder (typically the large
+/// INBOX) before a single message was fetched. Incremental syncs use a direct
+/// UID range, which needs no search either.
 pub fn fetch_headers_batched<F>(
     session: &mut ImapSession,
     folder_path: &str,
     from_uid: u32,
+    latest_uid: u32,
     mut on_batch: F,
 ) -> AppResult<()>
 where
     F: FnMut(Vec<FetchedHeader>) -> AppResult<()>,
 {
-    session
+    let mailbox = session
         .select(folder_path)
-        .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
-    let found = session
-        .uid_search(format!("UID {from_uid}:*"))
-        .map_err(|_| AppError::Message("IMAP header search failed".into()))?;
-    let mut uids: Vec<u32> = found.into_iter().collect();
-    uids.sort_unstable();
-    for chunk in uids.chunks(200) {
-        let set = chunk
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let fetches = session
-            .uid_fetch(set, "(UID FLAGS BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.4096>)")
-            .map_err(|_| AppError::Message("IMAP header fetch failed".into()))?;
-        let mut batch = Vec::new();
-        for fetch in fetches.iter() {
-            let (Some(uid), Some(raw)) = (fetch.uid, fetch.header()) else {
-                continue;
-            };
-            batch.push(FetchedHeader {
-                uid,
-                flags: fetch.flags().iter().map(ToString::to_string).collect(),
-                raw: raw.to_vec(),
-                preview: fetch.text().map(Vec::from).unwrap_or_default(),
-            });
+        .map_err(|error| AppError::Message(format!("IMAP folder select failed: {error}")))?;
+    if from_uid <= 1 {
+        let mut start = 1u32;
+        while start <= mailbox.exists {
+            let end = start.saturating_add(HEADER_FETCH_PAGE - 1).min(mailbox.exists);
+            let fetches = session
+                .fetch(
+                    format!("{start}:{end}"),
+                    "(UID FLAGS BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.4096>)",
+                )
+                .map_err(|error| {
+                    AppError::Message(format!("IMAP header fetch failed: {error}"))
+                })?;
+            let batch = collect_headers(&fetches);
+            if !batch.is_empty() {
+                on_batch(batch)?;
+            }
+            start = end.saturating_add(1);
         }
+        return Ok(());
+    }
+    // Incremental sync: fetch the new UID range directly (no SEARCH) in small
+    // windows so a resumed backfill cannot buffer the rest of a huge mailbox in
+    // one response.
+    let mut from = from_uid;
+    while from <= latest_uid {
+        let end = from.saturating_add(HEADER_FETCH_PAGE - 1).min(latest_uid);
+        let fetches = session
+            .uid_fetch(
+                format!("{from}:{end}"),
+                "(UID FLAGS BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.4096>)",
+            )
+            .map_err(|error| AppError::Message(format!("IMAP header fetch failed: {error}")))?;
+        let batch = collect_headers(&fetches);
         if !batch.is_empty() {
             on_batch(batch)?;
         }
+        if end >= latest_uid {
+            break;
+        }
+        from = end.saturating_add(1);
     }
     Ok(())
+}
+
+const HEADER_FETCH_PAGE: u32 = 200;
+
+fn collect_headers(fetches: &[imap::types::Fetch]) -> Vec<FetchedHeader> {
+    let mut batch = Vec::new();
+    for fetch in fetches.iter() {
+        let (Some(uid), Some(raw)) = (fetch.uid, fetch.header()) else {
+            continue;
+        };
+        batch.push(FetchedHeader {
+            uid,
+            flags: fetch.flags().iter().map(ToString::to_string).collect(),
+            raw: raw.to_vec(),
+            preview: fetch.text().map(Vec::from).unwrap_or_default(),
+        });
+    }
+    batch
 }
 
 pub fn fetch_message(
@@ -679,10 +726,10 @@ fn connect_tcp(host: &str, port: u16) -> AppResult<TcpStream> {
         .map_err(|_| AppError::Message("IMAP connection failed".into()))?;
     let mut timed_out = false;
     for address in addresses {
-        match TcpStream::connect_timeout(&address, TIMEOUT) {
+        match TcpStream::connect_timeout(&address, CONNECT_TIMEOUT) {
             Ok(stream) => {
-                let _ = stream.set_read_timeout(Some(TIMEOUT));
-                let _ = stream.set_write_timeout(Some(TIMEOUT));
+                let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
+                let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
                 return Ok(stream);
             }
             Err(err) if err.kind() == io::ErrorKind::TimedOut => timed_out = true,
@@ -709,6 +756,7 @@ fn special_use_role(attributes: &[NameAttribute<'_>]) -> Option<&'static str> {
             continue;
         };
         match value.trim_start_matches('\\').to_ascii_lowercase().as_str() {
+            "inbox" => return Some("inbox"),
             "archive" => return Some("archive"),
             "all" => return Some("all"),
             "trash" => return Some("trash"),
@@ -1020,6 +1068,10 @@ mod tests {
         assert_eq!(display_name("INBOX", "/"), "INBOX");
         let attributes = vec![NameAttribute::Custom("\\Archive".into())];
         assert_eq!(special_use_role(&attributes), Some("archive"));
+        // Yandex marks INBOX with \Inbox even though it does not advertise
+        // SPECIAL-USE; the role must not depend on the mailbox name.
+        let attributes = vec![NameAttribute::Custom("\\Inbox".into())];
+        assert_eq!(special_use_role(&attributes), Some("inbox"));
     }
 
     #[test]
@@ -1071,6 +1123,100 @@ mod tests {
         assert_eq!(
             auth.process(b""),
             "user=me@gmail.com\x01auth=Bearer token-123\x01\x01"
+        );
+    }
+
+    fn scripted_imap_server<F>(handler: F) -> (u16, thread::JoinHandle<Vec<String>>)
+    where
+        F: Fn(&str, &str) -> String + Send + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = thread::spawn(move || {
+            let (peer, _) = listener.accept().unwrap();
+            let mut writer = peer.try_clone().unwrap();
+            writer.write_all(b"* OK IMAP4rev1 ready\r\n").unwrap();
+            let mut reader = BufReader::new(peer);
+            let mut commands = Vec::new();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    break;
+                }
+                let tag = line.split(' ').next().unwrap_or_default().to_string();
+                commands.push(line.trim_end().to_string());
+                let response = handler(&line, &tag);
+                if response.is_empty() || line.starts_with(&format!("{tag} LOGOUT")) {
+                    break;
+                }
+                writer.write_all(response.as_bytes()).unwrap();
+            }
+            commands
+        });
+        (port, handle)
+    }
+
+    fn yandex_like_handler(line: &str, tag: &str) -> String {
+        let upper = line.to_ascii_uppercase();
+        if upper.contains(" UID SEARCH") {
+            format!("{tag} NO [BACKEND] search is unavailable\r\n")
+        } else if upper.contains(" SELECT ") {
+            format!(
+                "* 2 EXISTS\r\n* OK [UIDVALIDITY 7] ok\r\n* OK [UIDNEXT 3] ok\r\n\
+                 {tag} OK [READ-WRITE] SELECT completed\r\n"
+            )
+        } else if upper.contains("FETCH") {
+            format!("{tag} OK FETCH completed\r\n")
+        } else {
+            format!("{tag} OK completed\r\n")
+        }
+    }
+
+    fn connect_plain(port: u16) -> ImapSession {
+        let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let mut client = imap::Client::new(ImapStream::Plain(tcp));
+        client.read_greeting().unwrap();
+        client.login("me@example.com", "pass").ok().unwrap()
+    }
+
+    #[test]
+    fn initial_sync_does_not_depend_on_uid_search() {
+        // Yandex intermittently answers UID SEARCH with NO [BACKEND]. The
+        // initial import must page through the mailbox with FETCH instead of
+        // failing the whole folder (INBOX) before fetching anything.
+        let (port, handle) = scripted_imap_server(yandex_like_handler);
+        let mut session = connect_plain(port);
+        let mut batches = 0;
+        fetch_headers_batched(&mut session, "INBOX", 1, 2, |_| {
+            batches += 1;
+            Ok(())
+        })
+        .expect("initial sync must not require UID SEARCH");
+        assert_eq!(batches, 0);
+        drop(session);
+        let commands = handle.join().unwrap();
+        assert!(
+            !commands.iter().any(|line| line.contains("UID SEARCH")),
+            "unexpected SEARCH commands: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn incremental_sync_fetches_the_uid_range_directly() {
+        let (port, handle) = scripted_imap_server(yandex_like_handler);
+        let mut session = connect_plain(port);
+        fetch_headers_batched(&mut session, "INBOX", 5, 9, |_| Ok(())).unwrap();
+        drop(session);
+        let commands = handle.join().unwrap();
+        assert!(
+            commands
+                .iter()
+                .any(|line| line.contains("UID FETCH 5:9")),
+            "expected a direct UID FETCH: {commands:?}"
+        );
+        assert!(
+            !commands.iter().any(|line| line.contains("UID SEARCH")),
+            "unexpected SEARCH commands: {commands:?}"
         );
     }
 }

@@ -412,6 +412,14 @@ fn sync_account_inner(
     let credential = crate::mail_auth::credential_for(account, secrets.as_ref())?;
     let mut session = client::open_session(account, &credential)?;
     let remote_folders = client::list_folders(&mut session)?;
+    if std::env::var_os("AURAMAIL_IMAP_TRACE").is_some() {
+        for folder in &remote_folders {
+            eprintln!(
+                "imap folder path={:?} name={:?} role={} delimiter={:?}",
+                folder.path, folder.name, folder.role, folder.delimiter
+            );
+        }
+    }
     let remote_paths: Vec<String> = remote_folders
         .iter()
         .map(|folder| folder.path.clone())
@@ -457,6 +465,10 @@ fn sync_account_inner(
                     inserted.append(&mut outcome.inserted);
                 }
                 Err(error) => {
+                    eprintln!(
+                        "sync failed for {} ({}): {error}",
+                        folder.path, folder.role
+                    );
                     if first_error.is_none() {
                         first_error = Some(error);
                     }
@@ -503,6 +515,10 @@ fn sync_inbox_inner(
                     inserted.append(&mut outcome.inserted);
                 }
                 Err(error) => {
+                    eprintln!(
+                        "sync failed for {} ({}): {error}",
+                        folder.path, folder.role
+                    );
                     if first_error.is_none() {
                         first_error = Some(error);
                     }
@@ -648,7 +664,7 @@ fn sync_folder(
                 // make UIDNEXT visible before the message is searchable.
                 let mut highest = 0;
                 let mut first_batch = true;
-                client::fetch_headers_batched(session, &folder.path, 1, |fetched| {
+                client::fetch_headers_batched(session, &folder.path, 1, state.latest_uid, |fetched| {
                     if first_batch {
                         mail::clear_folder_messages(db, folder.id)?;
                         first_batch = false;
@@ -663,19 +679,21 @@ fn sync_folder(
                         folder.id,
                         &headers,
                     )?);
+                    // Persist progress after every page
+                    mail::set_folder_cursor(db, folder.id, state.uid_validity, highest)?;
                     Ok(())
                 })?;
                 if first_batch {
                     mail::clear_folder_messages(db, folder.id)?;
+                    mail::set_folder_cursor(db, folder.id, state.uid_validity, 0)?;
                 }
-                mail::set_folder_cursor(db, folder.id, state.uid_validity, highest)?;
                 inserted
             }
         }
         SyncAction::Incremental { from_uid } => {
             let mut inserted = Vec::new();
             let mut highest = highest_uid;
-            client::fetch_headers_batched(session, &folder.path, from_uid, |fetched| {
+            client::fetch_headers_batched(session, &folder.path, from_uid, state.latest_uid, |fetched| {
                 highest = highest.max(fetched.iter().map(|header| header.uid).max().unwrap_or(0));
                 let headers = build_headers(&fetched);
                 inserted.extend(store_header_batch(
@@ -685,9 +703,10 @@ fn sync_folder(
                     folder.id,
                     &headers,
                 )?);
+                // Keep progress if a long catch-up is interrupted mid-way.
+                mail::set_folder_cursor(db, folder.id, state.uid_validity, highest)?;
                 Ok(())
             })?;
-            mail::set_folder_cursor(db, folder.id, state.uid_validity, highest)?;
             inserted
         }
     };
