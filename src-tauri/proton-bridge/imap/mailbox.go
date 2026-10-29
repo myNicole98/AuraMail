@@ -2,6 +2,7 @@ package imap
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -594,6 +595,9 @@ func (mbox *mailbox) MoveMessages(uid bool, seqSet *imap.SeqSet, destName string
 	dest := mbox.u.getMailbox(destName)
 	if dest == nil {
 		return imapbackend.ErrNoSuchMailbox
+	}
+	if len(apiIDs) == 0 {
+		return fmt.Errorf("no Proton message matches the requested UID in %s", mbox.name)
 	}
 
 	if err := mbox.u.c.LabelMessages(dest.label, apiIDs); err != nil {

@@ -34,8 +34,10 @@
 #   disappear without renumbering survivors. Only mappings present before the
 #   sync are pruned, and moving listings (page totals differ) skip
 #   reconciliation until the next sync.
-#   imap/mailbox.go: expose the persisted UIDVALIDITY. MOVE remains a
-#   label/unlabel operation and never falls back to COPY + STORE + EXPUNGE.
+#   imap/mailbox.go: expose the persisted UIDVALIDITY. MOVE never falls back
+#   to COPY + STORE + EXPUNGE; it remains a label/unlabel operation.
+#   protonmail/messages.go: label/unlabel use the v4 endpoints because the v3
+#   endpoints reject the system Trash and Spam labels with error 2011.
 #
 # Builds only read these local files. They never clone, pull, or otherwise
 # fetch upstream Hydroxide. Updating the snapshot is a deliberate re-vendoring

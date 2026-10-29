@@ -408,7 +408,9 @@ fn move_selected(
     if auth_type == AccountAuth::Proton {
         session
             .run_command_and_check_ok(proton_move_command(uid, target_path))
-            .map_err(|_| AppError::Message("IMAP message move failed".into()))?;
+            .map_err(|error| {
+                AppError::Message(format!("IMAP message move failed: {error}"))
+            })?;
         return Ok(());
     }
     require_uidplus(uidplus_supported(session))?;
@@ -459,10 +461,12 @@ fn delete_selected_proton(session: &mut ImapSession, uid: u32) -> AppResult<()> 
     let [mark, expunge] = proton_delete_command(uid);
     session
         .run_command_and_check_ok(&mark)
-        .map_err(|_| AppError::Message("IMAP message delete failed".into()))?;
+        .map_err(|error| {
+            AppError::Message(format!("IMAP message delete failed: {error}"))
+        })?;
     session
         .run_command_and_check_ok(&expunge)
-        .map_err(|_| AppError::Message("IMAP expunge failed".into()))?;
+        .map_err(|error| AppError::Message(format!("IMAP expunge failed: {error}")))?;
     Ok(())
 }
 

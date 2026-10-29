@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -318,7 +319,10 @@ func (c *Client) doMessages(action string, ids []string) error {
 	}
 
 	// TODO: the response contains one response per message
-	return c.doJSON(req, nil)
+	if err := c.doJSON(req, nil); err != nil {
+		return fmt.Errorf("%s: %w", action, err)
+	}
+	return nil
 }
 
 func (c *Client) MarkMessagesRead(ids []string) error {
@@ -337,18 +341,24 @@ func (c *Client) UndeleteMessages(ids []string) error {
 	return c.doMessages("undelete", ids)
 }
 
+// Label/unlabel use the v4 endpoints. The v3 endpoints reject the system
+// Trash and Spam labels with [2011] "That label cannot be applied or removed".
 func (c *Client) LabelMessages(labelID string, ids []string) error {
 	reqData := struct {
 		LabelID string
 		IDs     []string
 	}{labelID, ids}
-	req, err := c.newJSONRequest(http.MethodPut, "/messages/label", &reqData)
+	req, err := c.newJSONRequest(http.MethodPut, "/mail/v4/messages/label", &reqData)
 	if err != nil {
 		return err
 	}
+	req.Header.Set(headerAPIVersion, "4")
 
 	// TODO: the response contains one response per message
-	return c.doJSON(req, nil)
+	if err := c.doJSON(req, nil); err != nil {
+		return fmt.Errorf("label %q: %w", labelID, err)
+	}
+	return nil
 }
 
 func (c *Client) UnlabelMessages(labelID string, ids []string) error {
@@ -356,13 +366,17 @@ func (c *Client) UnlabelMessages(labelID string, ids []string) error {
 		LabelID string
 		IDs     []string
 	}{labelID, ids}
-	req, err := c.newJSONRequest(http.MethodPut, "/messages/unlabel", &reqData)
+	req, err := c.newJSONRequest(http.MethodPut, "/mail/v4/messages/unlabel", &reqData)
 	if err != nil {
 		return err
 	}
+	req.Header.Set(headerAPIVersion, "4")
 
 	// TODO: the response contains one response per message
-	return c.doJSON(req, nil)
+	if err := c.doJSON(req, nil); err != nil {
+		return fmt.Errorf("unlabel %q: %w", labelID, err)
+	}
+	return nil
 }
 
 type MessageKeyPacket struct {

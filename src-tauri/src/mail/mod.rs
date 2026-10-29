@@ -345,6 +345,73 @@ fn write_message(
     let thread_key =
         crate::db::message_thread_key(headers.message_id.as_deref(), headers.references.as_deref())
             .unwrap_or_else(|| format!("local:{account_id}:{folder_id}:{uid}"));
+
+    // An optimistic move may already hold this message in another folder. Adopt
+    // that row instead of inserting a second one: the local row id (used by the
+    // client's move queue and overlay) stays stable across the sync.
+    let pending_id: Option<i64> = conn
+        .prepare_cached(
+            "select id from messages
+             where account_id = ?1 and uid >= ?2
+               and (
+                 (message_id is not null and message_id = ?3)
+                 or (?3 is null and message_id is null
+                     and from_addr = ?4 and subject = ?5 and date = ?6)
+               )
+             order by id limit 1",
+        )?
+        .query_row(
+            params![
+                account_id,
+                PENDING_UID_BASE as i64,
+                headers.message_id,
+                headers.from_addr,
+                headers.subject,
+                headers.date
+            ],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(pending_id) = pending_id {
+        if exists {
+            // A previous sync may already have inserted the real row in this
+            // slot. Replace it with the optimistic row so the client's row id
+            // (and its move queue) stays stable.
+            conn.execute(
+                "delete from messages
+                 where folder_id = ?1 and uid = ?2 and id != ?3",
+                params![folder_id, uid, pending_id],
+            )?;
+        }
+        conn.execute(
+            "update messages set folder_id = ?2, uid = ?3, message_id = ?4,
+                references_header = ?5, thread_key = ?6, from_addr = ?7,
+                from_name = ?8, to_addrs = ?9, cc_addrs = ?10, subject = ?11,
+                date = ?12, snippet = ?13, is_seen = ?14, is_starred = ?15,
+                has_attachments = ?16
+             where id = ?1",
+            params![
+                pending_id,
+                folder_id,
+                uid,
+                headers.message_id,
+                headers.references,
+                thread_key,
+                headers.from_addr,
+                headers.from_name,
+                to_addrs,
+                cc_addrs,
+                headers.subject,
+                headers.date,
+                headers.snippet,
+                is_seen as i64,
+                is_starred as i64,
+                headers.has_attachments as i64,
+            ],
+        )?;
+        return Ok(None);
+    }
+
     conn.prepare_cached(
         "insert into messages (account_id, folder_id, uid, message_id, references_header, thread_key, from_addr, from_name, to_addrs, cc_addrs, subject, date, snippet, is_seen, is_starred, has_attachments, body_cached) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 0) on conflict(folder_id, uid) do update set account_id = excluded.account_id, message_id = excluded.message_id, references_header = excluded.references_header, thread_key = excluded.thread_key, from_addr = excluded.from_addr, from_name = excluded.from_name, to_addrs = excluded.to_addrs, cc_addrs = excluded.cc_addrs, subject = excluded.subject, date = excluded.date, snippet = excluded.snippet, is_seen = excluded.is_seen, is_starred = excluded.is_starred, has_attachments = excluded.has_attachments",
     )?
@@ -601,8 +668,15 @@ pub fn list_threads(db: &Database, query: &MessageQuery) -> AppResult<Vec<Thread
     } else {
         "desc"
     };
+    // A single-folder view must not show the thread's newest message when that
+    // message lives in another folder. Unified views still collapse the whole
+    // thread across folders.
+    let folder_scope = query
+        .folder_id
+        .map(|folder_id| format!(" where m.folder_id = {folder_id}"))
+        .unwrap_or_default();
     let sql = format!(
-        "with matched as ({matched}), deduped as (select m.*, row_number() over (partition by m.account_id, coalesce(nullif(m.message_id, ''), 'id:' || m.id) order by case f.role when 'inbox' then 0 when 'sent' then 1 when 'archive' then 2 when 'all' then 9 else 5 end, m.body_cached desc, m.id) rn from messages m join folders f on f.id = m.folder_id join matched mt on mt.account_id = m.account_id and mt.thread_key = m.thread_key), threads as (select d.id, d.account_id, d.thread_key, row_number() over(partition by d.account_id, d.thread_key order by d.date desc, d.id desc) rn from deduped d join matched mt on mt.account_id = d.account_id and mt.thread_key = d.thread_key where d.rn = 1) select {MESSAGE_COLUMNS}, (select count(distinct coalesce(nullif(mx.message_id, ''), 'id:' || mx.id)) from messages mx where mx.account_id = m.account_id and mx.thread_key = m.thread_key), (select count(distinct case when mx.is_seen = 0 then coalesce(nullif(mx.message_id, ''), 'id:' || mx.id) end) from messages mx where mx.account_id = m.account_id and mx.thread_key = m.thread_key), (select exists(select 1 from messages mx join folders fx on fx.id = mx.folder_id where mx.account_id = m.account_id and mx.thread_key = m.thread_key and fx.role = 'inbox')) from deduped m join threads t on t.id = m.id and t.rn = 1 where m.rn = 1 order by m.date {direction}, m.id {direction} limit ? offset ?"
+        "with matched as ({matched}), deduped as (select m.*, row_number() over (partition by m.account_id, coalesce(nullif(m.message_id, ''), 'id:' || m.id) order by case when m.uid >= 2147483648 then 1 else 0 end, case f.role when 'inbox' then 0 when 'sent' then 1 when 'archive' then 2 when 'all' then 9 else 5 end, m.body_cached desc, m.id) rn from messages m join folders f on f.id = m.folder_id join matched mt on mt.account_id = m.account_id and mt.thread_key = m.thread_key{folder_scope}), threads as (select d.id, d.account_id, d.thread_key, row_number() over(partition by d.account_id, d.thread_key order by d.date desc, d.id desc) rn from deduped d join matched mt on mt.account_id = d.account_id and mt.thread_key = d.thread_key where d.rn = 1) select {MESSAGE_COLUMNS}, (select count(distinct coalesce(nullif(mx.message_id, ''), 'id:' || mx.id)) from messages mx where mx.account_id = m.account_id and mx.thread_key = m.thread_key), (select count(distinct case when mx.is_seen = 0 then coalesce(nullif(mx.message_id, ''), 'id:' || mx.id) end) from messages mx where mx.account_id = m.account_id and mx.thread_key = m.thread_key), (select exists(select 1 from messages mx join folders fx on fx.id = mx.folder_id where mx.account_id = m.account_id and mx.thread_key = m.thread_key and fx.role = 'inbox')) from deduped m join threads t on t.id = m.id and t.rn = 1 where m.rn = 1 order by m.date {direction}, m.id {direction} limit ? offset ?"
     );
 
     let limit = query.limit.unwrap_or(100).clamp(1, 5000);
@@ -643,7 +717,7 @@ pub fn list_thread_messages(
     thread_key: &str,
 ) -> AppResult<Vec<Message>> {
     let sql = format!(
-        "with deduped as (select m.*, row_number() over (partition by m.account_id, coalesce(nullif(m.message_id, ''), 'id:' || m.id) order by case f.role when 'inbox' then 0 when 'sent' then 1 when 'archive' then 2 when 'all' then 9 else 5 end, m.body_cached desc, m.id) rn from messages m join folders f on f.id = m.folder_id where m.account_id = ?1 and m.thread_key = ?2) select {MESSAGE_COLUMNS} from deduped m where m.rn = 1 and m.account_id = ?1 and m.thread_key = ?2 order by m.date desc, m.id desc"
+        "with deduped as (select m.*, row_number() over (partition by m.account_id, coalesce(nullif(m.message_id, ''), 'id:' || m.id) order by case when m.uid >= 2147483648 then 1 else 0 end, case f.role when 'inbox' then 0 when 'sent' then 1 when 'archive' then 2 when 'all' then 9 else 5 end, m.body_cached desc, m.id) rn from messages m join folders f on f.id = m.folder_id where m.account_id = ?1 and m.thread_key = ?2) select {MESSAGE_COLUMNS} from deduped m where m.rn = 1 and m.account_id = ?1 and m.thread_key = ?2 order by m.date desc, m.id desc"
     );
     let conn = db.read();
     let mut stmt = conn.prepare(&sql)?;
@@ -829,9 +903,10 @@ pub fn reconcile_folder_messages(
         .map(|(uid, seen, starred)| (*uid, (*seen, *starred)))
         .collect();
     let local: Vec<(i64, u32, bool, bool)> = {
-        let mut stmt =
-            conn.prepare("select id, uid, is_seen, is_starred from messages where folder_id = ?1")?;
-        let rows = stmt.query_map(params![folder_id], |row| {
+        let mut stmt = conn.prepare(
+            "select id, uid, is_seen, is_starred from messages where folder_id = ?1 and uid < ?2",
+        )?;
+        let rows = stmt.query_map(params![folder_id, PENDING_UID_BASE as i64], |row| {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
@@ -883,6 +958,164 @@ pub fn remove_message(db: &Database, message_id: i64) -> AppResult<()> {
         .unwrap()
         .execute("delete from messages where id = ?1", params![message_id])?;
     Ok(())
+}
+
+/// UIDs at or above this value represent a local, optimistic folder move that
+/// has not been confirmed by a sync yet. Real IMAP UIDs never get this high.
+pub const PENDING_UID_BASE: u32 = 0x8000_0000;
+
+pub fn is_pending_uid(uid: u32) -> bool {
+    uid >= PENDING_UID_BASE
+}
+
+/// Move a message between folders locally so it is visible in the destination
+/// before the server sync catches up. The synthetic UID is replaced by the real
+/// one when the destination folder is synced.
+pub fn move_message_pending(
+    db: &Database,
+    message_id: i64,
+    target_folder_id: i64,
+) -> AppResult<()> {
+    let conn = db.conn.lock().unwrap();
+    let mut uid = PENDING_UID_BASE | ((message_id as u64 as u32) & 0x7fff_ffff);
+    loop {
+        let exists: bool = conn.query_row(
+            "select exists(select 1 from messages where folder_id = ?1 and uid = ?2)",
+            params![target_folder_id, uid as i64],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            break;
+        }
+        uid = PENDING_UID_BASE | (uid.wrapping_add(1) & 0x7fff_ffff);
+    }
+    conn.execute(
+        "update messages set folder_id = ?2, uid = ?3 where id = ?1",
+        params![message_id, target_folder_id, uid as i64],
+    )?;
+    Ok(())
+}
+
+/// Adopt a pending row at a known server folder/UID.
+pub fn adopt_pending_at(
+    db: &Database,
+    pending_id: i64,
+    folder_id: i64,
+    uid: u32,
+) -> AppResult<()> {
+    let mut conn = db.conn.lock().unwrap();
+    let tx = conn.transaction()?;
+    tx.execute(
+        "delete from messages where folder_id = ?1 and uid = ?2 and id != ?3",
+        params![folder_id, uid as i64, pending_id],
+    )?;
+    tx.execute(
+        "update messages set folder_id = ?2, uid = ?3 where id = ?1",
+        params![pending_id, folder_id, uid as i64],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Put a row back after an optimistic move failed on the server.
+pub fn restore_message(
+    db: &Database,
+    message_id: i64,
+    folder_id: i64,
+    uid: u32,
+) -> AppResult<()> {
+    db.conn.lock().unwrap().execute(
+        "update messages set folder_id = ?2, uid = ?3 where id = ?1",
+        params![message_id, folder_id, uid as i64],
+    )?;
+    Ok(())
+}
+
+/// Adopt optimistic rows into their real server copy, keeping the optimistic
+/// row id. The match is account-wide because repeated moves can leave the
+/// pending row in a folder different from the server's final one.
+pub fn adopt_pending_messages(db: &Database, folder_id: i64) -> AppResult<usize> {
+    let mut conn = db.conn.lock().unwrap();
+    let account_id: Option<i64> = conn
+        .query_row(
+            "select account_id from folders where id = ?1",
+            params![folder_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(account_id) = account_id else {
+        return Ok(0);
+    };
+
+    let tx = conn.transaction()?;
+    let pending: Vec<(i64, Option<String>, String, String, i64)> = {
+        let mut stmt = tx.prepare(
+            "select id, message_id, from_addr, subject, date
+             from messages where account_id = ?1 and uid >= ?2 order by id",
+        )?;
+        let rows = stmt.query_map(params![account_id, PENDING_UID_BASE as i64], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+
+    let mut adopted = 0;
+    for (pending_id, message_id, from_addr, subject, date) in pending {
+        let real: Option<(i64, i64, i64)> = tx
+            .query_row(
+                "select id, folder_id, uid from messages
+                 where account_id = ?1 and uid < ?2 and id != ?3
+                   and (
+                     (?4 is not null and message_id = ?4)
+                     or (?4 is null and message_id is null
+                         and from_addr = ?5 and subject = ?6 and date = ?7)
+                   )
+                 order by id limit 1",
+                params![
+                    account_id,
+                    PENDING_UID_BASE as i64,
+                    pending_id,
+                    message_id,
+                    from_addr,
+                    subject,
+                    date
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((real_id, real_folder, real_uid)) = real else {
+            continue;
+        };
+        tx.execute("delete from messages where id = ?1", params![real_id])?;
+        tx.execute(
+            "update messages set folder_id = ?2, uid = ?3 where id = ?1",
+            params![pending_id, real_folder, real_uid],
+        )?;
+        adopted += 1;
+    }
+    tx.commit()?;
+    Ok(adopted)
+}
+
+pub fn folder_id_by_role(
+    db: &Database,
+    account_id: i64,
+    role: &str,
+) -> AppResult<Option<i64>> {
+    let conn = db.read();
+    Ok(conn
+        .query_row(
+            "select id from folders where account_id = ?1 and role = ?2 order by id limit 1",
+            params![account_id, role],
+            |row| row.get(0),
+        )
+        .optional()?)
 }
 
 pub fn attachment_by_id(db: &Database, attachment_id: i64) -> AppResult<Attachment> {
@@ -2250,5 +2483,204 @@ mod tests {
         .unwrap();
         assert_eq!(second.len(), 20);
         assert_eq!(second[0].subject, "Message 20");
+    }
+
+    #[test]
+    fn folder_views_do_not_show_another_folder_newest_thread_message() {
+        let db = Database::open_memory().unwrap();
+        let account = seed_account(&db, "me@example.com");
+        let inbox = seed_folder(&db, account, "INBOX", "inbox");
+        let archive = seed_folder(&db, account, "Archive", "archive");
+        seed_message(&db, archive, 1, "ada@example.com", "Older", "", 100);
+        seed_message(&db, inbox, 2, "ada@example.com", "Newer", "", 200);
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "update messages set message_id = '<older@example.com>', thread_key = 'shared' where folder_id = ?1",
+                params![archive],
+            )
+            .unwrap();
+            conn.execute(
+                "update messages set message_id = '<newer@example.com>', thread_key = 'shared' where folder_id = ?1",
+                params![inbox],
+            )
+            .unwrap();
+        }
+
+        let archived = list_threads(
+            &db,
+            &MessageQuery {
+                folder_id: Some(archive),
+                ..MessageQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].message.subject, "Older");
+        assert_eq!(archived[0].message.folder_id, archive);
+
+        let inbox_threads = list_threads(
+            &db,
+            &MessageQuery {
+                folder_id: Some(inbox),
+                ..MessageQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(inbox_threads.len(), 1);
+        assert_eq!(inbox_threads[0].message.subject, "Newer");
+        assert_eq!(inbox_threads[0].message.folder_id, inbox);
+    }
+
+    #[test]
+    fn pending_move_is_visible_in_the_target_and_replaced_by_the_real_row() {
+        let db = Database::open_memory().unwrap();
+        let account = seed_account(&db, "me@example.com");
+        let inbox = seed_folder(&db, account, "INBOX", "inbox");
+        let trash = seed_folder(&db, account, "Trash", "trash");
+        seed_message(&db, inbox, 7, "ada@example.com", "Later", "body", 100);
+
+        let message_id: i64 = {
+            let conn = db.conn.lock().unwrap();
+            let id = conn
+                .query_row(
+                    "select id from messages where folder_id = ?1",
+                    params![inbox],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            conn.execute(
+                "update messages set message_id = '<later@example.com>', thread_key = 'later' where id = ?1",
+                params![id],
+            )
+            .unwrap();
+            id
+        };
+
+        move_message_pending(&db, message_id, trash).unwrap();
+
+        let inbox_threads = list_threads(
+            &db,
+            &MessageQuery {
+                folder_id: Some(inbox),
+                ..MessageQuery::default()
+            },
+        )
+        .unwrap();
+        assert!(inbox_threads.is_empty());
+
+        let trash_threads = list_threads(
+            &db,
+            &MessageQuery {
+                folder_id: Some(trash),
+                ..MessageQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(trash_threads.len(), 1);
+        assert!(is_pending_uid(trash_threads[0].message.uid));
+
+        // Reconcile skips pending rows until the server copy is available.
+        reconcile_folder_messages(&db, trash, &[]).unwrap();
+        let still_pending = list_threads(
+            &db,
+            &MessageQuery {
+                folder_id: Some(trash),
+                ..MessageQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(still_pending.len(), 1);
+
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "insert into messages (account_id, folder_id, uid, message_id, thread_key, from_addr, from_name, subject, snippet, date, is_seen) values (?1, ?2, 1, '<later@example.com>', 'later', 'ada@example.com', '', 'Later', 'body', 100, 0)",
+                params![account, trash],
+            )
+            .unwrap();
+        }
+
+        // The thread view prefers the confirmed row over the pending duplicate.
+        let deduped = list_threads(
+            &db,
+            &MessageQuery {
+                folder_id: Some(trash),
+                ..MessageQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(deduped.len(), 1);
+        assert!(!is_pending_uid(deduped[0].message.uid));
+
+        assert_eq!(adopt_pending_messages(&db, trash).unwrap(), 1);
+        let remaining = list_threads(
+            &db,
+            &MessageQuery {
+                folder_id: Some(trash),
+                ..MessageQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert!(!is_pending_uid(remaining[0].message.uid));
+    }
+
+    #[test]
+    fn pending_row_clears_when_the_real_copy_landed_in_another_folder() {
+        let db = Database::open_memory().unwrap();
+        let account = seed_account(&db, "me@example.com");
+        let inbox = seed_folder(&db, account, "INBOX", "inbox");
+        let archive = seed_folder(&db, account, "Archive", "archive");
+        seed_message(&db, inbox, 9, "ada@example.com", "Moved", "", 100);
+        let message_id: i64 = {
+            let conn = db.conn.lock().unwrap();
+            let id = conn
+                .query_row(
+                    "select id from messages where folder_id = ?1",
+                    params![inbox],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            conn.execute(
+                "update messages set message_id = '<moved@example.com>', thread_key = 'moved' where id = ?1",
+                params![id],
+            )
+            .unwrap();
+            id
+        };
+        move_message_pending(&db, message_id, archive).unwrap();
+
+        // The server ended up keeping the message in Inbox after repeated moves.
+        seed_message(&db, inbox, 1, "ada@example.com", "Moved", "", 100);
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "update messages set message_id = '<moved@example.com>', thread_key = 'moved' where folder_id = ?1 and uid = 1",
+                params![inbox],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(adopt_pending_messages(&db, archive).unwrap(), 1);
+        let archived = list_threads(
+            &db,
+            &MessageQuery {
+                folder_id: Some(archive),
+                ..MessageQuery::default()
+            },
+        )
+        .unwrap();
+        assert!(archived.is_empty());
+        let inbox_threads = list_threads(
+            &db,
+            &MessageQuery {
+                folder_id: Some(inbox),
+                ..MessageQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(inbox_threads.len(), 1);
+        assert!(!is_pending_uid(inbox_threads[0].message.uid));
     }
 }

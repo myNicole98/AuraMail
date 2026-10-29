@@ -1,7 +1,7 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -150,6 +150,53 @@ fn sync_order(folders: &mut [mail::Folder]) {
         "sent" => 1,
         _ => 2,
     });
+}
+
+/// Sync one folder after an optimistic local move so its pending row is
+/// replaced by the server row without waiting for the periodic full sync.
+pub fn sync_folder_by_id(
+    app: &AppHandle,
+    db: Arc<Database>,
+    secrets: Arc<dyn SecretStore>,
+    syncing: &Mutex<HashSet<i64>>,
+    folder_id: i64,
+) -> AppResult<()> {
+    let Some(folder) = mail::folder_by_id(&db, folder_id)? else {
+        return Ok(());
+    };
+    let Some(account) = find_account(&db, folder.account_id)? else {
+        return Ok(());
+    };
+    // A periodic/full sync may already hold the account gate. The optimistic
+    // row must not stay pending for the whole sync, so wait briefly for the
+    // gate instead of dropping this request.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if begin_sync(syncing, account.id) {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    let _guard = SyncGuard {
+        syncing,
+        account_id: account.id,
+    };
+    let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
+    let mut session = client::open_session(&account, &credential)?;
+    let result = sync_folder(&mut session, app, &db, &account, &folder, false);
+    let _ = session.logout();
+    result?;
+    app.emit(
+        "sync://folders",
+        SyncFolders {
+            account_id: account.id,
+        },
+    )
+    .ok();
+    Ok(())
 }
 
 pub fn sync_account(
@@ -565,6 +612,7 @@ fn sync_folder(
         state.latest_uid,
     );
     if matches!(action, SyncAction::Noop) && !reconcile {
+        let _ = mail::adopt_pending_messages(db, folder.id)?;
         return Ok(SyncOutcome {
             inserted: Vec::new(),
             auto_classify: Vec::new(),
@@ -596,7 +644,9 @@ fn sync_folder(
                 Vec::new()
             } else {
                 let mut inserted = Vec::new();
-                let mut highest = state.latest_uid;
+                // Advance only by UIDs actually fetched: a concurrent move can
+                // make UIDNEXT visible before the message is searchable.
+                let mut highest = 0;
                 let mut first_batch = true;
                 client::fetch_headers_batched(session, &folder.path, 1, |fetched| {
                     if first_batch {
@@ -624,7 +674,7 @@ fn sync_folder(
         }
         SyncAction::Incremental { from_uid } => {
             let mut inserted = Vec::new();
-            let mut highest = state.latest_uid;
+            let mut highest = highest_uid;
             client::fetch_headers_batched(session, &folder.path, from_uid, |fetched| {
                 highest = highest.max(fetched.iter().map(|header| header.uid).max().unwrap_or(0));
                 let headers = build_headers(&fetched);
@@ -641,6 +691,8 @@ fn sync_folder(
             inserted
         }
     };
+
+    let _ = mail::adopt_pending_messages(db, folder.id)?;
 
     if changed > 0 {
         app.emit(

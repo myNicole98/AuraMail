@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
@@ -104,10 +104,97 @@ fn account_by_id(db: &Database, account_id: i64) -> AppResult<Account> {
 
 fn message_context(db: &Database, message_id: i64) -> AppResult<(Message, Folder, Account)> {
     let message = mail::message_by_id(db, message_id)?;
+    if mail::is_pending_uid(message.uid) {
+        return Err(AppError::Message(
+            "This message is still syncing. Try again in a moment.".into(),
+        ));
+    }
     let folder = mail::folder_by_id(db, message.folder_id)?
         .ok_or_else(|| AppError::Message("folder not found".into()))?;
     let account = account_by_id(db, message.account_id)?;
     Ok((message, folder, account))
+}
+
+fn schedule_folder_sync(
+    app: &AppHandle,
+    db: Arc<Database>,
+    secrets: Arc<dyn SecretStore>,
+    syncing: Arc<Mutex<HashSet<i64>>>,
+    folder_id: i64,
+) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = sync::sync_folder_by_id(&app, db, secrets, &syncing, folder_id);
+    });
+}
+
+/// A queued move may target a row whose previous optimistic move has not been
+/// reconciled yet. Sync its current folder (the adoption keeps the row id) so
+/// the move can use the real UID.
+fn ensure_message_synced(
+    app: &AppHandle,
+    db: &Arc<Database>,
+    secrets: &Arc<dyn SecretStore>,
+    syncing: &Arc<Mutex<HashSet<i64>>>,
+    message_id: i64,
+) -> AppResult<()> {
+    let message = mail::message_by_id(db, message_id)?;
+    if !mail::is_pending_uid(message.uid) {
+        return Ok(());
+    }
+    let _ = mail::adopt_pending_messages(db, message.folder_id)?;
+    let message = mail::message_by_id(db, message_id)?;
+    if !mail::is_pending_uid(message.uid) {
+        return Ok(());
+    }
+    sync::sync_folder_by_id(
+        app,
+        Arc::clone(db),
+        Arc::clone(secrets),
+        syncing.as_ref(),
+        message.folder_id,
+    )?;
+    let _ = mail::adopt_pending_messages(db, message.folder_id)?;
+    let message = mail::message_by_id(db, message_id)?;
+    // Virtual folders (Gmail All Mail) can bring a message back at a UID below
+    // the folder cursor, so an incremental sync never sees it. Search for the
+    // message id directly and pin the pending row to the real UID.
+    if mail::is_pending_uid(message.uid) {
+        if let Some(message_id_value) = message.message_id.clone() {
+            match search_message_uid(db, secrets.as_ref(), &message, &message_id_value) {
+                Ok(Some(uid)) => {
+                    mail::adopt_pending_at(db, message_id, message.folder_id, uid)?;
+                }
+                Ok(None) => {}
+                Err(error) => eprintln!("pending move lookup failed: {error}"),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn search_message_uid(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    message: &Message,
+    message_id_value: &str,
+) -> AppResult<Option<u32>> {
+    let account = account_by_id(db, message.account_id)?;
+    let folder = mail::folder_by_id(db, message.folder_id)?
+        .ok_or_else(|| AppError::Message("folder not found".into()))?;
+    let credential = crate::mail_auth::credential_for(&account, secrets)?;
+    let mut session = crate::imap::client::open_session(&account, &credential)?;
+    let result = (|| {
+        session
+            .select(&folder.path)
+            .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+        let uids = session
+            .uid_search(format!("HEADER Message-ID \"{message_id_value}\""))
+            .map_err(|_| AppError::Message("IMAP message search failed".into()))?;
+        Ok(uids.into_iter().max())
+    })();
+    let _ = session.logout();
+    result
 }
 
 fn plain_body(detail: &MessageDetail) -> String {
@@ -2070,15 +2157,36 @@ pub async fn toggle_star(state: State<'_, AppState>, message_id: i64) -> AppResu
 }
 
 #[tauri::command]
-pub async fn trash_message(state: State<'_, AppState>, message_id: i64) -> AppResult<()> {
+pub async fn trash_message(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    message_id: i64,
+) -> AppResult<()> {
     let db = Arc::clone(&state.db);
     let secrets = Arc::clone(&state.secrets);
+    let syncing = Arc::clone(&state.syncing);
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_message_synced(&app, &db, &secrets, &syncing, message_id)?;
         let (message, folder, account) = message_context(&db, message_id)?;
-        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         let trash = trash_destination(&folder.role, mail::trash_folder_path(&db, account.id)?)?;
-        client::move_to_trash(&account, &credential, &folder.path, message.uid, &trash)?;
-        mail::remove_message(&db, message_id)
+        let target = mail::folder_id_by_role(&db, account.id, "trash")?
+            .ok_or_else(|| AppError::Message("trash folder is unavailable".into()))?;
+        mail::move_message_pending(&db, message_id, target)?;
+        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
+        if let Err(error) =
+            client::move_to_trash(&account, &credential, &folder.path, message.uid, &trash)
+        {
+            let _ = mail::restore_message(&db, message_id, folder.id, message.uid);
+            return Err(error);
+        }
+        schedule_folder_sync(
+            &app,
+            Arc::clone(&db),
+            Arc::clone(&secrets),
+            Arc::clone(&syncing),
+            target,
+        );
+        Ok(())
     })
     .await
     .map_err(|_| blocking_error())?
@@ -2086,20 +2194,40 @@ pub async fn trash_message(state: State<'_, AppState>, message_id: i64) -> AppRe
 
 #[tauri::command]
 pub async fn move_message_to_folder(
+    app: AppHandle,
     state: State<'_, AppState>,
     message_id: i64,
     folder_id: i64,
 ) -> AppResult<()> {
     let db = Arc::clone(&state.db);
     let secrets = Arc::clone(&state.secrets);
+    let syncing = Arc::clone(&state.syncing);
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_message_synced(&app, &db, &secrets, &syncing, message_id)?;
         let (message, folder, account) = message_context(&db, message_id)?;
         let target = mail::folder_by_id(&db, folder_id)?
             .ok_or_else(|| AppError::Message("target folder not found".into()))?;
         validate_move_target(&folder, &target)?;
+        mail::move_message_pending(&db, message_id, target.id)?;
         let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
-        client::move_to_folder(&account, &credential, &folder.path, message.uid, &target.path)?;
-        mail::remove_message(&db, message_id)
+        if let Err(error) = client::move_to_folder(
+            &account,
+            &credential,
+            &folder.path,
+            message.uid,
+            &target.path,
+        ) {
+            let _ = mail::restore_message(&db, message_id, folder.id, message.uid);
+            return Err(error);
+        }
+        schedule_folder_sync(
+            &app,
+            Arc::clone(&db),
+            Arc::clone(&secrets),
+            Arc::clone(&syncing),
+            target.id,
+        );
+        Ok(())
     })
     .await
     .map_err(|_| blocking_error())?
@@ -2188,23 +2316,50 @@ pub async fn fill_message_snippets(
 }
 
 #[tauri::command]
-pub async fn archive_message(state: State<'_, AppState>, message_id: i64) -> AppResult<()> {
+pub async fn archive_message(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    message_id: i64,
+) -> AppResult<()> {
     let db = Arc::clone(&state.db);
     let secrets = Arc::clone(&state.secrets);
+    let syncing = Arc::clone(&state.syncing);
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_message_synced(&app, &db, &secrets, &syncing, message_id)?;
         let (message, folder, account) = message_context(&db, message_id)?;
-        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         let archive = mail::archive_folder_path(&db, account.id)?;
         let all = mail::all_folder_path(&db, account.id)?;
-        client::archive(
+        let target = mail::folder_id_by_role(&db, account.id, "archive")?
+            .or(mail::folder_id_by_role(&db, account.id, "all")?);
+        if let Some(target) = target {
+            mail::move_message_pending(&db, message_id, target)?;
+        }
+        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
+        if let Err(error) = client::archive(
             &account,
             &credential,
             &folder.path,
             message.uid,
             archive.as_deref(),
             all.as_deref(),
-        )?;
-        mail::remove_message(&db, message_id)
+        ) {
+            if target.is_some() {
+                let _ = mail::restore_message(&db, message_id, folder.id, message.uid);
+            }
+            return Err(error);
+        }
+        if let Some(target) = target {
+            schedule_folder_sync(
+                &app,
+                Arc::clone(&db),
+                Arc::clone(&secrets),
+                Arc::clone(&syncing),
+                target,
+            );
+            Ok(())
+        } else {
+            mail::remove_message(&db, message_id)
+        }
     })
     .await
     .map_err(|_| blocking_error())?
@@ -2212,32 +2367,66 @@ pub async fn archive_message(state: State<'_, AppState>, message_id: i64) -> App
 
 #[tauri::command]
 pub async fn archive_thread(
+    app: AppHandle,
     state: State<'_, AppState>,
     account_id: i64,
     thread_key: String,
 ) -> AppResult<()> {
     let db = Arc::clone(&state.db);
     let secrets = Arc::clone(&state.secrets);
+    let syncing = Arc::clone(&state.syncing);
     tauri::async_runtime::spawn_blocking(move || {
         let ids = mail::thread_message_ids_in_role(&db, account_id, &thread_key, "inbox")?;
         if ids.is_empty() {
             return Ok(());
         }
         let account = account_by_id(&db, account_id)?;
-        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         let archive = mail::archive_folder_path(&db, account_id)?;
         let all = mail::all_folder_path(&db, account_id)?;
+        let target = mail::folder_id_by_role(&db, account_id, "archive")?
+            .or(mail::folder_id_by_role(&db, account_id, "all")?);
+
+        let mut contexts = Vec::new();
         for message_id in ids {
+            ensure_message_synced(&app, &db, &secrets, &syncing, message_id)?;
             let (message, folder, _) = message_context(&db, message_id)?;
-            client::archive(
+            contexts.push((message_id, folder.id, folder.path, message.uid));
+        }
+        if let Some(target) = target {
+            for (message_id, _, _, _) in &contexts {
+                mail::move_message_pending(&db, *message_id, target)?;
+            }
+        }
+
+        let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
+        for (_, _, folder_path, uid) in &contexts {
+            if let Err(error) = client::archive(
                 &account,
                 &credential,
-                &folder.path,
-                message.uid,
+                folder_path,
+                *uid,
                 archive.as_deref(),
                 all.as_deref(),
-            )?;
-            mail::remove_message(&db, message_id)?;
+            ) {
+                for (message_id, folder_id, _, uid) in &contexts {
+                    let _ = mail::restore_message(&db, *message_id, *folder_id, *uid);
+                }
+                return Err(error);
+            }
+        }
+
+        if let Some(target) = target {
+            schedule_folder_sync(
+                &app,
+                Arc::clone(&db),
+                Arc::clone(&secrets),
+                Arc::clone(&syncing),
+                target,
+            );
+        } else {
+            for (message_id, _, _, _) in &contexts {
+                mail::remove_message(&db, *message_id)?;
+            }
         }
         Ok(())
     })

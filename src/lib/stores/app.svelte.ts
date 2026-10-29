@@ -44,6 +44,13 @@ function errorMessage(error: unknown): string {
   return "Something went wrong";
 }
 
+type PendingThreadMove = {
+  thread: ThreadMessage;
+  targetFolderId: number | null;
+  targetRole: string | null;
+  expiresAt: number;
+};
+
 
 
 class AppStore {
@@ -106,6 +113,11 @@ class AppStore {
   private renderRequest = 0;
   private tabRequest = 0;
   private messageCache = new Map<string, ThreadMessage[]>();
+  private pendingMoves = new Map<number, PendingThreadMove>();
+  private moveQueue = new Map<
+    number,
+    { folderId: number; role: string | null; running: boolean }
+  >();
   private prefetchTimer: ReturnType<typeof setTimeout> | undefined;
   private syncRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   private syncRefreshRunning = false;
@@ -1189,16 +1201,16 @@ class AppStore {
 
   async moveMessageToFolder(messageId: number, folderId: number): Promise<void> {
     if (!isTauri()) return;
-    await this.queueMessageAction([messageId], () =>
-      api.moveMessageToFolder(messageId, folderId)
-    );
+    const target = this.folders.find((folder) => folder.id === folderId);
+    this.queueMove(messageId, folderId, target?.role ?? null);
+    await this.runMoveQueue(messageId);
   }
 
   async moveMessagesToFolder(ids: number[], folderId: number): Promise<void> {
     if (!isTauri() || ids.length === 0) return;
-    await this.queueMessageAction(ids, async () => {
-      await Promise.all(ids.map((id) => api.moveMessageToFolder(id, folderId)));
-    });
+    const target = this.folders.find((folder) => folder.id === folderId);
+    for (const id of ids) this.queueMove(id, folderId, target?.role ?? null);
+    for (const id of ids) await this.runMoveQueue(id);
   }
 
   async categorizeMessage(messageId: number, tabId: number | null): Promise<void> {
@@ -1290,19 +1302,46 @@ class AppStore {
           message.account_id === accountId && message.thread_key === threadKey
       )
       .map((message) => message.id);
-    await this.queueMessageAction(ids, () => api.archiveThread(accountId, threadKey));
+    const target = this.folderForRole(accountId, "archive");
+    this.rememberPendingMove(
+      ids.filter((id) => this.messageFolderRole(id) === "inbox"),
+      target?.id ?? null,
+      target?.role ?? "archive"
+    );
+    await this.queueMessageAction(
+      ids,
+      () => api.archiveThread(accountId, threadKey),
+      { immediate: true }
+    );
   }
 
   async archiveMessageById(messageId: number): Promise<void> {
     if (!isTauri()) return;
-    await this.queueMessageAction([messageId], () => api.archiveMessage(messageId));
+    const message = this.findMessage(messageId);
+    const target = message
+      ? this.folderForRole(message.account_id, "archive")
+      : null;
+    this.rememberPendingMove([messageId], target?.id ?? null, target?.role ?? "archive");
+    await this.queueMessageAction(
+      [messageId],
+      () => api.archiveMessage(messageId),
+      { immediate: true }
+    );
   }
 
   async deleteMessageById(messageId: number): Promise<void> {
     if (!isTauri()) return;
     const permanent = this.messageFolderRole(messageId) === "trash";
-    await this.queueMessageAction([messageId], () =>
-      permanent ? api.deleteMessage(messageId) : api.trashMessage(messageId)
+    if (!permanent) {
+      const message = this.findMessage(messageId);
+      const trash = message ? this.folderForRole(message.account_id, "trash") : null;
+      this.rememberPendingMove([messageId], trash?.id ?? null, "trash");
+    }
+    await this.queueMessageAction(
+      [messageId],
+      () =>
+        permanent ? api.deleteMessage(messageId) : api.trashMessage(messageId),
+      { immediate: true }
     );
   }
 
@@ -1335,13 +1374,24 @@ class AppStore {
         threads.has(`${message.account_id}:${message.thread_key}`)
       )
       .map((message) => message.id);
-    await this.queueMessageAction(affected, async () => {
-      await Promise.all(
-        [...threads.values()].map((thread) =>
-          api.archiveThread(thread.accountId, thread.threadKey)
-        )
-      );
-    });
+    for (const id of affected) {
+      if (this.messageFolderRole(id) !== "inbox") continue;
+      const message = this.findMessage(id);
+      if (!message) continue;
+      const target = this.folderForRole(message.account_id, "archive");
+      this.rememberPendingMove([id], target?.id ?? null, target?.role ?? "archive");
+    }
+    await this.queueMessageAction(
+      affected,
+      async () => {
+        await Promise.all(
+          [...threads.values()].map((thread) =>
+            api.archiveThread(thread.accountId, thread.threadKey)
+          )
+        );
+      },
+      { immediate: true }
+    );
   }
 
   async deleteMessages(ids: number[]): Promise<void> {
@@ -1349,19 +1399,36 @@ class AppStore {
     const permanent = new Set(
       ids.filter((id) => this.messageFolderRole(id) === "trash")
     );
-    await this.queueMessageAction(ids, async () => {
-      await Promise.all(
-        ids.map((id) =>
-          permanent.has(id) ? api.deleteMessage(id) : api.trashMessage(id)
-        )
-      );
-    });
+    for (const id of ids) {
+      if (permanent.has(id)) continue;
+      const message = this.findMessage(id);
+      if (!message) continue;
+      const trash = this.folderForRole(message.account_id, "trash");
+      this.rememberPendingMove([id], trash?.id ?? null, "trash");
+    }
+    await this.queueMessageAction(
+      ids,
+      async () => {
+        await Promise.all(
+          ids.map((id) =>
+            permanent.has(id) ? api.deleteMessage(id) : api.trashMessage(id)
+          )
+        );
+      },
+      { immediate: true }
+    );
   }
 
   async trashSelected(): Promise<void> {
     if (!isTauri() || !this.selectedMessage) return;
     const messageId = this.selectedMessage.message.id;
-    await this.queueMessageAction([messageId], () => api.trashMessage(messageId));
+    const trash = this.folderForRole(this.selectedMessage.message.account_id, "trash");
+    this.rememberPendingMove([messageId], trash?.id ?? null, "trash");
+    await this.queueMessageAction(
+      [messageId],
+      () => api.trashMessage(messageId),
+      { immediate: true }
+    );
   }
 
   async deleteSelected(): Promise<void> {
@@ -1444,7 +1511,9 @@ class AppStore {
     const query = this.messageQuery();
     const key = JSON.stringify(query);
     const cached = this.messageCache.get(key);
-    const cachedVisible = cached ? this.filterHidden(cached) : null;
+    const cachedVisible = cached
+      ? this.mergePending(this.filterHidden(cached), query)
+      : null;
     const request = ++this.messageRequest;
     if (cachedVisible && progressive) {
       this.applyMessages(cachedVisible, request, true);
@@ -1452,7 +1521,7 @@ class AppStore {
 
     const threads = await api.listThreads(query);
     if (request !== this.messageRequest) return;
-    const visible = this.filterHidden(threads);
+    const visible = this.mergePending(this.filterHidden(threads), query);
     this.rememberMessages(key, threads);
     if (!cachedVisible || !this.sameMessages(cachedVisible, visible)) {
       this.applyMessages(visible, request, progressive);
@@ -1588,7 +1657,190 @@ class AppStore {
     return messages.filter((message) => !this.hiddenMessageIds.has(message.id));
   }
 
-  private async queueMessageAction(ids: number[], run: () => Promise<void>): Promise<void> {
+  private findMessage(id: number): Message | null {
+    const thread = this.messages.find((message) => message.id === id);
+    if (thread) return thread;
+    return this.threadMessages.find((message) => message.id === id) ?? null;
+  }
+
+  private folderForRole(accountId: number, role: string): Folder | null {
+    const direct = this.folders.find(
+      (folder) => folder.account_id === accountId && folder.role === role
+    );
+    if (direct) return direct;
+    if (role === "archive") {
+      return (
+        this.folders.find(
+          (folder) => folder.account_id === accountId && folder.role === "all"
+        ) ?? null
+      );
+    }
+    return null;
+  }
+
+  /**
+   * Show the message in its destination immediately, before the backend or the
+   * server has confirmed the move. The backend moves the row and, on success,
+   * the real row replaces this optimistic copy; on failure the entry is
+   * dropped and the source is reloaded.
+   */
+  private rememberPendingMove(
+    ids: number[],
+    targetFolderId: number | null,
+    targetRole: string | null
+  ): void {
+    for (const id of ids) {
+      const existing = this.pendingMoves.get(id);
+      const source =
+        this.messages.find((message) => message.id === id) ?? existing?.thread;
+      const base: Message | undefined =
+        source ?? this.threadMessages.find((message) => message.id === id);
+      if (!base) continue;
+      const target =
+        targetFolderId ?? this.folderForRole(base.account_id, targetRole ?? "")?.id ?? null;
+      const thread: ThreadMessage = source
+        ? { ...source, folder_id: target ?? source.folder_id }
+        : {
+            ...base,
+            folder_id: target ?? base.folder_id,
+            thread_count: 1,
+            thread_unread_count: base.is_seen ? 0 : 1,
+            thread_has_inbox: targetRole === "inbox"
+          };
+      this.pendingMoves.set(id, {
+        thread,
+        targetFolderId: target,
+        targetRole,
+        expiresAt: Date.now() + 120_000
+      });
+    }
+  }
+
+  private pendingMatches(entry: PendingThreadMove, query: MessageQuery): boolean {
+    if (query.folder_id !== undefined) {
+      return entry.targetFolderId === query.folder_id;
+    }
+    const unified = query.unified;
+    if (!unified) return false;
+    const roles =
+      unified === "archive"
+        ? ["archive", "all"]
+        : unified === "spam"
+          ? ["junk"]
+          : [unified];
+    return entry.targetRole !== null && roles.includes(entry.targetRole);
+  }
+
+  private mergePending(
+    threads: ThreadMessage[],
+    query: MessageQuery
+  ): ThreadMessage[] {
+    if (this.pendingMoves.size === 0) return threads;
+    const now = Date.now();
+    const presentIds = new Set(threads.map((thread) => thread.id));
+    const presentMessageIds = new Set(
+      threads
+        .map((thread) => thread.message_id)
+        .filter((value): value is string => Boolean(value))
+    );
+    const presentFallback = new Set(
+      threads
+        .filter((thread) => !thread.message_id)
+        .map(
+          (thread) =>
+            `${thread.account_id}|${thread.from_addr}|${thread.subject}|${thread.date}`
+        )
+    );
+    const extra: ThreadMessage[] = [];
+    for (const [id, entry] of this.pendingMoves) {
+      if (entry.expiresAt < now) {
+        this.pendingMoves.delete(id);
+        continue;
+      }
+      const thread = entry.thread;
+      const confirmed =
+        presentIds.has(id) ||
+        (thread.message_id
+          ? presentMessageIds.has(thread.message_id)
+          : presentFallback.has(
+              `${thread.account_id}|${thread.from_addr}|${thread.subject}|${thread.date}`
+            ));
+      if (confirmed) {
+        // The backend moved the row and the real copy is in this scope. The
+        // sync may have assigned a new local row id, so match by Message-ID too.
+        if (this.pendingMatches(entry, query)) this.pendingMoves.delete(id);
+        continue;
+      }
+      if (this.pendingMatches(entry, query)) extra.push(thread);
+    }
+    if (extra.length === 0) return threads;
+    const order = loadPreferences().message_order;
+    return [...extra, ...threads].sort((a, b) =>
+      order === "oldest" ? a.date - b.date : b.date - a.date
+    );
+  }
+
+  private queueMove(
+    id: number,
+    folderId: number,
+    role: string | null
+  ): void {
+    const existing = this.moveQueue.get(id);
+    this.moveQueue.set(id, {
+      folderId,
+      role,
+      running: existing?.running ?? false
+    });
+    this.rememberPendingMove([id], folderId, role);
+  }
+
+  /**
+   * Serialize moves of the same message. If the user moves A→B→A→B quickly,
+   * only the latest destination is applied after the in-flight move finishes.
+   * The backend resolves a still-pending row before each move, so the queued
+   * operation never sees a "still syncing" row.
+   */
+  private async runMoveQueue(id: number): Promise<void> {
+    const entry = this.moveQueue.get(id);
+    if (!entry || entry.running) return;
+    entry.running = true;
+    this.invalidateMessageCache();
+    this.hiddenMessageIds.add(id);
+    this.messages = this.filterHidden(this.messages);
+    if (this.selectedMessageId === id) this.clearSelection();
+    try {
+      while (true) {
+        const current = this.moveQueue.get(id);
+        if (!current) break;
+        const { folderId, role } = current;
+        this.rememberPendingMove([id], folderId, role);
+        try {
+          await api.moveMessageToFolder(id, folderId);
+        } catch (error) {
+          const message = errorMessage(error);
+          if (!/still syncing/i.test(message)) this.error = message;
+          this.moveQueue.delete(id);
+          this.pendingMoves.delete(id);
+          break;
+        }
+        const latest = this.moveQueue.get(id);
+        if (!latest || latest.folderId === folderId) {
+          this.moveQueue.delete(id);
+          break;
+        }
+      }
+    } finally {
+      this.hiddenMessageIds.delete(id);
+      await this.reloadMessages();
+      await this.refreshFolders();
+    }
+  }
+
+  private async queueMessageAction(
+    ids: number[],
+    run: () => Promise<void>,
+    options?: { immediate?: boolean }
+  ): Promise<void> {
     const unique = [...new Set(ids)];
     if (unique.length === 0) return;
     this.invalidateMessageCache();
@@ -1598,7 +1850,7 @@ class AppStore {
       this.clearSelection();
     }
     const item = { ids: unique, run };
-    if (this.syncing || this.flushingActions) {
+    if (!options?.immediate && (this.syncing || this.flushingActions)) {
       this.queuedActions.push(item);
       return;
     }
@@ -1610,7 +1862,9 @@ class AppStore {
       await item.run();
       this.error = null;
     } catch (error) {
-      this.error = errorMessage(error);
+      const message = errorMessage(error);
+      if (!/still syncing/i.test(message)) this.error = message;
+      for (const id of item.ids) this.pendingMoves.delete(id);
     } finally {
       for (const id of item.ids) this.hiddenMessageIds.delete(id);
       try {
@@ -1713,6 +1967,8 @@ class AppStore {
     clearTimeout(this.prefetchTimer);
     clearTimeout(this.syncRefreshTimer);
     this.messageCache.clear();
+    this.pendingMoves.clear();
+    this.moveQueue.clear();
     this.clearMarkReadTimer();
     for (const timer of this.flashTimers.values()) clearTimeout(timer);
     this.flashTimers.clear();

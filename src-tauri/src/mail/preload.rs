@@ -53,7 +53,10 @@ pub fn load_detail(
     message_id: i64,
 ) -> AppResult<MessageDetail> {
     let cached = mail::get_message_detail(db, message_id)?;
-    if cached.message.body_cached {
+    if cached.message.body_cached || mail::is_pending_uid(cached.message.uid) {
+        // A pending optimistic move has no server UID yet. Return the cached
+        // headers/snippet instead of fetching the wrong UID; the target sync
+        // will replace the row shortly.
         return Ok(cached);
     }
     let message = cached.message;
