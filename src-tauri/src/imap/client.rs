@@ -238,19 +238,6 @@ pub fn folder_flags(
         .collect())
 }
 
-pub fn fetch_headers(
-    session: &mut ImapSession,
-    folder_path: &str,
-    from_uid: u32,
-) -> AppResult<Vec<FetchedHeader>> {
-    let mut headers = Vec::new();
-    fetch_headers_batched(session, folder_path, from_uid, |batch| {
-        headers.extend(batch);
-        Ok(())
-    })?;
-    Ok(headers)
-}
-
 /// Fetch headers in batches so the caller can persist and publish the first
 /// results before a large mailbox has finished downloading.
 pub fn fetch_headers_batched<F>(

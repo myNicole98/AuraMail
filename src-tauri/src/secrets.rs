@@ -24,6 +24,53 @@ pub trait SecretStore: Send + Sync {
 
 pub struct KeyringStore;
 
+/// Windows Credential Manager caps a generic credential blob at 2560 bytes.
+/// Keyring encodes strings as UTF-16 there, so keep chunks comfortably below
+/// the limit and store large OAuth payloads across several entries.
+const MAX_SECRET_CHARS: usize = 1000;
+
+fn chunk_manifest_key(key: &str) -> String {
+    format!("{key}#chunks")
+}
+
+fn chunk_key(key: &str, index: usize) -> String {
+    format!("{key}#chunk:{index}")
+}
+
+fn entry(key: &str) -> AppResult<keyring::Entry> {
+    keyring::Entry::new(KEYRING_SERVICE, key)
+        .map_err(|_| AppError::Message("secret store unavailable".into()))
+}
+
+fn secret_chunks(value: &str) -> Vec<String> {
+    value
+        .chars()
+        .collect::<Vec<_>>()
+        .chunks(MAX_SECRET_CHARS)
+        .map(|chunk| chunk.iter().collect())
+        .collect()
+}
+
+fn delete_entry(key: &str) -> AppResult<()> {
+    match entry(key)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(_) => Err(AppError::Message("could not delete secret".into())),
+    }
+}
+
+fn delete_chunks(key: &str) {
+    let manifest = chunk_manifest_key(key);
+    let count = entry(&manifest)
+        .ok()
+        .and_then(|entry| entry.get_password().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    for index in 0..count {
+        let _ = delete_entry(&chunk_key(key, index));
+    }
+    let _ = delete_entry(&manifest);
+}
+
 fn keyring_get_error(err: keyring::Error) -> AppError {
     match err {
         keyring::Error::NoEntry => AppError::Message(SECRET_NOT_FOUND.into()),
@@ -33,26 +80,62 @@ fn keyring_get_error(err: keyring::Error) -> AppError {
 
 impl SecretStore for KeyringStore {
     fn set(&self, key: &str, value: &str) -> AppResult<()> {
-        let entry = keyring::Entry::new(KEYRING_SERVICE, key)
-            .map_err(|_| AppError::Message("secret store unavailable".into()))?;
-        entry
-            .set_password(value)
-            .map_err(|_| AppError::Message("could not store secret".into()))
+        let chars = value.chars().count();
+        if chars <= MAX_SECRET_CHARS {
+            let main = entry(key)?;
+            main.set_password(value)
+                .map_err(|_| AppError::Message("could not store secret".into()))?;
+            delete_chunks(key);
+            return Ok(());
+        }
+
+        delete_chunks(key);
+        let chunks = secret_chunks(value);
+        for (index, part) in chunks.iter().enumerate() {
+            entry(&chunk_key(key, index))?
+                .set_password(part)
+                .map_err(|_| AppError::Message("could not store secret".into()))?;
+        }
+        entry(&chunk_manifest_key(key))?
+            .set_password(&chunks.len().to_string())
+            .map_err(|_| AppError::Message("could not store secret".into()))?;
+        // A raw value may exist from an older release; the manifest takes
+        // precedence while chunked data is present.
+        let _ = delete_entry(key);
+        Ok(())
     }
 
     fn get(&self, key: &str) -> AppResult<String> {
-        let entry = keyring::Entry::new(KEYRING_SERVICE, key)
-            .map_err(|_| AppError::Message("secret store unavailable".into()))?;
-        entry.get_password().map_err(keyring_get_error)
+        match entry(key)?.get_password() {
+            Ok(value) => Ok(value),
+            Err(keyring::Error::NoEntry) => {
+                let manifest = chunk_manifest_key(key);
+                let count = match entry(&manifest)?.get_password() {
+                    Ok(value) => value.parse::<usize>().map_err(|_| {
+                        AppError::Message("secret store unavailable".into())
+                    })?,
+                    Err(keyring::Error::NoEntry) => {
+                        return Err(AppError::Message(SECRET_NOT_FOUND.into()))
+                    }
+                    Err(error) => return Err(keyring_get_error(error)),
+                };
+                let mut value = String::new();
+                for index in 0..count {
+                    let part = entry(&chunk_key(key, index))?
+                        .get_password()
+                        .map_err(keyring_get_error)?;
+                    value.push_str(&part);
+                }
+                Ok(value)
+            }
+            Err(error) => Err(keyring_get_error(error)),
+        }
     }
 
     fn delete(&self, key: &str) -> AppResult<()> {
-        let entry = keyring::Entry::new(KEYRING_SERVICE, key)
-            .map_err(|_| AppError::Message("secret store unavailable".into()))?;
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(_) => Err(AppError::Message("could not delete secret".into())),
-        }
+        let result = delete_entry(key);
+        delete_chunks(key);
+        result
     }
 }
 
@@ -109,6 +192,18 @@ mod tests {
     fn keys_are_namespaced() {
         assert_eq!(account_key(7), "account:7");
         assert_eq!(AI_KEY, "ai");
+    }
+
+    #[test]
+    fn large_secrets_split_and_reassemble_losslessly() {
+        let value = "x".repeat(MAX_SECRET_CHARS * 3 + 17);
+        let chunks = secret_chunks(&value);
+
+        assert_eq!(chunks.len(), 4);
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.chars().count() <= MAX_SECRET_CHARS));
+        assert_eq!(chunks.concat(), value);
     }
 
     #[test]
