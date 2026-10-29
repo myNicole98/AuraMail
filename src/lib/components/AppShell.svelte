@@ -32,7 +32,6 @@
   } from "../settings";
   import { app } from "../stores/app.svelte";
   import { appearance } from "../stores/appearance.svelte";
-  import { desktop } from "../stores/desktop.svelte";
   import {
     defaultLayout,
     layoutColumns,
@@ -115,10 +114,14 @@
     applyThemeSettings(preferences, dark);
   }
 
+  $effect(() => {
+    const spaceId = app.activeSpaceId;
+    if (spaceId !== null) void api.setActiveSpace(spaceId);
+  });
+
   onMount(() => {
     layout = loadLayout();
     void appearance.load();
-    void desktop.load();
     applyThemeSettings(loadPreferences());
     void hydrateTheme();
     void applySystemTheme(true);

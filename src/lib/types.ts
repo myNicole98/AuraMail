@@ -53,6 +53,11 @@ export type SpaceGeneral = {
   always_load_images: boolean;
   profile_pictures: boolean;
   trusted_senders: string[];
+  notifications: boolean;
+  new_mail_sound: boolean;
+  sent_mail_sound: boolean;
+  close_action: "tray" | "quit";
+  minimize_action: "tray" | "taskbar";
 };
 
 export type SpaceUnread = {

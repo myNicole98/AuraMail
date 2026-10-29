@@ -251,10 +251,18 @@ export const api = {
   ) => invoke<MailPreferences>("set_mail_preferences", { preferences, spaceId }),
   getSenderAvatar: (email: string, spaceId = currentSpaceId()) =>
     invoke<string | null>("get_sender_avatar", { email, spaceId }),
-  getDesktopPreferences: () =>
-    invoke<DesktopPreferences>("get_desktop_preferences"),
-  setDesktopPreferences: (preferences: DesktopPreferences) =>
-    invoke<DesktopPreferences>("set_desktop_preferences", { preferences }),
+  getDesktopPreferences: (spaceId = currentSpaceId()) =>
+    invoke<DesktopPreferences>("get_desktop_preferences", { spaceId }),
+  setDesktopPreferences: (
+    preferences: DesktopPreferences,
+    spaceId = currentSpaceId()
+  ) =>
+    invoke<DesktopPreferences>("set_desktop_preferences", {
+      preferences,
+      spaceId
+    }),
+  setActiveSpace: (spaceId = currentSpaceId()) =>
+    invoke<void>("set_active_space", { spaceId }),
   refreshTrayUnread: () => invoke<void>("refresh_tray_unread"),
   markRead: (messageId: number, read: boolean) =>
     invoke<Message>("mark_read", { messageId, read }),

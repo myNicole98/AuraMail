@@ -626,7 +626,7 @@ fn sync_folder(
         && matches!(action, SyncAction::Incremental { .. })
     {
         crate::desktop::notify_new_mail(app, db, account, &inserted);
-        crate::desktop::play_new_mail_if_enabled(db);
+        crate::desktop::play_new_mail_if_enabled(db, account.space_id);
     }
     let auto_classify = auto_classify_ids(action, &inserted);
     Ok(SyncOutcome {

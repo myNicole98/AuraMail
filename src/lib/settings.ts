@@ -372,6 +372,7 @@ export function savePreferences(preferences: SettingsPreferences): void {
       dark_email: normalized.dark_email
     });
     saveSpaceGeneral(spaceId, {
+      ...loadSpaceGeneral(spaceId),
       time_format: normalized.time_format,
       message_order: normalized.message_order,
       mark_read_delay: normalized.mark_read_delay,

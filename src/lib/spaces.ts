@@ -28,7 +28,12 @@ export function defaultSpaceGeneral(): SpaceGeneral {
     reveal_download: false,
     always_load_images: false,
     profile_pictures: true,
-    trusted_senders: []
+    trusted_senders: [],
+    notifications: false,
+    new_mail_sound: true,
+    sent_mail_sound: true,
+    close_action: "tray",
+    minimize_action: "taskbar"
   };
 }
 
@@ -220,7 +225,19 @@ export function normalizeSpaceGeneral(value: unknown): SpaceGeneral {
       stored.profile_pictures,
       defaults.profile_pictures
     ),
-    trusted_senders: trusted
+    trusted_senders: trusted,
+    notifications: bool(stored.notifications, defaults.notifications),
+    new_mail_sound: bool(
+      stored.new_mail_sound,
+      defaults.new_mail_sound
+    ),
+    sent_mail_sound: bool(
+      stored.sent_mail_sound,
+      defaults.sent_mail_sound
+    ),
+    close_action: stored.close_action === "quit" ? "quit" : "tray",
+    minimize_action:
+      stored.minimize_action === "tray" ? "tray" : "taskbar"
   };
 }
 

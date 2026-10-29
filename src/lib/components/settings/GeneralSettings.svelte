@@ -3,14 +3,19 @@
   import { CircleAlert, Plus, X } from "lucide-svelte";
   import { api } from "../../api";
   import { loadPreferences, updatePreferences, type SettingsPreferences } from "../../settings";
-  import { activeSpaceId, loadSpaceGeneral, saveSpaceGeneral } from "../../spaces";
+  import {
+    activeSpaceId,
+    defaultSpaceGeneral,
+    loadSpaceGeneral,
+    saveSpaceGeneral
+  } from "../../spaces";
   import { app } from "../../stores/app.svelte";
   import { appearance } from "../../stores/appearance.svelte";
-  import { desktop } from "../../stores/desktop.svelte";
   import type { TimeFormat } from "../../format";
   import type {
     DesktopCloseAction,
     DesktopMinimizeAction,
+    DesktopPreferences,
     MessageOrder,
     SpaceGeneral
   } from "../../types";
@@ -22,12 +27,43 @@
   let preferenceError = $state<string | null>(null);
   let trustedInput = $state("");
   let editingSpaceId = $state<number>(activeSpaceId() ?? app.activeSpaceId ?? 1);
+  let desktopPreferences = $state<DesktopPreferences>(
+    desktopFromGeneral(defaultSpaceGeneral())
+  );
 
   const editingActiveSpace = $derived(
     editingSpaceId === (app.activeSpaceId ?? activeSpaceId())
   );
 
+  function desktopFromGeneral(general: SpaceGeneral): DesktopPreferences {
+    return {
+      notifications: general.notifications,
+      newMailSound: general.new_mail_sound,
+      sentMailSound: general.sent_mail_sound,
+      closeAction: general.close_action,
+      minimizeAction: general.minimize_action
+    };
+  }
+
   function generalFromPreferences(): SpaceGeneral {
+    return {
+      time_format: preferences.time_format,
+      message_order: preferences.message_order,
+      mark_read_delay: preferences.mark_read_delay,
+      attachment_thumbnails: preferences.attachment_thumbnails,
+      reveal_download: preferences.reveal_download,
+      always_load_images: preferences.always_load_images,
+      profile_pictures: preferences.profile_pictures,
+      trusted_senders: preferences.trusted_senders,
+      notifications: desktopPreferences.notifications,
+      new_mail_sound: desktopPreferences.newMailSound,
+      sent_mail_sound: desktopPreferences.sentMailSound,
+      close_action: desktopPreferences.closeAction,
+      minimize_action: desktopPreferences.minimizeAction
+    };
+  }
+
+  function sharedPreferences(): Partial<SettingsPreferences> {
     return {
       time_format: preferences.time_format,
       message_order: preferences.message_order,
@@ -42,17 +78,28 @@
 
   function persistGeneral(patch: Partial<SpaceGeneral>): void {
     preferences = { ...preferences, ...patch };
+    saveSpaceGeneral(editingSpaceId, generalFromPreferences());
     if (editingActiveSpace) {
-      preferences = updatePreferences(patch);
-    } else {
-      saveSpaceGeneral(editingSpaceId, generalFromPreferences());
+      preferences = updatePreferences(sharedPreferences());
     }
   }
 
   function selectEditingSpace(id: number): void {
     editingSpaceId = id;
-    preferences = { ...preferences, ...loadSpaceGeneral(id) };
+    const general = loadSpaceGeneral(id);
+    preferences = { ...preferences, ...general };
+    desktopPreferences = desktopFromGeneral(general);
     preferenceError = null;
+    void loadDesktopPreferences(id);
+  }
+
+  async function loadDesktopPreferences(spaceId = editingSpaceId): Promise<void> {
+    try {
+      const loaded = await api.getDesktopPreferences(spaceId);
+      if (spaceId === editingSpaceId) desktopPreferences = loaded;
+    } catch (error) {
+      if (spaceId === editingSpaceId) preferenceError = errorMessage(error);
+    }
   }
 
   function setClockFormat(format: TimeFormat) {
@@ -97,14 +144,20 @@
   }
 
   onMount(() => {
-    void desktop.load();
+    void loadDesktopPreferences();
   });
 
-  async function updateDesktop(patch: Parameters<typeof desktop.update>[0]) {
+  async function updateDesktop(patch: Partial<DesktopPreferences>) {
+    const previous = desktopPreferences;
+    const next = { ...desktopPreferences, ...patch };
+    desktopPreferences = next;
     try {
-      await desktop.update(patch);
+      const saved = await api.setDesktopPreferences(next, editingSpaceId);
+      desktopPreferences = saved;
+      saveSpaceGeneral(editingSpaceId, generalFromPreferences());
       preferenceError = null;
     } catch (error) {
+      desktopPreferences = previous;
       preferenceError = errorMessage(error);
     }
   }
@@ -167,7 +220,7 @@
     <div class="settings-row">
       <strong>System notifications</strong>
       <ToggleSwitch
-        checked={desktop.notifications}
+        checked={desktopPreferences.notifications}
         label="System notifications"
         onchange={(value) => void updateDesktop({ notifications: value })}
       />
@@ -175,7 +228,7 @@
     <div class="settings-row">
       <strong>New mail sound</strong>
       <ToggleSwitch
-        checked={desktop.newMailSound}
+        checked={desktopPreferences.newMailSound}
         label="New mail sound"
         onchange={(value) => void updateDesktop({ newMailSound: value })}
       />
@@ -183,7 +236,7 @@
     <div class="settings-row">
       <strong>Sent mail sound</strong>
       <ToggleSwitch
-        checked={desktop.sentMailSound}
+        checked={desktopPreferences.sentMailSound}
         label="Sent mail sound"
         onchange={(value) => void updateDesktop({ sentMailSound: value })}
       />
@@ -195,7 +248,7 @@
     <div class="settings-row">
       <strong>Close window</strong>
       <ThemedSelect
-        value={desktop.closeAction}
+        value={desktopPreferences.closeAction}
         options={[
           { value: "tray", label: "Hide to tray" },
           { value: "quit", label: "Quit AuraMail" }
@@ -208,7 +261,7 @@
     <div class="settings-row">
       <strong>Minimize window</strong>
       <ThemedSelect
-        value={desktop.minimizeAction}
+        value={desktopPreferences.minimizeAction}
         options={[
           { value: "taskbar", label: "Keep in taskbar" },
           { value: "tray", label: "Hide to tray" }
@@ -227,7 +280,7 @@
     <div class="settings-row">
       <strong>Clock</strong>
       <ThemedSelect
-        value={appearance.timeFormat}
+        value={preferences.time_format}
         options={[
           { value: "system", label: "System default" },
           { value: "12h", label: "12-hour" },

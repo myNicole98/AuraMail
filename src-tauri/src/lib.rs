@@ -214,6 +214,7 @@ pub fn run() {
             commands::set_fast_sync_interval,
             commands::get_desktop_preferences,
             commands::set_desktop_preferences,
+            commands::set_active_space,
             commands::refresh_tray_unread,
             commands::sync_account,
             commands::list_calendars,

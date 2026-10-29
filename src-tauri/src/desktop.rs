@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,12 @@ const NEW_MAIL_SOUND_KEY: &str = "desktop.new_mail_sound";
 const SENT_MAIL_SOUND_KEY: &str = "desktop.sent_mail_sound";
 const CLOSE_ACTION_KEY: &str = "desktop.close_action";
 const MINIMIZE_ACTION_KEY: &str = "desktop.minimize_action";
+
+static ACTIVE_SPACE: AtomicI64 = AtomicI64::new(0);
+
+fn scoped_key(space_id: i64, key: &str) -> String {
+    format!("space:{space_id}:{key}")
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,30 +50,104 @@ impl Default for DesktopPreferences {
     }
 }
 
-fn read_bool(db: &Database, key: &str, fallback: bool) -> AppResult<bool> {
-    Ok(match db.setting(key)?.as_deref() {
+fn setting(db: &Database, space_id: i64, key: &str) -> AppResult<Option<String>> {
+    if space_id > 0 {
+        if let Some(value) = db.setting(&scoped_key(space_id, key))? {
+            return Ok(Some(value));
+        }
+    }
+    // Existing installations keep their previous global desktop preferences
+    // until the workspace writes its own value.
+    db.setting(key)
+}
+
+fn read_bool(db: &Database, space_id: i64, key: &str, fallback: bool) -> AppResult<bool> {
+    Ok(match setting(db, space_id, key)?.as_deref() {
         Some("true") | Some("1") => true,
         Some("false") | Some("0") => false,
         _ => fallback,
     })
 }
 
-fn read_action(db: &Database, key: &str, fallback: &str) -> AppResult<String> {
-    Ok(db
-        .setting(key)?
+fn read_action(
+    db: &Database,
+    space_id: i64,
+    key: &str,
+    fallback: &str,
+) -> AppResult<String> {
+    Ok(setting(db, space_id, key)?
         .filter(|value| matches!(value.as_str(), "tray" | "quit" | "taskbar"))
         .unwrap_or_else(|| fallback.to_string()))
 }
 
-pub fn get(db: &Database) -> AppResult<DesktopPreferences> {
+pub fn get_for_space(db: &Database, space_id: i64) -> AppResult<DesktopPreferences> {
     let defaults = DesktopPreferences::default();
     Ok(DesktopPreferences {
-        notifications: read_bool(db, NOTIFICATIONS_KEY, defaults.notifications)?,
-        new_mail_sound: read_bool(db, NEW_MAIL_SOUND_KEY, defaults.new_mail_sound)?,
-        sent_mail_sound: read_bool(db, SENT_MAIL_SOUND_KEY, defaults.sent_mail_sound)?,
-        close_action: read_action(db, CLOSE_ACTION_KEY, &defaults.close_action)?,
-        minimize_action: read_action(db, MINIMIZE_ACTION_KEY, &defaults.minimize_action)?,
+        notifications: read_bool(db, space_id, NOTIFICATIONS_KEY, defaults.notifications)?,
+        new_mail_sound: read_bool(
+            db,
+            space_id,
+            NEW_MAIL_SOUND_KEY,
+            defaults.new_mail_sound,
+        )?,
+        sent_mail_sound: read_bool(
+            db,
+            space_id,
+            SENT_MAIL_SOUND_KEY,
+            defaults.sent_mail_sound,
+        )?,
+        close_action: read_action(
+            db,
+            space_id,
+            CLOSE_ACTION_KEY,
+            &defaults.close_action,
+        )?,
+        minimize_action: read_action(
+            db,
+            space_id,
+            MINIMIZE_ACTION_KEY,
+            &defaults.minimize_action,
+        )?,
     })
+}
+
+pub fn set_for_space(
+    db: &Database,
+    space_id: i64,
+    preferences: DesktopPreferences,
+) -> AppResult<DesktopPreferences> {
+    crate::spaces::by_id(db, space_id)?;
+    if !matches!(preferences.close_action.as_str(), "tray" | "quit") {
+        return Err(AppError::Message("invalid close action".into()));
+    }
+    if !matches!(preferences.minimize_action.as_str(), "tray" | "taskbar") {
+        return Err(AppError::Message("invalid minimize action".into()));
+    }
+    db.set_setting(
+        &scoped_key(space_id, NOTIFICATIONS_KEY),
+        if preferences.notifications { "true" } else { "false" },
+    )?;
+    db.set_setting(
+        &scoped_key(space_id, NEW_MAIL_SOUND_KEY),
+        if preferences.new_mail_sound { "true" } else { "false" },
+    )?;
+    db.set_setting(
+        &scoped_key(space_id, SENT_MAIL_SOUND_KEY),
+        if preferences.sent_mail_sound { "true" } else { "false" },
+    )?;
+    db.set_setting(
+        &scoped_key(space_id, CLOSE_ACTION_KEY),
+        &preferences.close_action,
+    )?;
+    db.set_setting(
+        &scoped_key(space_id, MINIMIZE_ACTION_KEY),
+        &preferences.minimize_action,
+    )?;
+    Ok(preferences)
+}
+
+pub fn get(db: &Database) -> AppResult<DesktopPreferences> {
+    get_for_space(db, 0)
 }
 
 pub fn set(db: &Database, preferences: DesktopPreferences) -> AppResult<DesktopPreferences> {
@@ -94,20 +174,28 @@ pub fn set(db: &Database, preferences: DesktopPreferences) -> AppResult<DesktopP
     Ok(preferences)
 }
 
+pub fn set_active_space(space_id: i64) {
+    ACTIVE_SPACE.store(space_id, Ordering::SeqCst);
+}
+
+fn active_space() -> i64 {
+    ACTIVE_SPACE.load(Ordering::SeqCst)
+}
+
 pub fn close_to_tray(db: &Database) -> bool {
-    get(db)
+    get_for_space(db, active_space())
         .map(|preferences| preferences.close_action == "tray")
         .unwrap_or(true)
 }
 
 pub fn minimize_to_tray(db: &Database) -> bool {
-    get(db)
+    get_for_space(db, active_space())
         .map(|preferences| preferences.minimize_action == "tray")
         .unwrap_or(false)
 }
 
 pub fn notify_new_mail(app: &AppHandle, db: &Database, account: &Account, message_ids: &[i64]) {
-    let enabled = get(db)
+    let enabled = get_for_space(db, account.space_id)
         .map(|preferences| preferences.notifications)
         .unwrap_or(false);
     if !enabled || message_ids.is_empty() {
@@ -385,14 +473,20 @@ pub fn play_sent_sound() {
     play_sound("auramail-sent-mail.wav", include_bytes!("../../public/sounds/sent-mail.wav"));
 }
 
-pub fn play_new_mail_if_enabled(db: &Database) {
-    if get(db).map(|preferences| preferences.new_mail_sound).unwrap_or(false) {
+pub fn play_new_mail_if_enabled(db: &Database, space_id: i64) {
+    if get_for_space(db, space_id)
+        .map(|preferences| preferences.new_mail_sound)
+        .unwrap_or(false)
+    {
         play_new_mail_sound();
     }
 }
 
-pub fn play_sent_if_enabled(db: &Database) {
-    if get(db).map(|preferences| preferences.sent_mail_sound).unwrap_or(false) {
+pub fn play_sent_if_enabled(db: &Database, space_id: i64) {
+    if get_for_space(db, space_id)
+        .map(|preferences| preferences.sent_mail_sound)
+        .unwrap_or(false)
+    {
         play_sent_sound();
     }
 }
@@ -413,6 +507,27 @@ mod tests {
         assert_eq!(preferences.minimize_action, "taskbar");
         assert!(close_to_tray(&db));
         assert!(!minimize_to_tray(&db));
+    }
+
+    #[test]
+    fn preferences_are_isolated_per_space() {
+        let db = Database::open_memory().unwrap();
+        let default = crate::spaces::ensure_default(&db).unwrap();
+        let work = crate::spaces::create(&db, "Work").unwrap();
+        let next = DesktopPreferences {
+            notifications: true,
+            new_mail_sound: false,
+            sent_mail_sound: false,
+            close_action: "quit".into(),
+            minimize_action: "tray".into(),
+        };
+
+        assert_eq!(set_for_space(&db, work.id, next.clone()).unwrap(), next);
+        assert_eq!(get_for_space(&db, work.id).unwrap(), next);
+        assert_eq!(
+            get_for_space(&db, default.id).unwrap(),
+            DesktopPreferences::default()
+        );
     }
 
     #[test]

@@ -1571,16 +1571,25 @@ pub fn set_sync_interval(state: State<'_, AppState>, seconds: i64) -> AppResult<
 #[tauri::command]
 pub fn get_desktop_preferences(
     state: State<'_, AppState>,
+    space_id: i64,
 ) -> AppResult<crate::desktop::DesktopPreferences> {
-    crate::desktop::get(&state.db)
+    crate::desktop::get_for_space(&state.db, space_id)
 }
 
 #[tauri::command]
 pub fn set_desktop_preferences(
     state: State<'_, AppState>,
+    space_id: i64,
     preferences: crate::desktop::DesktopPreferences,
 ) -> AppResult<crate::desktop::DesktopPreferences> {
-    crate::desktop::set(&state.db, preferences)
+    crate::desktop::set_for_space(&state.db, space_id, preferences)
+}
+
+#[tauri::command]
+pub fn set_active_space(state: State<'_, AppState>, space_id: i64) -> AppResult<()> {
+    crate::spaces::by_id(&state.db, space_id)?;
+    crate::desktop::set_active_space(space_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -2263,7 +2272,7 @@ pub async fn send_message(
         let account = account_by_id(&db, input.account_id)?;
         let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         smtp::send(&account, &credential, &input)?;
-        crate::desktop::play_sent_if_enabled(&db);
+        crate::desktop::play_sent_if_enabled(&db, account.space_id);
         if let Some(draft_id) = draft_id {
             let _ = compose::delete_draft(&db, draft_id);
         }
