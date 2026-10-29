@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -159,6 +159,17 @@ pub fn sync_account(
     syncing: &Mutex<HashSet<i64>>,
     account_id: i64,
 ) -> AppResult<SyncResult> {
+    sync_account_with_report(app, db, secrets, syncing, account_id, true)
+}
+
+fn sync_account_with_report(
+    app: &AppHandle,
+    db: Arc<Database>,
+    secrets: Arc<dyn SecretStore>,
+    syncing: &Mutex<HashSet<i64>>,
+    account_id: i64,
+    report_failure: bool,
+) -> AppResult<SyncResult> {
     let Some(account) = find_account(db.as_ref(), account_id)? else {
         return Ok(SyncResult {
             inserted: Vec::new(),
@@ -177,12 +188,19 @@ pub fn sync_account(
     emit_status(app, account_id, "syncing", None);
     match sync_account_inner(app, &db, &secrets, &account) {
         Ok(result) => {
+            clear_sync_failures(account_id);
             emit_status(app, account_id, "idle", None);
             Ok(result)
         }
         Err(error) => {
             let message = error.to_string();
-            emit_status(app, account_id, error_state(&error), Some(message.clone()));
+            if report_failure {
+                if record_sync_failure(account_id) >= 3 {
+                    emit_status(app, account_id, error_state(&error), Some(message.clone()));
+                } else {
+                    emit_status(app, account_id, "idle", None);
+                }
+            }
             Err(AppError::Message(message))
         }
     }
@@ -460,6 +478,17 @@ pub fn sync_inbox(
     syncing: &Mutex<HashSet<i64>>,
     account_id: i64,
 ) -> AppResult<SyncResult> {
+    sync_inbox_with_report(app, db, secrets, syncing, account_id, true)
+}
+
+fn sync_inbox_with_report(
+    app: &AppHandle,
+    db: Arc<Database>,
+    secrets: Arc<dyn SecretStore>,
+    syncing: &Mutex<HashSet<i64>>,
+    account_id: i64,
+    report_failure: bool,
+) -> AppResult<SyncResult> {
     let Some(account) = find_account(db.as_ref(), account_id)? else {
         return Ok(SyncResult {
             inserted: Vec::new(),
@@ -476,12 +505,19 @@ pub fn sync_inbox(
     };
     match sync_inbox_inner(app, &db, &secrets, &account) {
         Ok(result) => {
+            clear_sync_failures(account_id);
             emit_status(app, account_id, "idle", None);
             Ok(result)
         }
         Err(error) => {
             let message = error.to_string();
-            emit_status(app, account_id, error_state(&error), Some(message.clone()));
+            if report_failure {
+                if record_sync_failure(account_id) >= 3 {
+                    emit_status(app, account_id, error_state(&error), Some(message.clone()));
+                } else {
+                    emit_status(app, account_id, "idle", None);
+                }
+            }
             Err(AppError::Message(message))
         }
     }
@@ -662,6 +698,24 @@ fn begin_sync(syncing: &Mutex<HashSet<i64>>, account_id: i64) -> bool {
         .lock()
         .map(|mut accounts| accounts.insert(account_id))
         .unwrap_or(false)
+}
+
+fn sync_failures() -> &'static Mutex<HashMap<i64, u32>> {
+    static FAILURES: OnceLock<Mutex<HashMap<i64, u32>>> = OnceLock::new();
+    FAILURES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn record_sync_failure(account_id: i64) -> u32 {
+    let mut failures = sync_failures().lock().unwrap();
+    let count = failures.entry(account_id).or_insert(0);
+    *count = count.saturating_add(1);
+    *count
+}
+
+fn clear_sync_failures(account_id: i64) {
+    if let Ok(mut failures) = sync_failures().lock() {
+        failures.remove(&account_id);
+    }
 }
 
 fn emit_status(app: &AppHandle, account_id: i64, state: &str, message: Option<String>) {
@@ -989,6 +1043,18 @@ mod tests {
             error_state(&AppError::Message("IMAP authentication failed".into())),
             "error"
         );
+    }
+
+    #[test]
+    fn failures_are_counted_until_a_success_resets_them() {
+        let account_id = 9_999_991;
+        clear_sync_failures(account_id);
+        assert_eq!(record_sync_failure(account_id), 1);
+        assert_eq!(record_sync_failure(account_id), 2);
+        assert_eq!(record_sync_failure(account_id), 3);
+        clear_sync_failures(account_id);
+        assert_eq!(record_sync_failure(account_id), 1);
+        clear_sync_failures(account_id);
     }
 
     #[test]
