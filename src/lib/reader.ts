@@ -350,6 +350,7 @@ export function bodyDocument(
     `html{color-scheme:${darkEmail ? "dark" : "light"};background:transparent}`,
     `body{margin:0;background:${background}${darkEmail ? "!important" : ""};color:${text};font:14px/1.6 system-ui,-apple-system,sans-serif;overflow-wrap:anywhere}`,
     "img{max-width:100%;height:auto}",
+    '[data-auramail-signature] img:not([width="24"][height="24"]){background-color:#fff!important}',
     "*,*::before,*::after{will-change:auto!important}",
     "pre{white-space:pre-wrap}",
     `${QUOTE_SELECTOR}{display:none!important}`,
@@ -382,12 +383,17 @@ const TRANSPARENT_PIXEL =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
 export function blockImageSources(html: string): string {
-  return html.replace(/<img\b[^>]*>/gi, (tag) =>
-    tag.replace(
-      /\bsrc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i,
-      `src="${TRANSPARENT_PIXEL}"`
-    )
-  );
+  if (typeof DOMParser === "undefined") return html;
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  parsed.body.querySelectorAll<HTMLImageElement>("img[src]").forEach((image) => {
+    // Embedded data images are safe, and signature artwork is authored content
+    // that must remain visible in dark mode.
+    if (image.closest("[data-auramail-signature]")) return;
+    const src = image.getAttribute("src")?.trim() ?? "";
+    if (!/^(?:https?:)?\/\//i.test(src)) return;
+    image.setAttribute("src", TRANSPARENT_PIXEL);
+  });
+  return parsed.body.innerHTML;
 }
 
 export function isSafeExternalUrl(value: string): boolean {

@@ -495,7 +495,7 @@ export function sanitizeSignatureImages(html: string): string {
   return html.replace(/<img\b[^>]*>/gi, (tag) => {
     const match = tag.match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
     const src = (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim();
-    if (!/^(data:image\/|blob:)/i.test(src)) return "";
+    if (!/^(data:image\/|blob:|https?:\/\/)/i.test(src)) return "";
     return tag.replace(/\s+srcset\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
   });
 }

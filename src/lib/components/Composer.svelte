@@ -1328,10 +1328,18 @@
     padding: 0;
     background: transparent;
   }
-  :global(html[data-theme-dark="true"]) .body :global([data-auramail-signature] *),
+  :global(html[data-theme-dark="true"]) .body
+    :global([data-auramail-signature] *:not(img):not(svg):not(svg *)),
   :global(html[data-theme-dark="true"]) .body :global([data-auramail-signature]) {
-    background: transparent !important;
+    background-color: transparent !important;
     color: var(--text) !important;
+  }
+  /* Logos are usually dark artwork on transparency. Keep a light backing so
+     they remain visible when the composer is dark. */
+  :global(html[data-theme-dark="true"]) .body
+    :global([data-auramail-signature] img:not([width="24"][height="24"])) {
+    background-color: #fff !important;
+    color: initial !important;
   }
   :global(html[data-theme-dark="true"]) .body :global([data-auramail-signature] a) {
     color: var(--accent) !important;

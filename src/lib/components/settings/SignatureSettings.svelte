@@ -4,6 +4,7 @@
     Bold,
     Check,
     CircleAlert,
+    ImagePlus,
     Italic,
     Link2,
     RemoveFormatting,
@@ -51,6 +52,7 @@
   let signatureDraft = $state("");
   let signatureFields = $state<SignatureFields>(blankSignatureFields());
   let signatureEditor = $state<HTMLDivElement | null>(null);
+  let signatureImageInput = $state<HTMLInputElement | null>(null);
   let signatureSaving = $state(false);
   let signatureNotice = $state<string | null>(null);
   let signatureError = $state<string | null>(null);
@@ -148,6 +150,98 @@
     signatureEditor?.focus();
     document.execCommand(command, false, value);
     syncSignature();
+  }
+
+  function insertSignatureHtml(html: string): void {
+    const editor = signatureEditor;
+    if (!editor || !html.trim()) return;
+    editor.focus();
+    const selection = window.getSelection();
+    if (
+      selection &&
+      selection.rangeCount > 0 &&
+      editor.contains(selection.anchorNode)
+    ) {
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      const fragment = range.createContextualFragment(html);
+      const last = fragment.lastChild;
+      range.insertNode(fragment);
+      if (last) {
+        range.setStartAfter(last);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    } else {
+      editor.insertAdjacentHTML("beforeend", html);
+    }
+    syncSignature();
+  }
+
+  function readDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(new Error("Could not read the image."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function imageAltName(file: File): string {
+    return (file.name || "Pasted image")
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;");
+  }
+
+  async function insertSignatureImages(files: File[]): Promise<void> {
+    const images = files.filter((file) => file.type.startsWith("image/"));
+    for (const file of images) {
+      if (file.size > 5 * 1024 * 1024) {
+        signatureError = "Signature images must be smaller than 5 MB.";
+        continue;
+      }
+      try {
+        const dataUrl = await readDataUrl(file);
+        insertSignatureHtml(
+          `<img src="${dataUrl}" alt="${imageAltName(file)}" style="max-width:100%;height:auto">`
+        );
+      } catch (error) {
+        signatureError = errorMessage(error);
+      }
+    }
+  }
+
+  function openSignatureImagePicker(): void {
+    signatureImageInput?.click();
+  }
+
+  async function handleSignatureImageFiles(event: Event): Promise<void> {
+    const input = event.currentTarget as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    input.value = "";
+    await insertSignatureImages(files);
+  }
+
+  async function pasteSignature(event: ClipboardEvent): Promise<void> {
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+    const files = Array.from(clipboard.files ?? []).filter((file) =>
+      file.type.startsWith("image/")
+    );
+    if (files.length > 0) {
+      event.preventDefault();
+      signatureEditor?.focus();
+      await insertSignatureImages(files);
+      return;
+    }
+    const html = clipboard.getData("text/html");
+    const text = clipboard.getData("text/plain");
+    const source = html || (/<[a-z][\s\S]*>/i.test(text) ? text : "");
+    if (!source) return;
+    event.preventDefault();
+    insertSignatureHtml(sanitizeComposeHtml(source));
   }
 
   function preventSignatureBlur(event: MouseEvent) {
@@ -404,6 +498,15 @@
           <button type="button" title="Link" aria-label="Insert link" onmousedown={preventSignatureBlur} onclick={addSignatureLink}>
             <Link2 size={14} />
           </button>
+          <button
+            type="button"
+            title="Insert image"
+            aria-label="Insert image"
+            onmousedown={preventSignatureBlur}
+            onclick={openSignatureImagePicker}
+          >
+            <ImagePlus size={14} />
+          </button>
           <span class="signature-toolbar-sep"></span>
           {#each ["#1f2937", "#4f46e5", "#6b7280", "#e5484d"] as color (color)}
             <button
@@ -429,7 +532,20 @@
           aria-label="Signature editor"
           data-placeholder="Build a signature…"
           oninput={syncSignature}
+          onpaste={(event) => void pasteSignature(event)}
         ></div>
+        <input
+          bind:this={signatureImageInput}
+          class="signature-image-input"
+          type="file"
+          accept="image/*"
+          multiple
+          onchange={(event) => void handleSignatureImageFiles(event)}
+        />
+        <p class="signature-editor-hint">
+          Paste rich text, HTML, or images directly. Pasted images are embedded
+          in the signature.
+        </p>
       </div>
 
       <div class="signature-preset-head">
@@ -725,6 +841,15 @@
   .signature-editor:empty::before {
     content: attr(data-placeholder);
     color: #8b93a3;
+  }
+  .signature-image-input {
+    display: none;
+  }
+  .signature-editor-hint {
+    margin: 7px 0 0;
+    color: var(--muted);
+    font-size: 9.5px;
+    line-height: 1.45;
   }
   .signature-preset-head {
     margin-top: 18px;
