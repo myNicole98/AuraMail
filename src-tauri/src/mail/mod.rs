@@ -215,6 +215,25 @@ pub fn folder_cursor(db: &Database, folder_id: i64) -> AppResult<(u32, u32)> {
     Ok(cursor)
 }
 
+/// Sequence number where the newest-first backfill should continue, or 0 when
+/// the whole folder has been imported.
+pub fn folder_backfill_seq(db: &Database, folder_id: i64) -> AppResult<u32> {
+    let conn = db.read();
+    Ok(conn.query_row(
+        "select backfill_seq from folders where id = ?1",
+        params![folder_id],
+        |row| row.get(0),
+    )?)
+}
+
+pub fn set_folder_backfill_seq(db: &Database, folder_id: i64, seq: u32) -> AppResult<()> {
+    db.conn.lock().unwrap().execute(
+        "update folders set backfill_seq = ?1 where id = ?2",
+        params![seq, folder_id],
+    )?;
+    Ok(())
+}
+
 pub fn apply_folder_headers(
     db: &Database,
     account_id: i64,

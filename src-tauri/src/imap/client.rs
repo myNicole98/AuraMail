@@ -17,20 +17,57 @@ use crate::error::{AppError, AppResult};
 use crate::mail_auth::MailCredential;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Fail a stalled connection only when no bytes arrive for this long. A slow
+/// but flowing page (even one taking many minutes) is allowed to finish.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Raw messages above this size are refused so opening mail cannot exhaust memory.
 const MAX_MESSAGE_BYTES: u64 = 60 * 1024 * 1024;
 
-pub enum ImapStream {
+pub struct ImapStream {
+    kind: StreamKind,
+    idle: Pin<Box<tokio::time::Sleep>>,
+}
+
+enum StreamKind {
     Plain(TcpStream),
     Tls(tokio_native_tls::TlsStream<TcpStream>),
 }
 
+impl ImapStream {
+    pub fn plain(stream: TcpStream) -> Self {
+        Self {
+            kind: StreamKind::Plain(stream),
+            idle: Box::pin(tokio::time::sleep(IDLE_TIMEOUT)),
+        }
+    }
+
+    pub fn tls(stream: tokio_native_tls::TlsStream<TcpStream>) -> Self {
+        Self {
+            kind: StreamKind::Tls(stream),
+            idle: Box::pin(tokio::time::sleep(IDLE_TIMEOUT)),
+        }
+    }
+
+    fn touch(&mut self) {
+        self.idle
+            .as_mut()
+            .reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+    }
+
+    fn into_plain(self) -> Option<TcpStream> {
+        match self.kind {
+            StreamKind::Plain(stream) => Some(stream),
+            StreamKind::Tls(_) => None,
+        }
+    }
+}
+
 impl fmt::Debug for ImapStream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Plain(_) => f.write_str("ImapStream::Plain"),
-            Self::Tls(_) => f.write_str("ImapStream::Tls"),
+        match self.kind {
+            StreamKind::Plain(_) => f.write_str("ImapStream::Plain"),
+            StreamKind::Tls(_) => f.write_str("ImapStream::Tls"),
         }
     }
 }
@@ -41,9 +78,29 @@ impl AsyncRead for ImapStream {
         cx: &mut Context<'_>,
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            Self::Plain(stream) => Pin::new(stream).poll_read(cx, buffer),
-            Self::Tls(stream) => Pin::new(stream).poll_read(cx, buffer),
+        let this = self.get_mut();
+        let result = match &mut this.kind {
+            StreamKind::Plain(stream) => Pin::new(stream).poll_read(cx, buffer),
+            StreamKind::Tls(stream) => Pin::new(stream).poll_read(cx, buffer),
+        };
+        match result {
+            Poll::Ready(Ok(())) => {
+                if !buffer.filled().is_empty() {
+                    this.touch();
+                }
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Pending => {
+                if this.idle.as_mut().poll(cx).is_ready() {
+                    Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "IMAP connection stalled",
+                    )))
+                } else {
+                    Poll::Pending
+                }
+            }
         }
     }
 }
@@ -54,19 +111,24 @@ impl AsyncWrite for ImapStream {
         cx: &mut Context<'_>,
         buffer: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        match self.get_mut() {
-            Self::Plain(stream) => Pin::new(stream).poll_write(cx, buffer),
-            Self::Tls(stream) => Pin::new(stream).poll_write(cx, buffer),
+        let this = self.get_mut();
+        let result = match &mut this.kind {
+            StreamKind::Plain(stream) => Pin::new(stream).poll_write(cx, buffer),
+            StreamKind::Tls(stream) => Pin::new(stream).poll_write(cx, buffer),
+        };
+        if matches!(result, Poll::Ready(Ok(_))) {
+            this.touch();
         }
+        result
     }
 
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            Self::Plain(stream) => Pin::new(stream).poll_flush(cx),
-            Self::Tls(stream) => Pin::new(stream).poll_flush(cx),
+        match &mut self.get_mut().kind {
+            StreamKind::Plain(stream) => Pin::new(stream).poll_flush(cx),
+            StreamKind::Tls(stream) => Pin::new(stream).poll_flush(cx),
         }
     }
 
@@ -74,9 +136,9 @@ impl AsyncWrite for ImapStream {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            Self::Plain(stream) => Pin::new(stream).poll_shutdown(cx),
-            Self::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
+        match &mut self.get_mut().kind {
+            StreamKind::Plain(stream) => Pin::new(stream).poll_shutdown(cx),
+            StreamKind::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
         }
     }
 }
@@ -102,18 +164,6 @@ fn run<F: Future>(future: F) -> F::Output {
     match tokio::runtime::Handle::try_current() {
         Ok(_) => tokio::task::block_in_place(|| runtime.block_on(future)),
         Err(_) => runtime.block_on(future),
-    }
-}
-
-const IO_TIMEOUT: Duration = Duration::from_secs(60);
-
-fn run_imap<T, F>(future: F) -> AppResult<T>
-where
-    F: Future<Output = AppResult<T>>,
-{
-    match run(async { tokio::time::timeout(IO_TIMEOUT, future).await }) {
-        Ok(result) => result,
-        Err(_) => Err(AppError::Message("IMAP operation timed out".into())),
     }
 }
 
@@ -166,6 +216,7 @@ pub struct RemoteFolder {
 pub struct FolderState {
     pub uid_validity: u32,
     pub latest_uid: u32,
+    pub exists: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,7 +270,7 @@ fn validate_with(
         return Err(AppError::Message("IMAP port is required".into()));
     }
 
-    run_imap(async {
+    run(async {
         let client = connect_client(host, port, auth_type, security).await?;
         let mut session = authenticate(client, username, credential).await?;
         session
@@ -239,7 +290,7 @@ fn validate_with(
 }
 
 pub fn list_folders(session: &mut ImapSession) -> AppResult<Vec<RemoteFolder>> {
-    run_imap(async {
+    run(async {
         let names = session
             .list(None, Some("*"))
             .await
@@ -288,15 +339,16 @@ fn remote_folder(name: &async_imap::types::Name) -> Option<RemoteFolder> {
 }
 
 pub fn folder_state(session: &mut ImapSession, folder_path: &str) -> AppResult<FolderState> {
-    run_imap(async {
+    run(async {
         let mailbox = session
-            .status(folder_path, "(UIDNEXT UIDVALIDITY)")
+            .status(folder_path, "(UIDNEXT UIDVALIDITY MESSAGES)")
             .await
             .map_err(|error| AppError::Message(format!("IMAP folder status failed: {error}")))?;
         if let Some(next_uid) = mailbox.uid_next {
             return Ok(FolderState {
                 uid_validity: mailbox.uid_validity.unwrap_or(0),
                 latest_uid: next_uid.saturating_sub(1),
+                exists: mailbox.exists,
             });
         }
         let mailbox = session
@@ -310,6 +362,7 @@ pub fn folder_state(session: &mut ImapSession, folder_path: &str) -> AppResult<F
         Ok(FolderState {
             uid_validity: mailbox.uid_validity.unwrap_or(0),
             latest_uid: uids.into_iter().max().unwrap_or(0),
+            exists: mailbox.exists,
         })
     })
 }
@@ -322,7 +375,7 @@ pub fn folder_flags(
     if uids.is_empty() {
         return Ok(Vec::new());
     }
-    run_imap(async {
+    run(async {
         session
             .select(folder_path)
             .await
@@ -352,14 +405,61 @@ pub fn folder_flags(
     })
 }
 
-/// Fetch headers in batches so the caller can persist and publish the first
-/// results before a large mailbox has finished downloading.
-///
-/// The initial pass pages through the mailbox with sequence-number FETCH
-/// commands instead of `UID SEARCH`: Yandex intermittently answers SEARCH with
-/// `NO [BACKEND]`, which used to fail the whole folder (typically the large
-/// INBOX) before a single message was fetched. Incremental syncs use a direct
-/// UID range, which needs no search either.
+/// Import a folder from the newest message backwards. `start_seq` is the
+/// sequence number to start at (usually the mailbox EXISTS count). The
+/// callback receives the page and the next sequence to continue from (0 when
+/// the folder has been fully imported) so it can persist progress after every
+/// page.
+pub fn fetch_headers_backfill<F>(
+    session: &mut ImapSession,
+    folder_path: &str,
+    start_seq: u32,
+    max_pages: usize,
+    mut on_batch: F,
+) -> AppResult<()>
+where
+    F: FnMut(Vec<FetchedHeader>, u32) -> AppResult<()>,
+{
+    if start_seq == 0 || max_pages == 0 {
+        return Ok(());
+    }
+    let mailbox = run(async {
+        session.select(folder_path).await.map_err(|error| {
+            AppError::Message(format!("IMAP folder select failed: {error}"))
+        })
+    })?;
+    let mut end = start_seq.min(mailbox.exists);
+    if end == 0 {
+        on_batch(Vec::new(), 0)?;
+        return Ok(());
+    }
+    for _ in 0..max_pages {
+        let begin = end.saturating_sub(HEADER_FETCH_PAGE - 1).max(1);
+        let set = format!("{begin}:{end}");
+        let fetches = run(async {
+            session
+                .fetch(&set, HEADER_FETCH_QUERY)
+                .await
+                .map_err(|error| header_fetch_error(&set, error))?
+                .try_collect::<Vec<_>>()
+                .await
+                .map_err(|error| header_fetch_error(&set, error))
+        })?;
+        let batch = collect_headers(&fetches);
+        let next = begin.saturating_sub(1);
+        on_batch(batch, next)?;
+        if next == 0 {
+            break;
+        }
+        end = next;
+    }
+    Ok(())
+}
+
+/// Fetch new messages by UID range. No `UID SEARCH` is used: Yandex
+/// intermittently answers SEARCH with `NO [BACKEND]`, which used to fail the
+/// whole folder before a single message was fetched. The initial import uses
+/// `fetch_headers_backfill` (newest first).
 pub fn fetch_headers_batched<F>(
     session: &mut ImapSession,
     folder_path: &str,
@@ -370,30 +470,14 @@ pub fn fetch_headers_batched<F>(
 where
     F: FnMut(Vec<FetchedHeader>) -> AppResult<()>,
 {
-    let mailbox = run_imap(async { session.select(folder_path).await.map_err(|error| AppError::Message(format!("IMAP folder select failed: {error}"))) })
-        .map_err(|error| AppError::Message(format!("IMAP folder select failed: {error}")))?;
-    if from_uid <= 1 {
-        let mut start = 1u32;
-        while start <= mailbox.exists {
-            let end = start.saturating_add(HEADER_FETCH_PAGE - 1).min(mailbox.exists);
-            let set = format!("{start}:{end}");
-            let fetches = run_imap(async {
-                session
-                    .fetch(&set, HEADER_FETCH_QUERY)
-                    .await
-                    .map_err(|error| header_fetch_error(&set, error))?
-                    .try_collect::<Vec<_>>()
-                    .await
-                    .map_err(|error| header_fetch_error(&set, error))
-            })?;
-            let batch = collect_headers(&fetches);
-            if !batch.is_empty() {
-                on_batch(batch)?;
-            }
-            start = end.saturating_add(1);
-        }
+    if from_uid > latest_uid {
         return Ok(());
     }
+    run(async {
+        session.select(folder_path).await.map_err(|error| {
+            AppError::Message(format!("IMAP folder select failed: {error}"))
+        })
+    })?;
     // Incremental sync: fetch the new UID range directly (no SEARCH) in small
     // windows so a resumed backfill cannot buffer the rest of a huge mailbox in
     // one response.
@@ -401,7 +485,7 @@ where
     while from <= latest_uid {
         let end = from.saturating_add(HEADER_FETCH_PAGE - 1).min(latest_uid);
         let set = format!("{from}:{end}");
-        let fetches = run_imap(async {
+        let fetches = run(async {
             session
                 .uid_fetch(&set, HEADER_FETCH_QUERY)
                 .await
@@ -454,7 +538,7 @@ pub fn fetch_message(
     folder_path: &str,
     uid: u32,
 ) -> AppResult<Vec<u8>> {
-    run_imap(async {
+    run(async {
         let mut session = open_session_async(account, credential).await?;
         session
             .select(folder_path)
@@ -504,7 +588,7 @@ pub fn find_message_uid(
     folder_path: &str,
     message_id: &str,
 ) -> AppResult<Option<u32>> {
-    run_imap(async {
+    run(async {
         let mut session = open_session_async(account, credential).await?;
         session
             .select(folder_path)
@@ -529,7 +613,7 @@ pub fn fetch_headers_for(
     if uids.is_empty() {
         return Ok(Vec::new());
     }
-    run_imap(async {
+    run(async {
         let mut session = open_session_async(account, credential).await?;
         session
             .select(folder_path)
@@ -583,7 +667,7 @@ pub fn move_to_folder(
     uid: u32,
     target_path: &str,
 ) -> AppResult<()> {
-    run_imap(async {
+    run(async {
         let mut session = open_session_async(account, credential).await?;
         session
             .select(folder_path)
@@ -603,7 +687,7 @@ pub fn archive(
     archive_path: Option<&str>,
     all_path: Option<&str>,
 ) -> AppResult<()> {
-    run_imap(async {
+    run(async {
         let mut session = open_session_async(account, credential).await?;
         session
             .select(folder_path)
@@ -685,7 +769,7 @@ pub fn delete_permanently(
     folder_path: &str,
     uid: u32,
 ) -> AppResult<()> {
-    run_imap(async {
+    run(async {
         let mut session = open_session_async(account, credential).await?;
         session
             .select(folder_path)
@@ -763,7 +847,7 @@ fn store_flag(
     flag: &str,
     enabled: bool,
 ) -> AppResult<()> {
-    run_imap(async {
+    run(async {
         let mut session = open_session_async(account, credential).await?;
         session
             .select(folder_path)
@@ -786,7 +870,7 @@ pub(crate) fn open_session(
     account: &Account,
     credential: &MailCredential,
 ) -> AppResult<ImapSession> {
-    run_imap(open_session_async(account, credential))
+    run(open_session_async(account, credential))
 }
 
 async fn open_session_async(
@@ -837,7 +921,7 @@ async fn connect_client(
     if auth_type == AccountAuth::Proton {
         require_proton_host(host)?;
         let tcp = connect_tcp(host, port).await?;
-        let mut client = async_imap::Client::new(ImapStream::Plain(tcp));
+        let mut client = async_imap::Client::new(ImapStream::plain(tcp));
         client
             .read_response()
             .await
@@ -851,7 +935,7 @@ async fn connect_client(
     match security {
         MailSecurity::Tls => {
             let stream = tls_connect(host, tcp).await?;
-            let mut client = async_imap::Client::new(ImapStream::Tls(stream));
+            let mut client = async_imap::Client::new(ImapStream::tls(stream));
             client
                 .read_response()
                 .await
@@ -859,7 +943,7 @@ async fn connect_client(
             Ok(client)
         }
         MailSecurity::StartTls => {
-            let mut client = async_imap::Client::new(ImapStream::Plain(tcp));
+            let mut client = async_imap::Client::new(ImapStream::plain(tcp));
             client
                 .read_response()
                 .await
@@ -868,11 +952,12 @@ async fn connect_client(
                 .run_command_and_check_ok("STARTTLS", None)
                 .await
                 .map_err(|_| AppError::Message("IMAP STARTTLS rejected".into()))?;
-            let ImapStream::Plain(tcp) = client.into_inner() else {
-                return Err(AppError::Message("IMAP STARTTLS failed".into()));
-            };
+            let tcp = client
+                .into_inner()
+                .into_plain()
+                .ok_or_else(|| AppError::Message("IMAP STARTTLS failed".into()))?;
             let stream = tls_connect(host, tcp).await?;
-            Ok(async_imap::Client::new(ImapStream::Tls(stream)))
+            Ok(async_imap::Client::new(ImapStream::tls(stream)))
         }
     }
 }
@@ -1377,32 +1462,70 @@ mod tests {
             let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
                 .await
                 .unwrap();
-            let mut client = async_imap::Client::new(ImapStream::Plain(tcp));
+            let mut client = async_imap::Client::new(ImapStream::plain(tcp));
             client.read_response().await.unwrap();
             client.login("me@example.com", "pass").await.ok().unwrap()
         })
     }
 
     #[test]
-    fn initial_sync_does_not_depend_on_uid_search() {
+    fn backfill_imports_newest_first_without_uid_search() {
         // Yandex intermittently answers UID SEARCH with NO [BACKEND]. The
-        // initial import must page through the mailbox with FETCH instead of
-        // failing the whole folder (INBOX) before fetching anything.
+        // initial import pages through the mailbox with sequence FETCH instead.
         let (port, handle) = scripted_imap_server(yandex_like_handler);
         let mut session = connect_plain(port);
-        let mut batches = 0;
-        fetch_headers_batched(&mut session, "INBOX", 1, 2, |_| {
-            batches += 1;
+        let mut next = Vec::new();
+        fetch_headers_backfill(&mut session, "INBOX", 2, 10, |_, next_seq| {
+            next.push(next_seq);
             Ok(())
         })
-        .expect("initial sync must not require UID SEARCH");
-        assert_eq!(batches, 0);
+        .expect("backfill must not require UID SEARCH");
+        assert_eq!(next, vec![0]);
         drop(session);
         let commands = handle.join().unwrap();
+        assert!(
+            commands.iter().any(|line| line.contains("FETCH 1:2")),
+            "expected a sequence FETCH: {commands:?}"
+        );
         assert!(
             !commands.iter().any(|line| line.contains("UID SEARCH")),
             "unexpected SEARCH commands: {commands:?}"
         );
+    }
+
+    #[test]
+    fn backfill_pages_from_the_newest_message_backwards() {
+        let handler = |line: &str, tag: &str| -> String {
+            let upper = line.to_ascii_uppercase();
+            if upper.contains(" SELECT ") {
+                format!(
+                    "* 450 EXISTS\r\n* OK [UIDVALIDITY 7] ok\r\n* OK [UIDNEXT 451] ok\r\n\
+                     {tag} OK [READ-WRITE] SELECT completed\r\n"
+                )
+            } else if upper.contains("FETCH") {
+                format!("{tag} OK FETCH completed\r\n")
+            } else {
+                format!("{tag} OK completed\r\n")
+            }
+        };
+        let (port, handle) = scripted_imap_server(handler);
+        let mut session = connect_plain(port);
+        let mut next = Vec::new();
+        fetch_headers_backfill(&mut session, "INBOX", 450, 10, |_, next_seq| {
+            next.push(next_seq);
+            Ok(())
+        })
+        .unwrap();
+        drop(session);
+        let commands = handle.join().unwrap();
+        assert_eq!(next, vec![250, 50, 0]);
+        let fetches = commands
+            .iter()
+            .filter(|line| line.contains(" FETCH "))
+            .collect::<Vec<_>>();
+        assert!(fetches[0].contains("FETCH 251:450"), "got {fetches:?}");
+        assert!(fetches[1].contains("FETCH 51:250"), "got {fetches:?}");
+        assert!(fetches[2].contains("FETCH 1:50"), "got {fetches:?}");
     }
 
     #[test]

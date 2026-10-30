@@ -37,6 +37,7 @@ create table folders (
   delimiter text not null default '/',
   uid_validity integer not null default 0,
   highest_uid integer not null default 0,
+  backfill_seq integer not null default 0,
   unique(account_id, path)
 );
 
@@ -1102,6 +1103,21 @@ impl Database {
             }
             conn.pragma_update(None, "user_version", 37)?;
         }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 38 {
+            let has_backfill: i64 = conn.query_row(
+                "select count(*) from pragma_table_info('folders') where name = 'backfill_seq'",
+                [],
+                |row| row.get(0),
+            )?;
+            if has_backfill == 0 {
+                conn.execute(
+                    "alter table folders add column backfill_seq integer not null default 0",
+                    [],
+                )?;
+            }
+            conn.pragma_update(None, "user_version", 38)?;
+        }
         conn.execute_batch(
             "create index if not exists idx_messages_folder_date on messages(folder_id, date desc);
              create index if not exists idx_messages_account_date on messages(account_id, date desc);
@@ -1218,7 +1234,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 37);
+        assert_eq!(version, 38);
         let tabs: i64 = conn
             .query_row("select count(*) from tabs", [], |row| row.get(0))
             .unwrap();
@@ -1374,7 +1390,7 @@ mod tests {
             .unwrap();
         assert_eq!(bodies, 0);
         assert_eq!(cached, 0);
-        assert_eq!(version, 37);
+        assert_eq!(version, 38);
     }
 
     #[test]
@@ -1401,7 +1417,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table, 1);
-        assert_eq!(version, 37);
+        assert_eq!(version, 38);
     }
 
     #[test]
@@ -1428,7 +1444,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(cached, 0);
-        assert_eq!(version, 37);
+        assert_eq!(version, 38);
     }
 
     #[test]
@@ -1471,7 +1487,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 37);
+        assert_eq!(version, 38);
     }
 
     #[test]
@@ -1552,6 +1568,6 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!((auth_type, provider, version), (1, 1, 37));
+        assert_eq!((auth_type, provider, version), (1, 1, 38));
     }
 }

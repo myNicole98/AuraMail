@@ -19,6 +19,10 @@ const SYNC_RETRY_SECS: u64 = 10;
 /// full sync. Fetching `1:*` for the whole mailbox is what made large Yandex
 /// inboxes hang and fail.
 const RECONCILE_WINDOW: usize = 1000;
+/// How many 200-message pages of older mail to import per sync when resuming
+/// a newest-first backfill. The fresh/newest pages have priority.
+const BACKFILL_PAGES_FAST: usize = 10;
+const BACKFILL_PAGES_FULL: usize = 50;
 const FULL_FLAG_RECONCILE_FLOOR_SECS: i64 = 5 * 60;
 const VOICE_REFRESH_SECS: i64 = 60 * 60;
 
@@ -623,6 +627,7 @@ fn sync_folder(
 ) -> AppResult<SyncOutcome> {
     let state = client::folder_state(session, &folder.path)?;
     let (uid_validity, highest_uid) = mail::folder_cursor(db, folder.id)?;
+    let mut backfill_seq = mail::folder_backfill_seq(db, folder.id)?;
     let action = next_action(
         FolderCursor {
             uid_validity,
@@ -631,7 +636,7 @@ fn sync_folder(
         state.uid_validity,
         state.latest_uid,
     );
-    if matches!(action, SyncAction::Noop) && !reconcile {
+    if matches!(action, SyncAction::Noop) && !reconcile && backfill_seq == 0 {
         let _ = mail::adopt_pending_messages(db, folder.id)?;
         return Ok(SyncOutcome {
             inserted: Vec::new(),
@@ -659,47 +664,19 @@ fn sync_folder(
         changed = mail::reconcile_folder_messages(db, folder.id, &remote, Some(&uids))?;
     }
 
-    let inserted = match action {
-        SyncAction::Noop => Vec::new(),
+    let mut inserted = Vec::new();
+    match action {
+        SyncAction::Noop => {}
         SyncAction::Reset => {
-            if state.latest_uid == 0 {
-                mail::clear_folder_messages(db, folder.id)?;
-                mail::set_folder_cursor(db, folder.id, state.uid_validity, 0)?;
-                Vec::new()
-            } else {
-                let mut inserted = Vec::new();
-                // Advance only by UIDs actually fetched: a concurrent move can
-                // make UIDNEXT visible before the message is searchable.
-                let mut highest = 0;
-                let mut first_batch = true;
-                client::fetch_headers_batched(session, &folder.path, 1, state.latest_uid, |fetched| {
-                    if first_batch {
-                        mail::clear_folder_messages(db, folder.id)?;
-                        first_batch = false;
-                    }
-                    highest = highest
-                        .max(fetched.iter().map(|header| header.uid).max().unwrap_or(0));
-                    let headers = build_headers(&fetched);
-                    inserted.extend(store_header_batch(
-                        app,
-                        db,
-                        account.id,
-                        folder.id,
-                        &headers,
-                    )?);
-                    // Persist progress after every page
-                    mail::set_folder_cursor(db, folder.id, state.uid_validity, highest)?;
-                    Ok(())
-                })?;
-                if first_batch {
-                    mail::clear_folder_messages(db, folder.id)?;
-                    mail::set_folder_cursor(db, folder.id, state.uid_validity, 0)?;
-                }
-                inserted
-            }
+            mail::clear_folder_messages(db, folder.id)?;
+            // Newest-first import: record the server's latest UID now so
+            // incremental syncs only fetch newer mail. Older pages are
+            // backfilled below, resuming from `backfill_seq` on every sync.
+            mail::set_folder_cursor(db, folder.id, state.uid_validity, state.latest_uid)?;
+            mail::set_folder_backfill_seq(db, folder.id, state.exists)?;
+            backfill_seq = state.exists;
         }
         SyncAction::Incremental { from_uid } => {
-            let mut inserted = Vec::new();
             let mut highest = highest_uid;
             client::fetch_headers_batched(session, &folder.path, from_uid, state.latest_uid, |fetched| {
                 highest = highest.max(fetched.iter().map(|header| header.uid).max().unwrap_or(0));
@@ -715,9 +692,43 @@ fn sync_folder(
                 mail::set_folder_cursor(db, folder.id, state.uid_validity, highest)?;
                 Ok(())
             })?;
-            inserted
         }
-    };
+    }
+
+    if backfill_seq > 0 {
+        let budget = if reconcile {
+            BACKFILL_PAGES_FULL
+        } else {
+            BACKFILL_PAGES_FAST
+        };
+        let result = client::fetch_headers_backfill(
+            session,
+            &folder.path,
+            backfill_seq,
+            budget,
+            |fetched, next_seq| {
+                let headers = build_headers(&fetched);
+                inserted.extend(store_header_batch(
+                    app,
+                    db,
+                    account.id,
+                    folder.id,
+                    &headers,
+                )?);
+                mail::set_folder_backfill_seq(db, folder.id, next_seq)?;
+                Ok(())
+            },
+        );
+        match result {
+            Ok(()) => {}
+            // A slow cold-storage page must not fail the whole account: keep
+            // the newest pages and resume from the same sequence next time.
+            Err(error) if is_timeout(&error) => {
+                eprintln!("backfill paused for {}: {error}", folder.path);
+            }
+            Err(error) => return Err(error),
+        }
+    }
 
     let _ = mail::adopt_pending_messages(db, folder.id)?;
 
@@ -764,6 +775,11 @@ fn build_headers(headers: &[client::FetchedHeader]) -> Vec<mail::MessageHeader> 
 
 fn has_flag(flags: &[String], expected: &str) -> bool {
     flags.iter().any(|flag| flag.eq_ignore_ascii_case(expected))
+}
+
+fn is_timeout(error: &AppError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("timed out") || message.contains("stalled")
 }
 
 fn find_account(db: &Database, account_id: i64) -> AppResult<Option<Account>> {
