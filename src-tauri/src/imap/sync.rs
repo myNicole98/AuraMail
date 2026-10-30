@@ -15,6 +15,10 @@ use crate::mail::{self, parse};
 use crate::secrets::SecretStore;
 
 const SYNC_RETRY_SECS: u64 = 10;
+/// How many of the newest messages get their read/star flags reconciled on a
+/// full sync. Fetching `1:*` for the whole mailbox is what made large Yandex
+/// inboxes hang and fail.
+const RECONCILE_WINDOW: usize = 1000;
 const FULL_FLAG_RECONCILE_FLOOR_SECS: i64 = 5 * 60;
 const VOICE_REFRESH_SECS: i64 = 60 * 60;
 
@@ -638,7 +642,11 @@ fn sync_folder(
 
     let mut changed = 0;
     if reconcile && !matches!(action, SyncAction::Reset) {
-        let remote = client::folder_flags(session, &folder.path)?
+        // Never fetch flags for the whole mailbox: a large INBOX (Yandex 360)
+        // would spin for minutes and then fail. Reconcile the newest local
+        // messages in bounded chunks instead.
+        let uids = mail::newest_message_uids(db, folder.id, RECONCILE_WINDOW)?;
+        let remote = client::folder_flags(session, &folder.path, &uids)?
             .into_iter()
             .map(|(uid, flags)| {
                 (
@@ -648,7 +656,7 @@ fn sync_folder(
                 )
             })
             .collect::<Vec<_>>();
-        changed = mail::reconcile_folder_messages(db, folder.id, &remote)?;
+        changed = mail::reconcile_folder_messages(db, folder.id, &remote, Some(&uids))?;
     }
 
     let inserted = match action {
@@ -884,6 +892,11 @@ pub fn start_polling(
                                 _ => (Vec::new(), false),
                             };
                             if full && success {
+                                since_full = 0;
+                            } else if !success {
+                                // A failing full sync must not occupy every
+                                // retry: fall back to the fast inbox sync so
+                                // new mail keeps flowing while it retries.
                                 since_full = 0;
                             }
                             delay = if success {

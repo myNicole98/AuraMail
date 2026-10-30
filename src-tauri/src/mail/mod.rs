@@ -892,16 +892,35 @@ fn update_message_flag(
     message_by_id(db, message_id)
 }
 
+pub fn newest_message_uids(
+    db: &Database,
+    folder_id: i64,
+    limit: usize,
+) -> AppResult<Vec<u32>> {
+    let conn = db.read();
+    let mut stmt = conn.prepare(
+        "select uid from messages where folder_id = ?1 and uid < ?2 order by uid desc limit ?3",
+    )?;
+    let rows = stmt.query_map(
+        params![folder_id, PENDING_UID_BASE as i64, limit as i64],
+        |row| row.get(0),
+    )?;
+    Ok(rows.collect::<Result<Vec<u32>, _>>()?)
+}
+
 pub fn reconcile_folder_messages(
     db: &Database,
     folder_id: i64,
     remote: &[(u32, bool, bool)],
+    only: Option<&[u32]>,
 ) -> AppResult<usize> {
     let mut conn = db.conn.lock().unwrap();
     let remote_flags: HashMap<u32, (bool, bool)> = remote
         .iter()
         .map(|(uid, seen, starred)| (*uid, (*seen, *starred)))
         .collect();
+    let wanted: Option<std::collections::HashSet<u32>> =
+        only.map(|uids| uids.iter().copied().collect());
     let local: Vec<(i64, u32, bool, bool)> = {
         let mut stmt = conn.prepare(
             "select id, uid, is_seen, is_starred from messages where folder_id = ?1 and uid < ?2",
@@ -924,6 +943,11 @@ pub fn reconcile_folder_messages(
             "update messages set is_seen = ?2, is_starred = ?3 where id = ?1",
         )?;
         for (id, uid, seen, starred) in local {
+            if let Some(wanted) = &wanted {
+                if !wanted.contains(&uid) {
+                    continue;
+                }
+            }
             match remote_flags.get(&uid) {
                 None => {
                     delete.execute(params![id])?;
@@ -2080,6 +2104,44 @@ mod tests {
     }
 
     #[test]
+    fn bounded_reconciliation_ignores_messages_outside_the_window() {
+        let db = Database::open_memory().unwrap();
+        let account = seed_account(&db, "me@example.com");
+        let inbox = seed_folder(&db, account, "INBOX", "inbox");
+        seed_message(&db, inbox, 1, "old@example.com", "Old", "", 100);
+        seed_message(&db, inbox, 2, "new@example.com", "New", "", 200);
+        seed_message(&db, inbox, 3, "gone@example.com", "Gone", "", 300);
+
+        // Only UIDs 2 and 3 are in the reconciliation window. UID 1 must be
+        // left untouched even though it is absent from the server response.
+        let window = vec![2u32, 3u32];
+        let changed =
+            reconcile_folder_messages(&db, inbox, &[(2, true, false)], Some(&window)).unwrap();
+
+        assert_eq!(changed, 2);
+        let messages = list_messages(
+            &db,
+            &MessageQuery {
+                folder_id: Some(inbox),
+                ..MessageQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(messages.len(), 2);
+        let subjects: Vec<&str> = messages
+            .iter()
+            .map(|message| message.subject.as_str())
+            .collect();
+        assert!(subjects.contains(&"Old"));
+        assert!(subjects.contains(&"New"));
+        let new = messages
+            .iter()
+            .find(|message| message.subject == "New")
+            .unwrap();
+        assert!(new.is_seen);
+    }
+
+    #[test]
     fn folder_reconciliation_removes_missing_uids_and_updates_flags() {
         let db = Database::open_memory().unwrap();
         let account = seed_account(&db, "me@example.com");
@@ -2089,7 +2151,13 @@ mod tests {
         seed_message(&db, inbox, 3, "carol@example.com", "Three", "c", 100);
 
         let changed =
-            reconcile_folder_messages(&db, inbox, &[(1, true, false), (2, false, true)]).unwrap();
+            reconcile_folder_messages(
+                &db,
+                inbox,
+                &[(1, true, false), (2, false, true)],
+                None,
+            )
+            .unwrap();
 
         assert_eq!(changed, 3);
         let messages = list_messages(
@@ -2581,7 +2649,7 @@ mod tests {
         assert!(is_pending_uid(trash_threads[0].message.uid));
 
         // Reconcile skips pending rows until the server copy is available.
-        reconcile_folder_messages(&db, trash, &[]).unwrap();
+        reconcile_folder_messages(&db, trash, &[], None).unwrap();
         let still_pending = list_threads(
             &db,
             &MessageQuery {

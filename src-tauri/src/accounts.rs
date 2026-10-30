@@ -800,6 +800,14 @@ fn known_provider(domain: &str) -> Option<AccountDiscovery> {
             "tls",
         ),
         "gmx.com" | "gmx.net" => ("imap.gmx.com", 993, "tls", "smtp.gmx.com", 465, "tls"),
+        "yandex.com" | "yandex.ru" | "ya.ru" => (
+            "imap.yandex.com",
+            993,
+            "tls",
+            "smtp.yandex.com",
+            587,
+            "starttls",
+        ),
         _ => return None,
     };
     Some(AccountDiscovery {
@@ -944,6 +952,88 @@ async fn discover_dns(domain: &str) -> Option<AccountDiscovery> {
     })
 }
 
+fn mx_matches(hosts: &[String], suffixes: &[&str]) -> bool {
+    hosts.iter().any(|host| {
+        suffixes
+            .iter()
+            .any(|suffix| host == suffix || host.ends_with(&format!(".{suffix}")))
+    })
+}
+
+/// A custom domain is often hosted by a large provider while the domain itself
+/// publishes no SRV or autoconfig records. A wildcard CNAME can even make
+/// `imap.<domain>` resolve to a website that refuses 993/465. The MX records
+/// reveal the real provider.
+fn provider_from_mx(hosts: &[String], source: &str) -> Option<AccountDiscovery> {
+    let found = |imap_host: &str,
+                 imap_port: u16,
+                 imap_security: &str,
+                 smtp_host: &str,
+                 smtp_port: u16,
+                 smtp_security: &str| AccountDiscovery {
+        imap_host: imap_host.into(),
+        imap_port,
+        imap_security: imap_security.into(),
+        smtp_host: smtp_host.into(),
+        smtp_port,
+        smtp_security: smtp_security.into(),
+        source: source.into(),
+    };
+    if mx_matches(hosts, &["yandex.net", "yandex.ru", "ya.ru"]) {
+        return Some(found(
+            "imap.yandex.com",
+            993,
+            "tls",
+            "smtp.yandex.com",
+            587,
+            "starttls",
+        ));
+    }
+    if mx_matches(hosts, &["google.com", "googlemail.com"]) {
+        return Some(found(
+            "imap.gmail.com",
+            993,
+            "tls",
+            "smtp.gmail.com",
+            465,
+            "tls",
+        ));
+    }
+    if mx_matches(hosts, &["protection.outlook.com", "outlook.com"]) {
+        return Some(found(
+            "outlook.office365.com",
+            993,
+            "tls",
+            "smtp.office365.com",
+            587,
+            "starttls",
+        ));
+    }
+    None
+}
+
+async fn discover_mx(domain: &str) -> Option<AccountDiscovery> {
+    let resolver = TokioAsyncResolver::tokio_from_system_conf().ok()?;
+    let lookup = tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        resolver.mx_lookup(domain.to_string()),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let hosts = lookup
+        .iter()
+        .map(|record| {
+            record
+                .exchange()
+                .to_utf8()
+                .trim_end_matches('.')
+                .to_ascii_lowercase()
+        })
+        .collect::<Vec<_>>();
+    provider_from_mx(&hosts, "mx")
+}
+
 async fn fetch_autoconfig(
     client: &reqwest::Client,
     url: reqwest::Url,
@@ -997,6 +1087,9 @@ pub async fn discover(email: &str) -> AppResult<AccountDiscovery> {
     )
     .await
     {
+        return Ok(found);
+    }
+    if let Some(found) = discover_mx(&domain).await {
         return Ok(found);
     }
     if let Some(provider) = known_provider(&domain) {
@@ -1263,6 +1356,25 @@ mod tests {
             super::known_provider("gmail.com").unwrap().imap_host,
             "imap.gmail.com"
         );
+        assert_eq!(
+            super::known_provider("yandex.ru").unwrap().imap_host,
+            "imap.yandex.com"
+        );
+    }
+
+    #[test]
+    fn derives_mail_hosts_from_mx_records() {
+        let yandex = super::provider_from_mx(&["mx.yandex.net".into()], "mx").unwrap();
+        assert_eq!(yandex.imap_host, "imap.yandex.com");
+        assert_eq!(yandex.smtp_host, "smtp.yandex.com");
+        assert_eq!(yandex.source, "mx");
+        let google = super::provider_from_mx(&["aspmx.l.google.com".into()], "mx").unwrap();
+        assert_eq!(google.imap_host, "imap.gmail.com");
+        let microsoft =
+            super::provider_from_mx(&["boxo-cc.mail.protection.outlook.com".into()], "mx")
+                .unwrap();
+        assert_eq!(microsoft.imap_host, "outlook.office365.com");
+        assert!(super::provider_from_mx(&["mx.example.net".into()], "mx").is_none());
     }
 
     #[test]

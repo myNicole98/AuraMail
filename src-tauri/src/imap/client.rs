@@ -231,22 +231,32 @@ pub fn folder_state(session: &mut ImapSession, folder_path: &str) -> AppResult<F
 pub fn folder_flags(
     session: &mut ImapSession,
     folder_path: &str,
+    uids: &[u32],
 ) -> AppResult<Vec<(u32, Vec<String>)>> {
+    if uids.is_empty() {
+        return Ok(Vec::new());
+    }
     session
         .select(folder_path)
-        .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
-    let fetches = session
-        .uid_fetch("1:*", "(UID FLAGS)")
-        .map_err(|_| AppError::Message("IMAP flag fetch failed".into()))?;
-    Ok(fetches
-        .iter()
-        .filter_map(|fetch| {
+        .map_err(|error| AppError::Message(format!("IMAP folder select failed: {error}")))?;
+    let mut result = Vec::new();
+    for chunk in uids.chunks(200) {
+        let set = chunk
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let fetches = session
+            .uid_fetch(set, "(UID FLAGS)")
+            .map_err(|error| AppError::Message(format!("IMAP flag fetch failed: {error}")))?;
+        result.extend(fetches.iter().filter_map(|fetch| {
             Some((
                 fetch.uid?,
                 fetch.flags().iter().map(ToString::to_string).collect(),
             ))
-        })
-        .collect())
+        }));
+    }
+    Ok(result)
 }
 
 /// Fetch headers in batches so the caller can persist and publish the first

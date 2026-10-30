@@ -73,6 +73,14 @@
   }
   let statusLabel = $derived(app.syncLabel);
   let statusState = $derived(app.syncState);
+  let statusDetail = $derived(
+    Object.values(app.statuses)
+      .map((status) => status.message?.trim())
+      .find((message) => message) ?? ""
+  );
+  let statusTitle = $derived(
+    statusDetail ? `${statusLabel} — ${statusDetail}` : statusLabel
+  );
 
   function openAccountSettings() {
     window.dispatchEvent(
@@ -272,7 +280,7 @@
         class:syncing={statusState === "syncing"}
         class:offline={statusState === "offline"}
         class:error={statusState === "error"}
-        title={statusLabel}
+        title={statusTitle}
       >
         <span class="status-dot"></span>
         {#if !collapsed}
