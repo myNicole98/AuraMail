@@ -183,18 +183,7 @@ fn search_message_uid(
     let folder = mail::folder_by_id(db, message.folder_id)?
         .ok_or_else(|| AppError::Message("folder not found".into()))?;
     let credential = crate::mail_auth::credential_for(&account, secrets)?;
-    let mut session = crate::imap::client::open_session(&account, &credential)?;
-    let result = (|| {
-        session
-            .select(&folder.path)
-            .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
-        let uids = session
-            .uid_search(format!("HEADER Message-ID \"{message_id_value}\""))
-            .map_err(|_| AppError::Message("IMAP message search failed".into()))?;
-        Ok(uids.into_iter().max())
-    })();
-    let _ = session.logout();
-    result
+    crate::imap::client::find_message_uid(&account, &credential, &folder.path, message_id_value)
 }
 
 fn plain_body(detail: &MessageDetail) -> String {
@@ -2267,36 +2256,18 @@ pub async fn fill_message_snippets(
             let Ok(credential) = crate::mail_auth::credential_for(&account, secrets.as_ref()) else {
                 continue;
             };
-            let Ok(mut session) = client::open_session(&account, &credential) else {
+            let by_uid: HashMap<u32, i64> = items.iter().map(|(id, uid)| (*uid, *id)).collect();
+            let uids = items.iter().map(|(_, uid)| *uid).collect::<Vec<_>>();
+            let Ok(headers) = client::fetch_headers_for(&account, &credential, &folder.path, &uids)
+            else {
                 continue;
             };
-            if session.select(&folder.path).is_err() {
-                let _ = session.logout();
-                continue;
-            }
-            let by_uid: HashMap<u32, i64> = items.iter().map(|(id, uid)| (*uid, *id)).collect();
-            let uids = items
-                .iter()
-                .map(|(_, uid)| uid.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let fetches =
-                match session.uid_fetch(uids, "(UID BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.8192>)") {
-                    Ok(fetches) => fetches,
-                    Err(_) => {
-                        let _ = session.logout();
-                        continue;
-                    }
-                };
-            for fetch in fetches.iter() {
-                let (Some(uid), Some(header)) = (fetch.uid, fetch.header()) else {
+            for header in headers.iter() {
+                let Some(message_id) = by_uid.get(&header.uid).copied() else {
                     continue;
                 };
-                let Some(message_id) = by_uid.get(&uid).copied() else {
-                    continue;
-                };
-                let preview = fetch.text().unwrap_or_default();
-                let snippet = parse::parse_headers_with_preview(header, preview).snippet;
+                let snippet =
+                    parse::parse_headers_with_preview(&header.raw, &header.preview).snippet;
                 if snippet.trim().is_empty() {
                     continue;
                 }
@@ -2307,7 +2278,6 @@ pub async fn fill_message_snippets(
                     });
                 }
             }
-            let _ = session.logout();
         }
         Ok(out)
     })

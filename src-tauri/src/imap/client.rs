@@ -1,56 +1,122 @@
-use std::io::{self, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::fmt;
+use std::future::Future;
+use std::net::ToSocketAddrs;
+use std::pin::Pin;
+use std::sync::OnceLock;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-use imap::types::NameAttribute;
-use native_tls::{TlsConnector, TlsStream};
+use async_imap::types::NameAttribute;
+use futures_util::TryStreamExt;
 use serde::Serialize;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::TcpStream;
 
 use crate::accounts::{Account, AccountAuth, MailSecurity};
 use crate::error::{AppError, AppResult};
 use crate::mail_auth::MailCredential;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const IO_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Raw messages above this size are refused so opening mail cannot exhaust memory.
 const MAX_MESSAGE_BYTES: u64 = 60 * 1024 * 1024;
 
-const MAX_IMAP_LINE: usize = 64 * 1024;
-const STARTTLS_TAG: &[u8] = b"auramail1";
-
-#[derive(Debug)]
 pub enum ImapStream {
-    Tls(TlsStream<TcpStream>),
     Plain(TcpStream),
+    Tls(tokio_native_tls::TlsStream<TcpStream>),
 }
 
-impl Read for ImapStream {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+impl fmt::Debug for ImapStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Tls(stream) => stream.read(buffer),
-            Self::Plain(stream) => stream.read(buffer),
+            Self::Plain(_) => f.write_str("ImapStream::Plain"),
+            Self::Tls(_) => f.write_str("ImapStream::Tls"),
         }
     }
 }
 
-impl Write for ImapStream {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        match self {
-            Self::Tls(stream) => stream.write(buffer),
-            Self::Plain(stream) => stream.write(buffer),
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        match self {
-            Self::Tls(stream) => stream.flush(),
-            Self::Plain(stream) => stream.flush(),
+impl AsyncRead for ImapStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Plain(stream) => Pin::new(stream).poll_read(cx, buffer),
+            Self::Tls(stream) => Pin::new(stream).poll_read(cx, buffer),
         }
     }
 }
 
-pub type ImapSession = imap::Session<ImapStream>;
+impl AsyncWrite for ImapStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            Self::Plain(stream) => Pin::new(stream).poll_write(cx, buffer),
+            Self::Tls(stream) => Pin::new(stream).poll_write(cx, buffer),
+        }
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Plain(stream) => Pin::new(stream).poll_flush(cx),
+            Self::Tls(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Plain(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+}
+
+pub type ImapSession = async_imap::Session<ImapStream>;
+
+/// async-imap needs a Tokio reactor. The app keeps its synchronous call sites
+/// and drives the IMAP futures on this dedicated runtime.
+fn imap_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .thread_name("auramail-imap")
+            .build()
+            .expect("IMAP runtime")
+    })
+}
+
+fn run<F: Future>(future: F) -> F::Output {
+    let runtime = imap_runtime();
+    match tokio::runtime::Handle::try_current() {
+        Ok(_) => tokio::task::block_in_place(|| runtime.block_on(future)),
+        Err(_) => runtime.block_on(future),
+    }
+}
+
+const IO_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn run_imap<T, F>(future: F) -> AppResult<T>
+where
+    F: Future<Output = AppResult<T>>,
+{
+    match run(async { tokio::time::timeout(IO_TIMEOUT, future).await }) {
+        Ok(result) => result,
+        Err(_) => Err(AppError::Message("IMAP operation timed out".into())),
+    }
+}
+
 
 /// Proton Bridge only listens on the local machine; plaintext never leaves it.
 pub fn proton_host_allowed(host: &str) -> bool {
@@ -78,9 +144,9 @@ struct OAuth2Authenticator<'a> {
     access_token: &'a str,
 }
 
-impl imap::Authenticator for OAuth2Authenticator<'_> {
+impl async_imap::Authenticator for OAuth2Authenticator<'_> {
     type Response = String;
-    fn process(&self, _data: &[u8]) -> Self::Response {
+    fn process(&mut self, _challenge: &[u8]) -> Self::Response {
         format!(
             "user={}\x01auth=Bearer {}\x01\x01",
             self.user, self.access_token
@@ -153,37 +219,52 @@ fn validate_with(
         return Err(AppError::Message("IMAP port is required".into()));
     }
 
-    let client = connect_client(host, port, auth_type, security)?;
-    let mut session = authenticate(client, username, credential)?;
-    session
-        .select("INBOX")
-        .map_err(|_| AppError::Message("IMAP mailbox validation failed".into()))?;
-    session
-        .list(None, Some("*"))
-        .map_err(|_| AppError::Message("IMAP mailbox validation failed".into()))?;
-    let _ = session.logout();
-    Ok(())
+    run_imap(async {
+        let client = connect_client(host, port, auth_type, security).await?;
+        let mut session = authenticate(client, username, credential).await?;
+        session
+            .select("INBOX")
+            .await
+            .map_err(|_| AppError::Message("IMAP mailbox validation failed".into()))?;
+        session
+            .list(None, Some("*"))
+            .await
+            .map_err(|_| AppError::Message("IMAP mailbox validation failed".into()))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|_| AppError::Message("IMAP mailbox validation failed".into()))?;
+        let _ = session.logout().await;
+        Ok(())
+    })
 }
 
 pub fn list_folders(session: &mut ImapSession) -> AppResult<Vec<RemoteFolder>> {
-    let names = session
-        .list(None, Some("*"))
-        .map_err(|error| AppError::Message(format!("IMAP folder list failed: {error}")))?;
-    let mut folders = names.iter().filter_map(remote_folder).collect::<Vec<_>>();
-    // Some providers (Yandex) do not reliably include the special INBOX name in
-    // a wildcard listing. INBOX always exists, so ask for it explicitly.
-    if !folders
-        .iter()
-        .any(|folder| folder.path.eq_ignore_ascii_case("INBOX"))
-    {
-        if let Ok(inbox) = session.list(None, Some("INBOX")) {
-            folders.extend(inbox.iter().filter_map(remote_folder));
+    run_imap(async {
+        let names = session
+            .list(None, Some("*"))
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP folder list failed: {error}")))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP folder list failed: {error}")))?;
+        let mut folders = names.iter().filter_map(remote_folder).collect::<Vec<_>>();
+        // Some providers (Yandex) do not reliably include the special INBOX name
+        // in a wildcard listing. INBOX always exists, so ask for it explicitly.
+        if !folders
+            .iter()
+            .any(|folder| folder.path.eq_ignore_ascii_case("INBOX"))
+        {
+            if let Ok(inbox) = session.list(None, Some("INBOX")).await {
+                if let Ok(inbox) = inbox.try_collect::<Vec<_>>().await {
+                    folders.extend(inbox.iter().filter_map(remote_folder));
+                }
+            }
         }
-    }
-    Ok(folders)
+        Ok(folders)
+    })
 }
 
-fn remote_folder(name: &imap::types::Name) -> Option<RemoteFolder> {
+fn remote_folder(name: &async_imap::types::Name) -> Option<RemoteFolder> {
     if name
         .attributes()
         .iter()
@@ -207,24 +288,29 @@ fn remote_folder(name: &imap::types::Name) -> Option<RemoteFolder> {
 }
 
 pub fn folder_state(session: &mut ImapSession, folder_path: &str) -> AppResult<FolderState> {
-    let mailbox = session
-        .status(folder_path, "(UIDNEXT UIDVALIDITY)")
-        .map_err(|error| AppError::Message(format!("IMAP folder status failed: {error}")))?;
-    if let Some(next_uid) = mailbox.uid_next {
-        return Ok(FolderState {
+    run_imap(async {
+        let mailbox = session
+            .status(folder_path, "(UIDNEXT UIDVALIDITY)")
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP folder status failed: {error}")))?;
+        if let Some(next_uid) = mailbox.uid_next {
+            return Ok(FolderState {
+                uid_validity: mailbox.uid_validity.unwrap_or(0),
+                latest_uid: next_uid.saturating_sub(1),
+            });
+        }
+        let mailbox = session
+            .select(folder_path)
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP folder select failed: {error}")))?;
+        let uids = session
+            .uid_search("ALL")
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP UID search failed: {error}")))?;
+        Ok(FolderState {
             uid_validity: mailbox.uid_validity.unwrap_or(0),
-            latest_uid: next_uid.saturating_sub(1),
-        });
-    }
-    let mailbox = session
-        .select(folder_path)
-        .map_err(|error| AppError::Message(format!("IMAP folder select failed: {error}")))?;
-    let uids = session
-        .uid_search("ALL")
-        .map_err(|error| AppError::Message(format!("IMAP UID search failed: {error}")))?;
-    Ok(FolderState {
-        uid_validity: mailbox.uid_validity.unwrap_or(0),
-        latest_uid: uids.into_iter().max().unwrap_or(0),
+            latest_uid: uids.into_iter().max().unwrap_or(0),
+        })
     })
 }
 
@@ -236,27 +322,34 @@ pub fn folder_flags(
     if uids.is_empty() {
         return Ok(Vec::new());
     }
-    session
-        .select(folder_path)
-        .map_err(|error| AppError::Message(format!("IMAP folder select failed: {error}")))?;
-    let mut result = Vec::new();
-    for chunk in uids.chunks(200) {
-        let set = chunk
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let fetches = session
-            .uid_fetch(set, "(UID FLAGS)")
-            .map_err(|error| AppError::Message(format!("IMAP flag fetch failed: {error}")))?;
-        result.extend(fetches.iter().filter_map(|fetch| {
-            Some((
-                fetch.uid?,
-                fetch.flags().iter().map(ToString::to_string).collect(),
-            ))
-        }));
-    }
-    Ok(result)
+    run_imap(async {
+        session
+            .select(folder_path)
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP folder select failed: {error}")))?;
+        let mut result = Vec::new();
+        for chunk in uids.chunks(200) {
+            let set = chunk
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            let fetches = session
+                .uid_fetch(set, "(UID FLAGS)")
+                .await
+                .map_err(|error| AppError::Message(format!("IMAP flag fetch failed: {error}")))?
+                .try_collect::<Vec<_>>()
+                .await
+                .map_err(|error| AppError::Message(format!("IMAP flag fetch failed: {error}")))?;
+            result.extend(fetches.iter().filter_map(|fetch| {
+                Some((
+                    fetch.uid?,
+                    fetch.flags().map(|flag| flag_text(&flag)).collect(),
+                ))
+            }));
+        }
+        Ok(result)
+    })
 }
 
 /// Fetch headers in batches so the caller can persist and publish the first
@@ -277,21 +370,22 @@ pub fn fetch_headers_batched<F>(
 where
     F: FnMut(Vec<FetchedHeader>) -> AppResult<()>,
 {
-    let mailbox = session
-        .select(folder_path)
+    let mailbox = run_imap(async { session.select(folder_path).await.map_err(|error| AppError::Message(format!("IMAP folder select failed: {error}"))) })
         .map_err(|error| AppError::Message(format!("IMAP folder select failed: {error}")))?;
     if from_uid <= 1 {
         let mut start = 1u32;
         while start <= mailbox.exists {
             let end = start.saturating_add(HEADER_FETCH_PAGE - 1).min(mailbox.exists);
-            let fetches = session
-                .fetch(
-                    format!("{start}:{end}"),
-                    "(UID FLAGS BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.4096>)",
-                )
-                .map_err(|error| {
-                    AppError::Message(format!("IMAP header fetch failed: {error}"))
-                })?;
+            let set = format!("{start}:{end}");
+            let fetches = run_imap(async {
+                session
+                    .fetch(&set, HEADER_FETCH_QUERY)
+                    .await
+                    .map_err(|error| header_fetch_error(&set, error))?
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .map_err(|error| header_fetch_error(&set, error))
+            })?;
             let batch = collect_headers(&fetches);
             if !batch.is_empty() {
                 on_batch(batch)?;
@@ -306,12 +400,16 @@ where
     let mut from = from_uid;
     while from <= latest_uid {
         let end = from.saturating_add(HEADER_FETCH_PAGE - 1).min(latest_uid);
-        let fetches = session
-            .uid_fetch(
-                format!("{from}:{end}"),
-                "(UID FLAGS BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.4096>)",
-            )
-            .map_err(|error| AppError::Message(format!("IMAP header fetch failed: {error}")))?;
+        let set = format!("{from}:{end}");
+        let fetches = run_imap(async {
+            session
+                .uid_fetch(&set, HEADER_FETCH_QUERY)
+                .await
+                .map_err(|error| header_fetch_error(&set, error))?
+                .try_collect::<Vec<_>>()
+                .await
+                .map_err(|error| header_fetch_error(&set, error))
+        })?;
         let batch = collect_headers(&fetches);
         if !batch.is_empty() {
             on_batch(batch)?;
@@ -325,8 +423,16 @@ where
 }
 
 const HEADER_FETCH_PAGE: u32 = 200;
+const HEADER_FETCH_QUERY: &str =
+    "(UID FLAGS BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.4096>)";
 
-fn collect_headers(fetches: &[imap::types::Fetch]) -> Vec<FetchedHeader> {
+fn header_fetch_error(range: &str, error: async_imap::error::Error) -> AppError {
+    AppError::Message(format!(
+        "IMAP header fetch failed for {range}: {error}"
+    ))
+}
+
+fn collect_headers(fetches: &[async_imap::types::Fetch]) -> Vec<FetchedHeader> {
     let mut batch = Vec::new();
     for fetch in fetches.iter() {
         let (Some(uid), Some(raw)) = (fetch.uid, fetch.header()) else {
@@ -334,7 +440,7 @@ fn collect_headers(fetches: &[imap::types::Fetch]) -> Vec<FetchedHeader> {
         };
         batch.push(FetchedHeader {
             uid,
-            flags: fetch.flags().iter().map(ToString::to_string).collect(),
+            flags: fetch.flags().map(|flag| flag_text(&flag)).collect(),
             raw: raw.to_vec(),
             preview: fetch.text().map(Vec::from).unwrap_or_default(),
         });
@@ -348,36 +454,106 @@ pub fn fetch_message(
     folder_path: &str,
     uid: u32,
 ) -> AppResult<Vec<u8>> {
-    let mut session = open_session(account, credential)?;
-    session
-        .select(folder_path)
-        .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
-    let sizes = session
-        .uid_fetch(uid.to_string(), "(RFC822.SIZE)")
-        .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?;
-    let size = sizes.iter().find_map(|fetch| fetch.size).unwrap_or(0) as u64;
-    if exceeds_message_limit(size) {
-        let _ = session.logout();
-        return Err(AppError::Message("message is too large to open".into()));
-    }
-    let fetches = session
-        .uid_fetch(uid.to_string(), "(BODY.PEEK[])")
-        .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?;
-    let raw = fetches
-        .iter()
-        .find_map(|fetch| fetch.body())
-        .map(Vec::from)
-        .ok_or_else(|| AppError::Message("IMAP message body is unavailable".into()))?;
-    if exceeds_message_limit(raw.len() as u64) {
-        let _ = session.logout();
-        return Err(AppError::Message("message is too large to open".into()));
-    }
-    let _ = session.logout();
-    Ok(raw)
+    run_imap(async {
+        let mut session = open_session_async(account, credential).await?;
+        session
+            .select(folder_path)
+            .await
+            .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+        let sizes = session
+            .uid_fetch(uid.to_string(), "(RFC822.SIZE)")
+            .await
+            .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?;
+        let size = sizes.iter().find_map(|fetch| fetch.size).unwrap_or(0) as u64;
+        if exceeds_message_limit(size) {
+            let _ = session.logout().await;
+            return Err(AppError::Message("message is too large to open".into()));
+        }
+        let fetches = session
+            .uid_fetch(uid.to_string(), "(BODY.PEEK[])")
+            .await
+            .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?;
+        let raw = fetches
+            .iter()
+            .find_map(|fetch| fetch.body())
+            .map(Vec::from)
+            .ok_or_else(|| AppError::Message("IMAP message body is unavailable".into()))?;
+        if exceeds_message_limit(raw.len() as u64) {
+            let _ = session.logout().await;
+            return Err(AppError::Message("message is too large to open".into()));
+        }
+        let _ = session.logout().await;
+        Ok(raw)
+    })
 }
 
 fn exceeds_message_limit(size: u64) -> bool {
     size > MAX_MESSAGE_BYTES
+}
+
+/// Open a session and resolve a message's current UID by its Message-ID header.
+pub fn find_message_uid(
+    account: &Account,
+    credential: &MailCredential,
+    folder_path: &str,
+    message_id: &str,
+) -> AppResult<Option<u32>> {
+    run_imap(async {
+        let mut session = open_session_async(account, credential).await?;
+        session
+            .select(folder_path)
+            .await
+            .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+        let uids = session
+            .uid_search(format!("HEADER Message-ID \"{message_id}\""))
+            .await
+            .map_err(|_| AppError::Message("IMAP message search failed".into()))?;
+        let _ = session.logout().await;
+        Ok(uids.into_iter().max())
+    })
+}
+
+/// Fetch headers and previews for specific UIDs, e.g. when filling snippets.
+pub fn fetch_headers_for(
+    account: &Account,
+    credential: &MailCredential,
+    folder_path: &str,
+    uids: &[u32],
+) -> AppResult<Vec<FetchedHeader>> {
+    if uids.is_empty() {
+        return Ok(Vec::new());
+    }
+    run_imap(async {
+        let mut session = open_session_async(account, credential).await?;
+        session
+            .select(folder_path)
+            .await
+            .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+        let set = uids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let fetches = session
+            .uid_fetch(
+                set,
+                "(UID BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.8192>)",
+            )
+            .await
+            .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?;
+        let headers = collect_headers(&fetches);
+        let _ = session.logout().await;
+        Ok(headers)
+    })
 }
 
 pub fn set_seen(
@@ -407,13 +583,16 @@ pub fn move_to_folder(
     uid: u32,
     target_path: &str,
 ) -> AppResult<()> {
-    let mut session = open_session(account, credential)?;
-    session
-        .select(folder_path)
-        .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
-    move_selected(&mut session, uid, target_path, account.auth_type)?;
-    let _ = session.logout();
-    Ok(())
+    run_imap(async {
+        let mut session = open_session_async(account, credential).await?;
+        session
+            .select(folder_path)
+            .await
+            .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+        move_selected(&mut session, uid, target_path, account.auth_type).await?;
+        let _ = session.logout().await;
+        Ok(())
+    })
 }
 
 pub fn archive(
@@ -424,18 +603,22 @@ pub fn archive(
     archive_path: Option<&str>,
     all_path: Option<&str>,
 ) -> AppResult<()> {
-    let mut session = open_session(account, credential)?;
-    session
-        .select(folder_path)
-        .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
-    let gmail = session
-        .capabilities()
-        .map(|capabilities| capabilities.has_str("X-GM-EXT-1"))
-        .unwrap_or(false);
-    let target = archive_destination(archive_path, all_path, gmail)?;
-    move_selected(&mut session, uid, &target, account.auth_type)?;
-    let _ = session.logout();
-    Ok(())
+    run_imap(async {
+        let mut session = open_session_async(account, credential).await?;
+        session
+            .select(folder_path)
+            .await
+            .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+        let gmail = session
+            .capabilities()
+            .await
+            .map(|capabilities| capabilities.has_str("X-GM-EXT-1"))
+            .unwrap_or(false);
+        let target = archive_destination(archive_path, all_path, gmail)?;
+        move_selected(&mut session, uid, &target, account.auth_type).await?;
+        let _ = session.logout().await;
+        Ok(())
+    })
 }
 
 pub fn archive_destination(
@@ -456,7 +639,7 @@ pub fn archive_destination(
     ))
 }
 
-fn move_selected(
+async fn move_selected(
     session: &mut ImapSession,
     uid: u32,
     target_path: &str,
@@ -465,19 +648,25 @@ fn move_selected(
     if auth_type == AccountAuth::Proton {
         session
             .run_command_and_check_ok(proton_move_command(uid, target_path))
+            .await
             .map_err(|error| {
                 AppError::Message(format!("IMAP message move failed: {error}"))
             })?;
         return Ok(());
     }
-    require_uidplus(uidplus_supported(session))?;
+    require_uidplus(uidplus_supported(session).await)?;
     session
         .uid_copy(uid.to_string(), quoted(target_path))
-        .map_err(|_| AppError::Message("IMAP message move failed".into()))?;
+        .await
+        .map_err(|error| AppError::Message(format!("IMAP message move failed: {error}")))?;
     session
         .uid_store(uid.to_string(), "+FLAGS (\\Deleted)")
-        .map_err(|_| AppError::Message("IMAP message delete failed".into()))?;
-    expunge_uid(session, uid)
+        .await
+        .map_err(|error| AppError::Message(format!("IMAP message delete failed: {error}")))?
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|error| AppError::Message(format!("IMAP message delete failed: {error}")))?;
+    expunge_uid(session, uid).await
 }
 
 pub fn move_to_trash(
@@ -496,40 +685,50 @@ pub fn delete_permanently(
     folder_path: &str,
     uid: u32,
 ) -> AppResult<()> {
-    let mut session = open_session(account, credential)?;
-    session
-        .select(folder_path)
-        .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
-    if account.auth_type == AccountAuth::Proton {
-        delete_selected_proton(&mut session, uid)?;
-        let _ = session.logout();
-        return Ok(());
-    }
-    require_uidplus(uidplus_supported(&mut session))?;
-    session
-        .uid_store(uid.to_string(), "+FLAGS (\\Deleted)")
-        .map_err(|_| AppError::Message("IMAP message delete failed".into()))?;
-    expunge_uid(&mut session, uid)?;
-    let _ = session.logout();
-    Ok(())
+    run_imap(async {
+        let mut session = open_session_async(account, credential).await?;
+        session
+            .select(folder_path)
+            .await
+            .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+        if account.auth_type == AccountAuth::Proton {
+            delete_selected_proton(&mut session, uid).await?;
+            let _ = session.logout().await;
+            return Ok(());
+        }
+        require_uidplus(uidplus_supported(&mut session).await)?;
+        session
+            .uid_store(uid.to_string(), "+FLAGS (\\Deleted)")
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP message delete failed: {error}")))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP message delete failed: {error}")))?;
+        expunge_uid(&mut session, uid).await?;
+        let _ = session.logout().await;
+        Ok(())
+    })
 }
 
-fn delete_selected_proton(session: &mut ImapSession, uid: u32) -> AppResult<()> {
+async fn delete_selected_proton(session: &mut ImapSession, uid: u32) -> AppResult<()> {
     let [mark, expunge] = proton_delete_command(uid);
     session
         .run_command_and_check_ok(&mark)
+        .await
         .map_err(|error| {
             AppError::Message(format!("IMAP message delete failed: {error}"))
         })?;
     session
         .run_command_and_check_ok(&expunge)
+        .await
         .map_err(|error| AppError::Message(format!("IMAP expunge failed: {error}")))?;
     Ok(())
 }
 
-fn uidplus_supported(session: &mut ImapSession) -> bool {
+async fn uidplus_supported(session: &mut ImapSession) -> bool {
     session
         .capabilities()
+        .await
         .map(|capabilities| capabilities.has_str("UIDPLUS"))
         .unwrap_or(false)
 }
@@ -544,11 +743,15 @@ fn require_uidplus(uidplus: bool) -> AppResult<()> {
     }
 }
 
-fn expunge_uid(session: &mut ImapSession, uid: u32) -> AppResult<()> {
-    require_uidplus(uidplus_supported(session))?;
+async fn expunge_uid(session: &mut ImapSession, uid: u32) -> AppResult<()> {
+    require_uidplus(uidplus_supported(session).await)?;
     session
         .uid_expunge(uid.to_string())
-        .map_err(|_| AppError::Message("IMAP expunge failed".into()))?;
+        .await
+        .map_err(|error| AppError::Message(format!("IMAP expunge failed: {error}")))?
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|error| AppError::Message(format!("IMAP expunge failed: {error}")))?;
     Ok(())
 }
 
@@ -560,19 +763,33 @@ fn store_flag(
     flag: &str,
     enabled: bool,
 ) -> AppResult<()> {
-    let mut session = open_session(account, credential)?;
-    session
-        .select(folder_path)
-        .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
-    let operation = if enabled { "+FLAGS" } else { "-FLAGS" };
-    session
-        .uid_store(uid.to_string(), format!("{operation} ({flag})"))
-        .map_err(|_| AppError::Message("IMAP flag update failed".into()))?;
-    let _ = session.logout();
-    Ok(())
+    run_imap(async {
+        let mut session = open_session_async(account, credential).await?;
+        session
+            .select(folder_path)
+            .await
+            .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+        let operation = if enabled { "+FLAGS" } else { "-FLAGS" };
+        session
+            .uid_store(uid.to_string(), format!("{operation} ({flag})"))
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP flag update failed: {error}")))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP flag update failed: {error}")))?;
+        let _ = session.logout().await;
+        Ok(())
+    })
 }
 
 pub(crate) fn open_session(
+    account: &Account,
+    credential: &MailCredential,
+) -> AppResult<ImapSession> {
+    run_imap(open_session_async(account, credential))
+}
+
+async fn open_session_async(
     account: &Account,
     credential: &MailCredential,
 ) -> AppResult<ImapSession> {
@@ -588,8 +805,9 @@ pub(crate) fn open_session(
         account.imap_port,
         account.auth_type,
         security,
-    )?;
-    authenticate(client, &account.username, credential)
+    )
+    .await?;
+    authenticate(client, &account.username, credential).await
 }
 
 fn session_security(account: &Account) -> AppResult<Option<MailSecurity>> {
@@ -610,140 +828,108 @@ fn require_proton_host(host: &str) -> AppResult<()> {
     }
 }
 
-fn connect_client(
+async fn connect_client(
     host: &str,
     port: u16,
     auth_type: AccountAuth,
     security: Option<MailSecurity>,
-) -> AppResult<imap::Client<ImapStream>> {
+) -> AppResult<async_imap::Client<ImapStream>> {
     if auth_type == AccountAuth::Proton {
         require_proton_host(host)?;
-        let tcp = connect_tcp(host, port)?;
-        let mut client = imap::Client::new(ImapStream::Plain(tcp));
+        let tcp = connect_tcp(host, port).await?;
+        let mut client = async_imap::Client::new(ImapStream::Plain(tcp));
         client
-            .read_greeting()
+            .read_response()
+            .await
             .map_err(|_| AppError::Message("IMAP connection failed".into()))?;
         return Ok(client);
     }
 
     let security =
         security.ok_or_else(|| AppError::Message("security must be tls or starttls".into()))?;
-    let tcp = connect_tcp(host, port)?;
-    let tls = TlsConnector::builder()
-        .build()
-        .map_err(|_| AppError::Message("IMAP TLS configuration failed".into()))?;
-
-    let client = match security {
+    let tcp = connect_tcp(host, port).await?;
+    match security {
         MailSecurity::Tls => {
-            let stream = tls
-                .connect(host, tcp)
-                .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?;
-            let mut client = imap::Client::new(ImapStream::Tls(stream));
+            let stream = tls_connect(host, tcp).await?;
+            let mut client = async_imap::Client::new(ImapStream::Tls(stream));
             client
-                .read_greeting()
+                .read_response()
+                .await
                 .map_err(|_| AppError::Message("IMAP connection failed".into()))?;
-            client
+            Ok(client)
         }
         MailSecurity::StartTls => {
-            let stream = starttls_exchange(tcp)
-                .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?;
-            let stream = tls
-                .connect(host, stream)
-                .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))?;
-            imap::Client::new(ImapStream::Tls(stream))
-        }
-    };
-    Ok(client)
-}
-
-fn starttls_exchange(mut stream: TcpStream) -> io::Result<TcpStream> {
-    read_imap_line(&mut stream)?;
-    stream.write_all(b"auramail1 STARTTLS\r\n")?;
-    loop {
-        let line = read_imap_line(&mut stream)?;
-        if line.starts_with(b"*") {
-            continue;
-        }
-        let Some(status) = line
-            .strip_prefix(STARTTLS_TAG)
-            .and_then(|rest| rest.strip_prefix(b" "))
-        else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected IMAP STARTTLS response",
-            ));
-        };
-        if status == b"OK" || status.starts_with(b"OK ") {
-            return Ok(stream);
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "IMAP STARTTLS rejected",
-        ));
-    }
-}
-
-fn read_imap_line(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
-    let mut line = Vec::new();
-    let mut byte = [0u8; 1];
-    loop {
-        if stream.read(&mut byte)? == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "IMAP connection closed",
-            ));
-        }
-        if byte[0] == b'\n' {
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            return Ok(line);
-        }
-        line.push(byte[0]);
-        if line.len() > MAX_IMAP_LINE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "IMAP line is too long",
-            ));
+            let mut client = async_imap::Client::new(ImapStream::Plain(tcp));
+            client
+                .read_response()
+                .await
+                .map_err(|_| AppError::Message("IMAP connection failed".into()))?;
+            client
+                .run_command_and_check_ok("STARTTLS", None)
+                .await
+                .map_err(|_| AppError::Message("IMAP STARTTLS rejected".into()))?;
+            let ImapStream::Plain(tcp) = client.into_inner() else {
+                return Err(AppError::Message("IMAP STARTTLS failed".into()));
+            };
+            let stream = tls_connect(host, tcp).await?;
+            Ok(async_imap::Client::new(ImapStream::Tls(stream)))
         }
     }
 }
 
-fn authenticate(
-    client: imap::Client<ImapStream>,
+async fn tls_connect(
+    host: &str,
+    tcp: TcpStream,
+) -> AppResult<tokio_native_tls::TlsStream<TcpStream>> {
+    let connector = native_tls::TlsConnector::builder()
+        .build()
+        .map_err(|_| AppError::Message("IMAP TLS configuration failed".into()))?;
+    tokio_native_tls::TlsConnector::from(connector)
+        .connect(host, tcp)
+        .await
+        .map_err(|_| AppError::Message("IMAP TLS handshake failed".into()))
+}
+
+async fn authenticate(
+    client: async_imap::Client<ImapStream>,
     username: &str,
     credential: &MailCredential,
 ) -> AppResult<ImapSession> {
     match credential {
         MailCredential::Password(password) => client
             .login(username, password)
-            .map_err(|_| AppError::Message("IMAP authentication failed".into())),
+            .await
+            .map_err(|(error, _)| {
+                AppError::Message(format!("IMAP authentication failed: {error}"))
+            }),
         MailCredential::AccessToken(token) => client
             .authenticate(
                 "XOAUTH2",
-                &OAuth2Authenticator {
+                OAuth2Authenticator {
                     user: username,
                     access_token: token,
                 },
             )
-            .map_err(|(_, _)| AppError::Message("IMAP authentication failed".into())),
+            .await
+            .map_err(|(error, _)| {
+                AppError::Message(format!("IMAP authentication failed: {error}"))
+            }),
     }
 }
 
-fn connect_tcp(host: &str, port: u16) -> AppResult<TcpStream> {
+async fn connect_tcp(host: &str, port: u16) -> AppResult<TcpStream> {
     let addresses = (host, port)
         .to_socket_addrs()
         .map_err(|_| AppError::Message("IMAP connection failed".into()))?;
     let mut timed_out = false;
     for address in addresses {
-        match TcpStream::connect_timeout(&address, CONNECT_TIMEOUT) {
-            Ok(stream) => {
-                let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
-                let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
+        match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(address)).await {
+            Ok(Ok(stream)) => {
+                let _ = stream.set_nodelay(true);
                 return Ok(stream);
             }
-            Err(err) if err.kind() == io::ErrorKind::TimedOut => timed_out = true,
-            Err(_) => {}
+            Ok(Err(_)) => {}
+            Err(_) => timed_out = true,
         }
     }
     if timed_out {
@@ -762,21 +948,41 @@ fn display_name(path: &str, delimiter: &str) -> String {
 
 fn special_use_role(attributes: &[NameAttribute<'_>]) -> Option<&'static str> {
     for attribute in attributes {
-        let NameAttribute::Custom(value) = attribute else {
-            continue;
+        let role = match attribute {
+            NameAttribute::All => Some("all"),
+            NameAttribute::Archive => Some("archive"),
+            NameAttribute::Drafts => Some("drafts"),
+            NameAttribute::Junk => Some("junk"),
+            NameAttribute::Sent => Some("sent"),
+            NameAttribute::Trash => Some("trash"),
+            NameAttribute::Extension(value) => {
+                match value.trim_start_matches('\\').to_ascii_lowercase().as_str() {
+                    "inbox" => Some("inbox"),
+                    "spam" => Some("junk"),
+                    _ => None,
+                }
+            }
+            _ => None,
         };
-        match value.trim_start_matches('\\').to_ascii_lowercase().as_str() {
-            "inbox" => return Some("inbox"),
-            "archive" => return Some("archive"),
-            "all" => return Some("all"),
-            "trash" => return Some("trash"),
-            "sent" => return Some("sent"),
-            "drafts" => return Some("drafts"),
-            "junk" => return Some("junk"),
-            _ => {}
+        if role.is_some() {
+            return role;
         }
     }
     None
+}
+
+fn flag_text(flag: &async_imap::types::Flag<'_>) -> String {
+    use async_imap::types::Flag;
+    match flag {
+        Flag::Seen => "\\Seen".into(),
+        Flag::Answered => "\\Answered".into(),
+        Flag::Flagged => "\\Flagged".into(),
+        Flag::Deleted => "\\Deleted".into(),
+        Flag::Draft => "\\Draft".into(),
+        Flag::Recent => "\\Recent".into(),
+        Flag::MayCreate => "\\*".into(),
+        Flag::Custom(value) => value.to_string(),
+    }
 }
 
 fn folder_role(path: &str, name: &str) -> &'static str {
@@ -821,8 +1027,8 @@ fn quoted(name: &str) -> String {
 mod tests {
     use super::*;
     use crate::accounts::{AccountAuth, MailSecurity};
-    use imap::Authenticator;
-    use std::io::{BufRead, BufReader, Read, Write};
+    use async_imap::Authenticator;
+    use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::thread;
 
@@ -969,74 +1175,58 @@ mod tests {
     }
 
     #[test]
-    fn plain_imap_stream_round_trips_bytes() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let handle = thread::spawn(move || {
-            let (mut peer, _) = listener.accept().unwrap();
-            let mut request = [0u8; 4];
-            peer.read_exact(&mut request).unwrap();
-            assert_eq!(&request, b"ping");
-            peer.write_all(b"pong").unwrap();
-        });
-
-        let tcp = TcpStream::connect(address).unwrap();
-        let mut stream = ImapStream::Plain(tcp);
-        stream.write_all(b"ping").unwrap();
-        let mut response = [0u8; 4];
-        stream.read_exact(&mut response).unwrap();
-        assert_eq!(&response, b"pong");
-        handle.join().unwrap();
-    }
-
-    fn fake_imap_server(response: &'static str) -> (u16, thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let handle = thread::spawn(move || {
-            let (mut peer, _) = listener.accept().unwrap();
-            peer.write_all(b"* OK IMAP4rev1 ready\r\n").unwrap();
-            let mut reader = BufReader::new(peer.try_clone().unwrap());
-            let mut command = String::new();
-            reader.read_line(&mut command).unwrap();
-            let tag = std::str::from_utf8(STARTTLS_TAG).unwrap();
-            assert!(
-                command.starts_with(&format!("{tag} ")) && command.ends_with(" STARTTLS\r\n"),
-                "unexpected command: {command:?}"
-            );
-            let command_tag = command.split(' ').next().unwrap();
-            peer.write_all(format!("{command_tag} {response}\r\n").as_bytes())
-                .unwrap();
-            if response.starts_with("OK") {
-                let mut ping = String::new();
-                reader.read_line(&mut ping).unwrap();
-                assert_eq!(ping, "ping\r\n");
-                peer.write_all(b"pong\r\n").unwrap();
+    fn move_copies_marks_deleted_and_expunges() {
+        let handler = |line: &str, tag: &str| -> String {
+            let upper = line.to_ascii_uppercase();
+            if upper.contains("CAPABILITY") {
+                format!("* CAPABILITY IMAP4rev1 UIDPLUS\r\n{tag} OK CAPABILITY completed\r\n")
+            } else if upper.contains("UID COPY") {
+                format!("{tag} OK COPY completed\r\n")
+            } else if upper.contains("UID STORE") {
+                format!("* 1 FETCH (UID 1 FLAGS (\\Deleted))\r\n{tag} OK STORE completed\r\n")
+            } else if upper.contains("UID EXPUNGE") {
+                format!("* 1 EXPUNGE\r\n{tag} OK EXPUNGE completed\r\n")
+            } else {
+                format!("{tag} OK completed\r\n")
             }
-        });
-        (port, handle)
-    }
-
-    #[test]
-    fn starttls_exchange_accepts_an_ok_response() {
-        let (port, handle) = fake_imap_server("OK STARTTLS completed");
-        let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let mut stream = starttls_exchange(stream).unwrap();
-        stream.write_all(b"ping\r\n").unwrap();
-        assert_eq!(read_imap_line(&mut stream).unwrap(), b"pong".to_vec());
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn starttls_exchange_rejects_no_bad_and_malformed_responses() {
-        for response in ["NO STARTTLS unavailable", "BAD unexpected command", "WHAT"] {
-            let (port, handle) = fake_imap_server(response);
-            let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        };
+        let (port, handle) = scripted_imap_server(handler);
+        let mut session = connect_plain(port);
+        run(move_selected(&mut session, 1, "Archive", AccountAuth::Password)).unwrap();
+        drop(session);
+        let commands = handle.join().unwrap();
+        for expected in ["UID COPY", "UID STORE", "UID EXPUNGE"] {
             assert!(
-                starttls_exchange(stream).is_err(),
-                "expected {response:?} to be rejected"
+                commands.iter().any(|line| line.contains(expected)),
+                "missing {expected}: {commands:?}"
             );
-            handle.join().unwrap();
         }
+    }
+
+    #[test]
+    fn run_works_from_a_multi_thread_runtime() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let value = runtime.block_on(async { run(async { 7 }) });
+        assert_eq!(value, 7);
+    }
+
+    #[test]
+    fn run_works_from_spawn_blocking() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let value = runtime.block_on(async {
+            tokio::task::spawn_blocking(|| run(async { 7 }))
+                .await
+                .unwrap()
+        });
+        assert_eq!(value, 7);
     }
 
     #[test]
@@ -1076,11 +1266,11 @@ mod tests {
         assert_eq!(folder_role("Projects", "Projects"), "other");
         assert_eq!(display_name("INBOX/Projects", "/"), "Projects");
         assert_eq!(display_name("INBOX", "/"), "INBOX");
-        let attributes = vec![NameAttribute::Custom("\\Archive".into())];
+        let attributes = vec![NameAttribute::Archive];
         assert_eq!(special_use_role(&attributes), Some("archive"));
         // Yandex marks INBOX with \Inbox even though it does not advertise
         // SPECIAL-USE; the role must not depend on the mailbox name.
-        let attributes = vec![NameAttribute::Custom("\\Inbox".into())];
+        let attributes = vec![NameAttribute::Extension("\\Inbox".into())];
         assert_eq!(special_use_role(&attributes), Some("inbox"));
     }
 
@@ -1126,7 +1316,7 @@ mod tests {
 
     #[test]
     fn xoauth2_authenticator_uses_bearer_token() {
-        let auth = OAuth2Authenticator {
+        let mut auth = OAuth2Authenticator {
             user: "me@gmail.com",
             access_token: "token-123",
         };
@@ -1183,10 +1373,14 @@ mod tests {
     }
 
     fn connect_plain(port: u16) -> ImapSession {
-        let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let mut client = imap::Client::new(ImapStream::Plain(tcp));
-        client.read_greeting().unwrap();
-        client.login("me@example.com", "pass").ok().unwrap()
+        run(async {
+            let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
+            let mut client = async_imap::Client::new(ImapStream::Plain(tcp));
+            client.read_response().await.unwrap();
+            client.login("me@example.com", "pass").await.ok().unwrap()
+        })
     }
 
     #[test]

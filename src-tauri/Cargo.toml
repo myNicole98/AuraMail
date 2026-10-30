@@ -21,11 +21,13 @@ tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 keyring = { version = "3", features = ["sync-secret-service", "windows-native"] }
 native-tls = "0.2"
-imap = { version = "2", default-features = false, features = ["tls"] }
+async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
+futures-util = "0.3"
+tokio-native-tls = "0.3"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "rustls-tls", "builder", "hostname"] }
 mail-parser = "0.10"
 ammonia = "4"
