@@ -319,6 +319,14 @@
     {/if}
   </header>
 
+  {#if app.messageScopeLoading}
+    <div
+      class="scope-progress"
+      role="progressbar"
+      aria-label="Loading messages"
+    ></div>
+  {/if}
+
   {#if app.protonAccessLimited}
     <div class="status-banner error" role="alert">
       <CircleAlert size={14} />
@@ -582,6 +590,8 @@
       <div class="empty">
         {#if app.loading}
           Searching…
+        {:else if app.messageScopeLoading}
+          Loading…
         {:else if app.searchActive}
           No results for “{app.search.trim()}”.
         {:else}
@@ -632,6 +642,36 @@
     padding: 10px 12px 8px;
     background: var(--bg-raised);
     border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .scope-progress {
+    position: relative;
+    flex: none;
+    height: 2px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  .scope-progress::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 40%;
+    background: var(--accent);
+    animation: scope-progress 1s linear infinite;
+  }
+  @keyframes scope-progress {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(350%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .scope-progress::after {
+      animation: none;
+      width: 100%;
+      opacity: 0.5;
+    }
   }
   .drafts-head {
     display: flex;
