@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'package.json'
+      - 'release-notes/**'
   workflow_dispatch:
 
 jobs:
@@ -32,6 +33,11 @@ jobs:
             echo "Release v$VERSION already exists, skipping build."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
+            test -s "release-notes/v$VERSION.md" || {
+              echo "error: release-notes/v$VERSION.md is required for v$VERSION" >&2
+              echo "Add the release notes before bumping the version." >&2
+              exit 1
+            }
           fi
 
       - name: Verify release token
@@ -111,19 +117,41 @@ jobs:
     if: needs.meta.outputs.exists == 'false'
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v3
         with:
           path: artifacts
+
+      - name: Compose release notes
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: bash scripts/ci-release-notes.sh "$VERSION" > "$RUNNER_TEMP/release-notes.md"
 
       - name: Publish release
         env:
           TOKEN: ${{ secrets.RELEASE_TOKEN }}
           VERSION: ${{ needs.meta.outputs.version }}
+          NOTES: ${{ runner.temp }}/release-notes.md
+          COMMIT: ${{ github.sha }}
         run: |
           API="${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
+          python3 - "$VERSION" "$COMMIT" "$NOTES" > "$RUNNER_TEMP/release.json" <<'PY'
+          import json, sys
+          version, commit, notes = sys.argv[1], sys.argv[2], sys.argv[3]
+          with open(notes) as handle:
+              body = handle.read()
+          print(json.dumps({
+              "tag_name": f"v{version}",
+              "target_commitish": commit,
+              "name": f"v{version}",
+              "draft": True,
+              "body": body,
+          }))
+          PY
           ID=$(curl -fsS -X POST "$API/releases" \
             -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"v$VERSION\",\"target_commitish\":\"${{ github.sha }}\",\"name\":\"v$VERSION\",\"draft\":true}" \
+            --data-binary @"$RUNNER_TEMP/release.json" \
             | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
           find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' \) -print
           for f in $(find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' \)); do
