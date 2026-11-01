@@ -61,6 +61,13 @@ func (mbox *mailbox) Info() (*imap.MailboxInfo, error) {
 }
 
 func (mbox *mailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, error) {
+	// STATUS must reflect what is actually in the mailbox. Without this the
+	// bridge reports stale UIDNEXT/MESSAGES for a mailbox that was never
+	// selected, and clients skip fetching its messages entirely.
+	if err := mbox.init(); err != nil {
+		return nil, err
+	}
+
 	mbox.u.Lock()
 	flags := []string{imap.SeenFlag, imap.DeletedFlag}
 	permFlags := []string{imap.SeenFlag, imap.DeletedFlag}
@@ -600,11 +607,20 @@ func (mbox *mailbox) MoveMessages(uid bool, seqSet *imap.SeqSet, destName string
 		return fmt.Errorf("no Proton message matches the requested UID in %s", mbox.name)
 	}
 
-	if err := mbox.u.c.LabelMessages(dest.label, apiIDs); err != nil {
-		return err
-	}
-	if err := mbox.u.c.UnlabelMessages(mbox.label, apiIDs); err != nil {
-		return err
+	// All Mail is a virtual view: every message is in it and the API cannot
+	// add or remove label 5. Unlabeling it fails with [2011] and made every
+	// move out of All Mail fail.
+	if dest.label != mbox.label {
+		if dest.label != protonmail.LabelAllMail {
+			if err := mbox.u.c.LabelMessages(dest.label, apiIDs); err != nil {
+				return err
+			}
+		}
+		if mbox.label != protonmail.LabelAllMail {
+			if err := mbox.u.c.UnlabelMessages(mbox.label, apiIDs); err != nil {
+				return err
+			}
+		}
 	}
 	return mbox.Poll()
 }

@@ -36,6 +36,10 @@
 #   reconciliation until the next sync.
 #   imap/mailbox.go: expose the persisted UIDVALIDITY. MOVE never falls back
 #   to COPY + STORE + EXPUNGE; it remains a label/unlabel operation.
+#   imap/mailbox.go: STATUS syncs the mailbox before reporting UIDNEXT and
+#   MESSAGES, otherwise a mailbox that was never SELECTed reports stale values
+#   and clients skip it (Proton INBOX appeared empty). MOVE skips the virtual
+#   All Mail label, which Proton refuses to add or remove with error 2011.
 #   protonmail/messages.go: label/unlabel use the v4 endpoints because the v3
 #   endpoints reject the system Trash and Spam labels with error 2011.
 #
