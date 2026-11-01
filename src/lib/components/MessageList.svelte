@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import {
     Archive,
     CircleAlert,
@@ -34,6 +34,13 @@
     y: number;
     message: ThreadMessage;
   } | null>(null);
+  // Custom scrollbar overlay: the native thumb is transparent so this pill can
+  // animate, while the native scrollbar keeps handling drags and track clicks.
+  let rowsEl = $state<HTMLElement | null>(null);
+  let scrollbarNear = $state(false);
+  let scrollable = $state(false);
+  let pillTop = $state(0);
+  let pillHeight = $state(0);
   let showClassificationIcon = $derived(app.selectedTabId === null && !app.draftsOpen);
   let classificationProgress = $derived(app.classificationProgress);
   let classificationMessage = $derived(
@@ -168,10 +175,45 @@
 
   function onRowsScroll(event: Event) {
     if (contextMenu !== null) contextMenu = null;
+    measureScrollbar();
     const element = event.currentTarget as HTMLElement;
     if (element.scrollHeight - element.scrollTop - element.clientHeight < 160) {
       void app.loadMoreMessages();
     }
+  }
+
+  function trackScrollbarProximity(event: PointerEvent) {
+    const element = rowsEl;
+    if (!element || !scrollable) return;
+    const rect = element.getBoundingClientRect();
+    const inside =
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom;
+    if (!inside) {
+      scrollbarNear = false;
+      return;
+    }
+    const distance = rect.right - event.clientX;
+    if (!scrollbarNear && distance <= 22) scrollbarNear = true;
+    else if (scrollbarNear && distance > 34) scrollbarNear = false;
+  }
+
+  function measureScrollbar() {
+    const element = rowsEl;
+    if (!element) return;
+    const track = element.clientHeight;
+    const total = element.scrollHeight;
+    const canScroll = total > track + 1;
+    if (canScroll !== scrollable) scrollable = canScroll;
+    if (!canScroll) return;
+    const height = Math.max(28, Math.round((track * track) / total));
+    const maxScroll = total - track;
+    const top =
+      maxScroll > 0 ? (element.scrollTop / maxScroll) * (track - height) : 0;
+    if (height !== pillHeight) pillHeight = height;
+    if (Math.abs(top - pillTop) >= 1) pillTop = Math.round(top);
   }
 
   function openContextMenu(event: MouseEvent, message: ThreadMessage) {
@@ -236,6 +278,13 @@
     }
   });
 
+  $effect(() => {
+    messages;
+    drafts;
+    draftsOpen;
+    void tick().then(measureScrollbar);
+  });
+
   onMount(() => {
     const clearBulkSelection = (event: Event) => {
       if (selected.size === 0) return;
@@ -255,15 +304,31 @@
       selected = new Set();
       selectionAnchor = null;
     };
+    const onPointerMove = (event: PointerEvent) =>
+      trackScrollbarProximity(event);
+    const onBlur = () => {
+      scrollbarNear = false;
+    };
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => measureScrollbar());
+    if (observer && rowsEl) observer.observe(rowsEl);
+    measureScrollbar();
     window.addEventListener("auramail:clear-mail-selection", clearBulkSelection);
     window.addEventListener("pointerdown", clearOnOutsidePointer, {
       capture: true
     });
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("blur", onBlur);
     return () => {
+      observer?.disconnect();
       window.removeEventListener("auramail:clear-mail-selection", clearBulkSelection);
       window.removeEventListener("pointerdown", clearOnOutsidePointer, {
         capture: true
       });
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("blur", onBlur);
     };
   });
 </script>
@@ -436,7 +501,8 @@
     </div>
   {/if}
 
-  <div class="rows" role="list" onscroll={onRowsScroll}>
+  <div class="rows-wrap">
+  <div class="rows" bind:this={rowsEl} role="list" onscroll={onRowsScroll}>
     {#if draftsOpen}
       {#each drafts as draft (draft.id)}
         <div class="row draft">
@@ -600,6 +666,17 @@
       </div>
       {/each}
     {/if}
+  </div>
+  {#if scrollable}
+    <div class="scroll-rail" aria-hidden="true">
+      <div
+        class="scroll-pill"
+        class:near={scrollbarNear}
+        style:top="{pillTop}px"
+        style:height="{pillHeight}px"
+      ></div>
+    </div>
+  {/if}
   </div>
 
   {#if contextMenu}
@@ -839,12 +916,53 @@
     cursor: default;
     opacity: 0.6;
   }
+  .rows-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
   .rows {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     contain: layout paint;
     overscroll-behavior: contain;
+  }
+  /* The native thumb keeps the full 10px hit area (drag, track click) but is
+     painted by the animated overlay below. */
+  .rows::-webkit-scrollbar {
+    width: 10px;
+  }
+  .rows::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .rows::-webkit-scrollbar-thumb {
+    border: 0;
+    background: transparent;
+  }
+  .scroll-rail {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 10px;
+    pointer-events: none;
+  }
+  .scroll-pill {
+    position: absolute;
+    left: 50%;
+    width: 4px;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--muted) 35%, transparent);
+    transition:
+      width 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      background-color 150ms ease;
+  }
+  .scroll-pill.near {
+    width: 10px;
+    background: color-mix(in srgb, var(--muted) 65%, transparent);
   }
   .row {
     position: relative;

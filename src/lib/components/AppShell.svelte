@@ -552,6 +552,7 @@
         value={columns.sidebar}
         min={SIDEBAR_MIN}
         max={SIDEBAR_MAX}
+        hitInset="0 -8px 0 -2px"
         onPointerDown={(event) => startDrag("sidebar", event)}
         onKeyboardResize={(delta) => resize("sidebar", delta)}
       />
@@ -564,6 +565,7 @@
         min={mode === "stacked" ? 140 : LIST_MIN}
         max={mode === "stacked" ? 900 : LIST_MAX}
         orientation={mode === "stacked" ? "horizontal" : "vertical"}
+        hitInset={mode === "stacked" ? undefined : "0 -8px 0 -2px"}
         onPointerDown={(event) =>
           startDrag(mode === "stacked" ? "stack" : "list", event)}
         onKeyboardResize={(delta) =>

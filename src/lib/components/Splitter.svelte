@@ -6,7 +6,8 @@
     value = 50,
     min = 0,
     max = 100,
-    orientation = "vertical"
+    orientation = "vertical",
+    hitInset = undefined
   }: {
     onPointerDown: (event: PointerEvent) => void;
     onKeyboardResize: (delta: number) => void;
@@ -15,6 +16,7 @@
     min?: number;
     max?: number;
     orientation?: "vertical" | "horizontal";
+    hitInset?: string;
   } = $props();
 
   function onKeydown(event: KeyboardEvent) {
@@ -41,6 +43,7 @@
   aria-valuemin={min}
   aria-valuemax={max}
   tabindex={0}
+  style:--splitter-hit-inset={hitInset}
   onpointerdown={onPointerDown}
   onkeydown={onKeydown}
 ></div>
@@ -60,7 +63,7 @@
   .splitter::after {
     content: "";
     position: absolute;
-    inset: 0 -8px;
+    inset: var(--splitter-hit-inset, 0 -8px);
   }
   .splitter.horizontal {
     width: 100%;
@@ -68,7 +71,7 @@
     cursor: row-resize;
   }
   .splitter.horizontal::after {
-    inset: -8px 0;
+    inset: var(--splitter-hit-inset, -8px 0);
   }
   /* The resize cursor is enough feedback. Do not light up the 1px line while
      the pointer merely passes near it; keyboard focus remains visible. */
