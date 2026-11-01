@@ -1,3 +1,9 @@
+<script module lang="ts">
+  // Stable across tab-strip re-renders: the clicked tab stays quiet until the
+  // pointer leaves the bar.
+  let suppressedTab: string | null = null;
+</script>
+
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { flip } from "svelte/animate";
@@ -32,24 +38,45 @@
   let hoverHint = $state<{ name: string; left: number; top: number } | null>(
     null
   );
+  let hoverHintKey: string | null = null;
 
-  function showHint(name: string, element: HTMLElement) {
+  function hoverTabs(event: PointerEvent) {
     if (!appearance.iconOnlyTabs) return;
+    const element = (event.target as Element | null)?.closest<HTMLElement>(
+      "[data-tab-key]"
+    );
+    if (!element) {
+      hideHint();
+      return;
+    }
+    const key = element.dataset.tabKey ?? "";
+    if (suppressedTab === key || hoverHintKey === key) return;
+    suppressedTab = null;
     const icon = element.querySelector("svg");
     const anchor = icon?.getBoundingClientRect() ?? element.getBoundingClientRect();
     hoverHint = {
-      name,
+      name: element.dataset.tabName ?? "",
       left: anchor.left + anchor.width / 2,
       top: anchor.top - 2
     };
+    hoverHintKey = key;
   }
 
   function hideHint() {
     hoverHint = null;
+    hoverHintKey = null;
+  }
+
+  function clearHint() {
+    suppressedTab = null;
+    hideHint();
   }
 
   $effect(() => {
-    if (!appearance.iconOnlyTabs) hoverHint = null;
+    if (!appearance.iconOnlyTabs) {
+      suppressedTab = null;
+      hideHint();
+    }
   });
 
   $effect(() => {
@@ -134,6 +161,7 @@
   }
 
   function selectTab(tabId: number | null) {
+    suppressedTab = tabId === null ? "all" : String(tabId);
     hideHint();
     if (suppressClick) {
       suppressClick = false;
@@ -229,7 +257,14 @@
 
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp} />
 
-<div class="tabs-bar" class:compact={appearance.iconOnlyTabs} bind:this={bar}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="tabs-bar"
+  class:compact={appearance.iconOnlyTabs}
+  bind:this={bar}
+  onpointermove={hoverTabs}
+  onpointerleave={clearHint}
+>
   <div
     class="tab-wrap all"
     class:active={app.selectedTabId === null}
@@ -240,11 +275,9 @@
       class="tab"
       role="tab"
       aria-selected={app.selectedTabId === null}
+      data-tab-key="all"
+      data-tab-name="All"
       onclick={() => selectTab(null)}
-      onpointerenter={(event) => showHint("All", event.currentTarget)}
-      onpointerleave={hideHint}
-      onfocus={(event) => showHint("All", event.currentTarget)}
-      onblur={hideHint}
     >
       <Mails size={14} />
       <span class="name">All</span>
@@ -292,13 +325,11 @@
           role="tab"
           aria-selected={app.selectedTabId === tab.id}
           title={tab.description}
+          data-tab-key={tab.id}
+          data-tab-name={tab.name}
           onclick={() => selectTab(tab.id)}
           oncontextmenu={(event) => openEditor(tab, event)}
           onpointerdown={(event) => pointerDown(tab, event)}
-          onpointerenter={(event) => showHint(tab.name, event.currentTarget)}
-          onpointerleave={hideHint}
-          onfocus={(event) => showHint(tab.name, event.currentTarget)}
-          onblur={hideHint}
         >
           <Icon size={14} />
           <span class="name">{tab.name}</span>
