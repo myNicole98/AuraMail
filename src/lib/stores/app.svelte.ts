@@ -113,6 +113,8 @@ class AppStore {
   private renderRequest = 0;
   private tabRequest = 0;
   private messageCache = new Map<string, ThreadMessage[]>();
+  private cacheEpoch = 0;
+  private inflightLoads = new Map<string, Promise<ThreadMessage[]>>();
   private pendingMoves = new Map<number, PendingThreadMove>();
   private moveQueue = new Map<
     number,
@@ -454,14 +456,7 @@ class AppStore {
         order
       };
     }
-    return {
-      space_id: this.activeSpaceId ?? undefined,
-      folder_id: this.selectedFolderId ?? undefined,
-      tab_id: this.selectedTabId ?? undefined,
-      unified: this.selectedFolderId === null ? this.unified : undefined,
-      limit: this.messageLimit,
-      order
-    };
+    return this.queryForTab(this.selectedTabId);
   }
 
   async loadMoreMessages(): Promise<void> {
@@ -1462,7 +1457,8 @@ class AppStore {
   private rememberMessages(key: string, threads: ThreadMessage[]): void {
     this.messageCache.delete(key);
     this.messageCache.set(key, threads);
-    while (this.messageCache.size > 12) {
+    // Three unified views plus up to eight tabs fit without thrashing.
+    while (this.messageCache.size > 20) {
       const oldest = this.messageCache.keys().next().value;
       if (oldest === undefined) break;
       this.messageCache.delete(oldest);
@@ -1470,7 +1466,66 @@ class AppStore {
   }
 
   private invalidateMessageCache(): void {
+    this.cacheEpoch += 1;
     this.messageCache.clear();
+    this.inflightLoads.clear();
+  }
+
+  private threadsFor(
+    query: MessageQuery,
+    key: string
+  ): Promise<ThreadMessage[]> {
+    const pending = this.inflightLoads.get(key);
+    if (pending) return pending;
+    const request = api.listThreads(query).finally(() => {
+      if (this.inflightLoads.get(key) === request) this.inflightLoads.delete(key);
+    });
+    this.inflightLoads.set(key, request);
+    return request;
+  }
+
+  private queryForTab(tabId: number | null): MessageQuery {
+    const order = loadPreferences().message_order;
+    return {
+      space_id: this.activeSpaceId ?? undefined,
+      folder_id: this.selectedFolderId ?? undefined,
+      tab_id: tabId ?? undefined,
+      unified: this.selectedFolderId === null ? this.unified : undefined,
+      limit: this.messageLimit,
+      order
+    };
+  }
+
+  /**
+   * Warm the cache for a tab the user is likely to open next. Best effort:
+   * a superseded, invalidated, or failed prefetch never touches the UI.
+   */
+  prefetchTab(tabId: number | null): Promise<void> {
+    if (
+      !isTauri() ||
+      this.messageScopeLoading ||
+      this.searchActive ||
+      this.draftsOpen ||
+      this.calendarOpen ||
+      this.syncState === "syncing"
+    ) {
+      return Promise.resolve();
+    }
+    return this.prefetchQuery(this.queryForTab(tabId));
+  }
+
+  private async prefetchQuery(query: MessageQuery): Promise<void> {
+    if (this.messageScopeLoading) return;
+    const key = JSON.stringify(query);
+    if (this.messageCache.has(key)) return;
+    const epoch = this.cacheEpoch;
+    try {
+      const threads = await this.threadsFor(query, key);
+      if (epoch !== this.cacheEpoch) return;
+      this.rememberMessages(key, threads);
+    } catch {
+      // Prefetch is best effort.
+    }
   }
 
   private applyMessages(
@@ -1529,12 +1584,15 @@ class AppStore {
     // still be cached for later navigation, but they must never be painted.
     const current = () =>
       generation === undefined || generation === this.scopeLoadRequested;
+    const epoch = this.cacheEpoch;
     if (cachedVisible && progressive && current()) {
       this.applyMessages(cachedVisible, request, true);
     }
 
-    const threads = await api.listThreads(query);
-    if (request !== this.messageRequest) return;
+    const threads = await this.threadsFor(query, key);
+    // A request from before an invalidation may no longer be trusted: neither
+    // paint it nor cache it, since the mailbox changed underneath it.
+    if (request !== this.messageRequest || epoch !== this.cacheEpoch) return;
     const visible = this.mergePending(this.filterHidden(threads), query);
     this.rememberMessages(key, threads);
     if (!current()) return;
@@ -2014,6 +2072,8 @@ class AppStore {
     clearTimeout(this.prefetchTimer);
     clearTimeout(this.syncRefreshTimer);
     this.messageCache.clear();
+    this.cacheEpoch += 1;
+    this.inflightLoads.clear();
     this.countedScopeKey = null;
     this.scopeLoadFailure = null;
     this.pendingMoves.clear();
