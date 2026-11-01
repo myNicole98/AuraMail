@@ -129,6 +129,7 @@ class AppStore {
   private scopeLoadDone = 0;
   private scopeLoadPromise: Promise<void> | null = null;
   private countedScopeKey: string | null = null;
+  private scopeLoadFailure: Error | null = null;
   private progressiveRenderActive = false;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
   private snippetAttempts = new Set<number>();
@@ -428,6 +429,7 @@ class AppStore {
       if (this.draftsOpen || this.calendarOpen || !includeMessages) return;
       this.invalidateMessageCache();
       await this.requestScopeLoad();
+      if (this.scopeLoadFailure) throw this.scopeLoadFailure;
       this.error = null;
     } catch (error) {
       this.error = errorMessage(error);
@@ -1511,7 +1513,10 @@ class AppStore {
     return JSON.stringify(a) === JSON.stringify(b);
   }
 
-  private async loadMessages(progressive: boolean): Promise<void> {
+  private async loadMessages(
+    progressive: boolean,
+    generation?: number
+  ): Promise<void> {
     if (!isTauri()) return;
     const query = this.messageQuery();
     const key = JSON.stringify(query);
@@ -1520,7 +1525,11 @@ class AppStore {
       ? this.mergePending(this.filterHidden(cached), query)
       : null;
     const request = ++this.messageRequest;
-    if (cachedVisible && progressive) {
+    // A newer click superseded this load while it was queued. Its rows may
+    // still be cached for later navigation, but they must never be painted.
+    const current = () =>
+      generation === undefined || generation === this.scopeLoadRequested;
+    if (cachedVisible && progressive && current()) {
       this.applyMessages(cachedVisible, request, true);
     }
 
@@ -1528,6 +1537,7 @@ class AppStore {
     if (request !== this.messageRequest) return;
     const visible = this.mergePending(this.filterHidden(threads), query);
     this.rememberMessages(key, threads);
+    if (!current()) return;
     if (!cachedVisible || !this.sameMessages(cachedVisible, visible)) {
       this.applyMessages(visible, request, progressive);
     }
@@ -1536,6 +1546,7 @@ class AppStore {
   async reloadMessages(): Promise<void> {
     this.invalidateMessageCache();
     await this.requestScopeLoad();
+    if (this.scopeLoadFailure) throw this.scopeLoadFailure;
     await this.refreshTabCounts();
   }
 
@@ -1607,10 +1618,13 @@ class AppStore {
         while (this.scopeLoadDone !== this.scopeLoadRequested) {
           const generation = this.scopeLoadRequested;
           try {
-            await this.loadMessages(true);
+            await this.loadMessages(true, generation);
             this.error = null;
+            this.scopeLoadFailure = null;
           } catch (error) {
             this.error = errorMessage(error);
+            this.scopeLoadFailure =
+              error instanceof Error ? error : new Error(errorMessage(error));
           }
           this.scopeLoadDone = generation;
         }
@@ -2001,6 +2015,7 @@ class AppStore {
     clearTimeout(this.syncRefreshTimer);
     this.messageCache.clear();
     this.countedScopeKey = null;
+    this.scopeLoadFailure = null;
     this.pendingMoves.clear();
     this.moveQueue.clear();
     this.clearMarkReadTimer();
