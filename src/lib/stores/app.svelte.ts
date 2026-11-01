@@ -397,6 +397,7 @@ class AppStore {
     }
     this.loading = true;
     try {
+      const countRequest = ++this.tabRequest;
       const countKey = this.tabCountKey();
       const counts = this.fetchTabUnreadCounts();
       const spaceId = this.activeSpaceId;
@@ -419,8 +420,11 @@ class AppStore {
       this.folders = folders;
       if (drafts) this.drafts = drafts;
       this.tabs = tabs;
-      this.tabUnreadCounts = await counts;
-      this.countedScopeKey = countKey;
+      // Counts computed for an older scope must not land on the badges.
+      if (countRequest === this.tabRequest) {
+        this.tabUnreadCounts = await counts;
+        this.countedScopeKey = countKey;
+      }
       await this.refreshSpaceUnreadCounts();
       this.refreshTrayUnread();
       if (
@@ -1485,30 +1489,22 @@ class AppStore {
     return request;
   }
 
-  private queryForTab(tabId: number | null): MessageQuery {
-    const order = loadPreferences().message_order;
-    return {
-      space_id: this.activeSpaceId ?? undefined,
-      folder_id: this.selectedFolderId ?? undefined,
-      tab_id: tabId ?? undefined,
-      unified: this.selectedFolderId === null ? this.unified : undefined,
-      limit: this.messageLimit,
-      order
-    };
-  }
-
   /**
-   * Selecting a tab settles pagination back to 200 first, so a prefetch built
-   * with the current `messageLimit` would miss the cache key the click uses.
+   * One builder for both the visible load and a prefetch, so a prefetch always
+   * produces the cache key the next click uses. Selecting a tab settles
+   * pagination back to 200, so `prefetchTab` passes that limit explicitly.
    */
-  private prefetchQueryForTab(tabId: number | null): MessageQuery {
+  private queryForTab(
+    tabId: number | null,
+    limit: number = this.messageLimit
+  ): MessageQuery {
     const order = loadPreferences().message_order;
     return {
       space_id: this.activeSpaceId ?? undefined,
       folder_id: this.selectedFolderId ?? undefined,
       tab_id: tabId ?? undefined,
       unified: this.selectedFolderId === null ? this.unified : undefined,
-      limit: 200,
+      limit,
       order
     };
   }
@@ -1528,7 +1524,7 @@ class AppStore {
     ) {
       return Promise.resolve();
     }
-    return this.prefetchQuery(this.prefetchQueryForTab(tabId));
+    return this.prefetchQuery(this.queryForTab(tabId, 200));
   }
 
   private async prefetchQuery(query: MessageQuery): Promise<void> {
@@ -1609,10 +1605,13 @@ class AppStore {
     const threads = await this.threadsFor(query, key);
     // A newer load owns the visible list; this response must not touch it.
     if (request !== this.messageRequest) return;
-    // A request from before an invalidation may no longer be trusted: neither
-    // paint it nor cache it, since the mailbox changed underneath it. Ask the
-    // scheduler for fresh rows so the scope is not left on the old list.
+    // Rows from before an invalidation are not trustworthy enough to cache:
+    // an archive/delete may have moved them. Painting them is still better
+    // than leaving the clicked scope blank behind the progress bar, so show
+    // them for the newest load only, then re-issue once for fresh rows.
     if (epoch !== this.cacheEpoch) {
+      const stale = this.mergePending(this.filterHidden(threads), query);
+      if (current()) this.applyMessages(stale, request, progressive);
       void this.reloadMessageScope();
       return;
     }
@@ -1658,6 +1657,9 @@ class AppStore {
     if (this.idlePrefetchRunning) return;
     this.idlePrefetchRunning = true;
     try {
+      // The All view is a different cache key from a folder scope with a tab.
+      if (!this.canPrefetch(generation)) return;
+      await this.prefetchTab(null);
       for (const tab of this.tabs) {
         if (!this.canPrefetch(generation)) return;
         if (tab.id === this.selectedTabId) continue;
