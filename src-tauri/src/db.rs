@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -165,9 +166,36 @@ pub(crate) const SEED_TABS: &[(&str, &str, bool, &str, &str)] = &[
     ),
 ];
 
+const READ_POOL_SIZE: usize = 3;
+
 pub struct Database {
     pub(crate) conn: Mutex<Connection>,
-    read_conn: Option<Mutex<Connection>>,
+    read_return: Option<Sender<Connection>>,
+    read_pool: Option<Mutex<Receiver<Connection>>>,
+}
+
+pub(crate) struct ReadGuard<'a> {
+    conn: Option<Connection>,
+    return_to: Option<&'a Sender<Connection>>,
+    shared: Option<MutexGuard<'a, Connection>>,
+}
+
+impl std::ops::Deref for ReadGuard<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.conn
+            .as_ref()
+            .or_else(|| self.shared.as_deref())
+            .expect("read guard holds a connection")
+    }
+}
+
+impl Drop for ReadGuard<'_> {
+    fn drop(&mut self) {
+        if let (Some(conn), Some(sender)) = (self.conn.take(), self.return_to) {
+            let _ = sender.send(conn);
+        }
+    }
 }
 
 impl Database {
@@ -179,12 +207,18 @@ impl Database {
         Self::configure(&conn)?;
         let mut db = Self {
             conn: Mutex::new(conn),
-            read_conn: None,
+            read_return: None,
+            read_pool: None,
         };
         db.migrate()?;
-        let read = Connection::open(path)?;
-        read.busy_timeout(Duration::from_secs(5))?;
-        db.read_conn = Some(Mutex::new(read));
+        let (return_tx, return_rx) = channel();
+        for _ in 0..READ_POOL_SIZE {
+            let read = Connection::open(path)?;
+            read.busy_timeout(Duration::from_secs(5))?;
+            let _ = return_tx.send(read);
+        }
+        db.read_return = Some(return_tx);
+        db.read_pool = Some(Mutex::new(return_rx));
         Ok(db)
     }
 
@@ -193,18 +227,26 @@ impl Database {
         Self::configure(&conn)?;
         let db = Self {
             conn: Mutex::new(conn),
-            read_conn: None,
+            read_return: None,
+            read_pool: None,
         };
         db.migrate()?;
         Ok(db)
     }
 
-    pub(crate) fn read(&self) -> MutexGuard<'_, Connection> {
-        self.read_conn
-            .as_ref()
-            .unwrap_or(&self.conn)
-            .lock()
-            .unwrap()
+    pub(crate) fn read(&self) -> ReadGuard<'_> {
+        match (&self.read_pool, &self.read_return) {
+            (Some(pool), Some(return_to)) => ReadGuard {
+                conn: Some(pool.lock().unwrap().recv().expect("read pool stays alive")),
+                return_to: Some(return_to),
+                shared: None,
+            },
+            _ => ReadGuard {
+                conn: None,
+                return_to: None,
+                shared: Some(self.conn.lock().unwrap()),
+            },
+        }
     }
 
     pub fn migrate(&self) -> AppResult<()> {
@@ -1569,5 +1611,30 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!((auth_type, provider, version), (1, 1, 38));
+    }
+
+    #[test]
+    fn read_pool_serves_concurrent_readers() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(Database::open(&dir.path().join("pool.db")).unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let worker = {
+            let db = std::sync::Arc::clone(&db);
+            std::thread::spawn(move || {
+                let first = db.read();
+                let second = db.read();
+                let third = db.read();
+                for guard in [&first, &second, &third] {
+                    let one: i64 = guard.query_row("select 1", [], |row| row.get(0)).unwrap();
+                    assert_eq!(one, 1);
+                }
+                tx.send(()).unwrap();
+            })
+        };
+
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("three reads blocked on one connection");
+        worker.join().unwrap();
     }
 }
