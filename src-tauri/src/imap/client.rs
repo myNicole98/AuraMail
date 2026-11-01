@@ -739,8 +739,9 @@ async fn move_selected(
         return Ok(());
     }
     require_uidplus(uidplus_supported(session).await)?;
+    // async-imap quotes mailbox names itself; pass the raw path.
     session
-        .uid_copy(uid.to_string(), quoted(target_path))
+        .uid_copy(uid.to_string(), target_path)
         .await
         .map_err(|error| AppError::Message(format!("IMAP message move failed: {error}")))?;
     session
@@ -1277,7 +1278,7 @@ mod tests {
         };
         let (port, handle) = scripted_imap_server(handler);
         let mut session = connect_plain(port);
-        run(move_selected(&mut session, 1, "Archive", AccountAuth::Password)).unwrap();
+        run(move_selected(&mut session, 1, "Deleted Items", AccountAuth::Password)).unwrap();
         drop(session);
         let commands = handle.join().unwrap();
         for expected in ["UID COPY", "UID STORE", "UID EXPUNGE"] {
@@ -1286,6 +1287,16 @@ mod tests {
                 "missing {expected}: {commands:?}"
             );
         }
+        assert!(
+            commands
+                .iter()
+                .any(|line| line.contains("UID COPY 1 \"Deleted Items\"")),
+            "mailbox must be quoted exactly once: {commands:?}"
+        );
+        assert!(
+            !commands.iter().any(|line| line.contains("\\\"Deleted Items\\\"")),
+            "mailbox was double-quoted: {commands:?}"
+        );
     }
 
     #[test]
