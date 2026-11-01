@@ -124,7 +124,11 @@ class AppStore {
   private syncRefreshQueued = false;
   private refreshPromise: Promise<void> | null = null;
   private draftsRequest = 0;
-  private messageScopeLoading = false;
+  messageScopeLoading = $state(false);
+  private scopeLoadRequested = 0;
+  private scopeLoadDone = 0;
+  private scopeLoadPromise: Promise<void> | null = null;
+  private countedScopeKey: string | null = null;
   private progressiveRenderActive = false;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
   private snippetAttempts = new Set<number>();
@@ -221,6 +225,10 @@ class AppStore {
     };
   }
 
+  private tabCountKey(): string {
+    return JSON.stringify(this.tabCountScope());
+  }
+
   private async fetchTabUnreadCounts(): Promise<{
     all: number;
     tabs: Record<number, number>;
@@ -239,9 +247,13 @@ class AppStore {
   }
 
   private async refreshTabCounts(): Promise<void> {
+    const key = this.tabCountKey();
     const request = ++this.tabRequest;
     const counts = await this.fetchTabUnreadCounts();
-    if (request === this.tabRequest) this.tabUnreadCounts = counts;
+    if (request === this.tabRequest) {
+      this.tabUnreadCounts = counts;
+      this.countedScopeKey = key;
+    }
   }
 
   async init(): Promise<void> {
@@ -381,6 +393,7 @@ class AppStore {
     }
     this.loading = true;
     try {
+      const countKey = this.tabCountKey();
       const counts = this.fetchTabUnreadCounts();
       const spaceId = this.activeSpaceId;
       const [accounts, folders, drafts, tabs] = await Promise.all([
@@ -403,6 +416,7 @@ class AppStore {
       if (drafts) this.drafts = drafts;
       this.tabs = tabs;
       this.tabUnreadCounts = await counts;
+      this.countedScopeKey = countKey;
       await this.refreshSpaceUnreadCounts();
       this.refreshTrayUnread();
       if (
@@ -412,17 +426,8 @@ class AppStore {
         this.selectedTabId = null;
       }
       if (this.draftsOpen || this.calendarOpen || !includeMessages) return;
-      const query = this.messageQuery();
-      const key = JSON.stringify(query);
       this.invalidateMessageCache();
-      const threads = await api.listThreads(query);
-      const request = ++this.messageRequest;
-      const visible = this.filterHidden(threads);
-      if (!this.sameMessages(this.messages, visible)) {
-        this.applyMessages(visible, request, true);
-      }
-      this.rememberMessages(key, threads);
-      this.scheduleUnifiedPrefetch();
+      await this.requestScopeLoad();
       this.error = null;
     } catch (error) {
       this.error = errorMessage(error);
@@ -1530,7 +1535,7 @@ class AppStore {
 
   async reloadMessages(): Promise<void> {
     this.invalidateMessageCache();
-    await this.loadMessages(true);
+    await this.requestScopeLoad();
     await this.refreshTabCounts();
   }
 
@@ -1586,21 +1591,49 @@ class AppStore {
   }
 
   /**
+   * Coalesces rapid scope switches: one list request at a time, newest wins.
+   * Resolves when the drain has applied the newest requested scope.
+   */
+  private requestScopeLoad(): Promise<void> {
+    this.scopeLoadRequested += 1;
+    this.messageScopeLoading = true;
+    this.scopeLoadPromise ??= this.drainScopeLoads();
+    return this.scopeLoadPromise;
+  }
+
+  private async drainScopeLoads(): Promise<void> {
+    try {
+      do {
+        while (this.scopeLoadDone !== this.scopeLoadRequested) {
+          const generation = this.scopeLoadRequested;
+          try {
+            await this.loadMessages(true);
+            this.error = null;
+          } catch (error) {
+            this.error = errorMessage(error);
+          }
+          this.scopeLoadDone = generation;
+        }
+        await this.refreshCountsIfScopeChanged();
+      } while (this.scopeLoadDone !== this.scopeLoadRequested);
+    } finally {
+      this.scopeLoadPromise = null;
+      this.messageScopeLoading = false;
+    }
+  }
+
+  private async refreshCountsIfScopeChanged(): Promise<void> {
+    if (this.tabCountKey() === this.countedScopeKey) return;
+    await this.refreshTabCounts();
+  }
+
+  /**
    * Changing an inbox/folder/tab is a message-list operation. The surrounding
    * account, folder, draft, and tab metadata does not change, so do not make
    * the new list wait for a full application refresh.
    */
-  private async reloadMessageScope(): Promise<void> {
-    this.messageScopeLoading = true;
-    try {
-      await this.loadMessages(true);
-      this.error = null;
-    } catch (error) {
-      this.error = errorMessage(error);
-    } finally {
-      this.messageScopeLoading = false;
-    }
-    void this.refreshTabCounts();
+  private reloadMessageScope(): Promise<void> {
+    return this.requestScopeLoad();
   }
 
   private async refreshFolders(): Promise<void> {
@@ -1967,6 +2000,7 @@ class AppStore {
     clearTimeout(this.prefetchTimer);
     clearTimeout(this.syncRefreshTimer);
     this.messageCache.clear();
+    this.countedScopeKey = null;
     this.pendingMoves.clear();
     this.moveQueue.clear();
     this.clearMarkReadTimer();
