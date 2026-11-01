@@ -404,6 +404,15 @@ export type ThreadMessage = Message & {
   thread_has_inbox: boolean;
 };
 
+export type BulkFailure = {
+  message_id: number;
+  error: string;
+};
+
+export type BulkReport = {
+  failed: BulkFailure[];
+};
+
 export type Attachment = {
   id: number;
   message_id: number;

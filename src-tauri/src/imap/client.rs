@@ -178,13 +178,13 @@ pub fn proton_host_allowed(host: &str) -> bool {
     host == "127.0.0.1" || host == "::1" || host.eq_ignore_ascii_case("localhost")
 }
 
-pub fn proton_move_command(uid: u32, target: &str) -> String {
-    format!("UID MOVE {uid} {}", quoted(target))
+pub fn proton_move_command_set(uids: &str, target: &str) -> String {
+    format!("UID MOVE {uids} {}", quoted(target))
 }
 
-pub fn proton_delete_command(uid: u32) -> [String; 2] {
+pub fn proton_delete_command_set(uids: &str) -> [String; 2] {
     [
-        format!("UID STORE {uid} +FLAGS (\\Deleted)"),
+        format!("UID STORE {uids} +FLAGS (\\Deleted)"),
         "EXPUNGE".to_string(),
     ]
 }
@@ -650,6 +650,17 @@ pub fn set_seen(
     store_flag(account, credential, folder_path, uid, "\\Seen", seen)
 }
 
+/// Set one flag on many messages with one session and UID-set commands.
+pub fn set_seen_many(
+    account: &Account,
+    credential: &MailCredential,
+    folder_path: &str,
+    uids: &[u32],
+    seen: bool,
+) -> AppResult<()> {
+    store_flag_many(account, credential, folder_path, uids, "\\Seen", seen)
+}
+
 pub fn set_starred(
     account: &Account,
     credential: &MailCredential,
@@ -667,13 +678,51 @@ pub fn move_to_folder(
     uid: u32,
     target_path: &str,
 ) -> AppResult<()> {
+    move_many(account, credential, folder_path, &[uid], target_path)
+}
+
+/// Move a whole selection with one session and UID-set commands. Providers
+/// throttle per connection, so batching N messages into a handful of commands
+/// is what keeps a 200-message action from opening 200 sessions.
+pub fn move_many(
+    account: &Account,
+    credential: &MailCredential,
+    folder_path: &str,
+    uids: &[u32],
+    target_path: &str,
+) -> AppResult<()> {
+    if uids.is_empty() {
+        return Ok(());
+    }
     run(async {
         let mut session = open_session_async(account, credential).await?;
         session
             .select(folder_path)
             .await
             .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
-        move_selected(&mut session, uid, target_path, account.auth_type).await?;
+        move_selected_many(&mut session, uids, target_path, account.auth_type).await?;
+        let _ = session.logout().await;
+        Ok(())
+    })
+}
+
+/// Permanently delete a selection with one session and UID-set commands.
+pub fn delete_many(
+    account: &Account,
+    credential: &MailCredential,
+    folder_path: &str,
+    uids: &[u32],
+) -> AppResult<()> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    run(async {
+        let mut session = open_session_async(account, credential).await?;
+        session
+            .select(folder_path)
+            .await
+            .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+        delete_selected_many(&mut session, uids, account.auth_type).await?;
         let _ = session.logout().await;
         Ok(())
     })
@@ -729,29 +778,73 @@ async fn move_selected(
     target_path: &str,
     auth_type: AccountAuth,
 ) -> AppResult<()> {
+    move_selected_many(session, &[uid], target_path, auth_type).await
+}
+
+/// Long UID lists are split so one command never grows without bound.
+const MAX_UIDS_PER_COMMAND: usize = 200;
+
+/// IMAP sequence sets accept ranges, so `[3, 1, 2]` becomes `1:3` and a
+/// 200-message move stays a short line on the wire.
+fn format_uid_set(uids: &[u32]) -> String {
+    let mut sorted = uids.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut parts = Vec::new();
+    let mut index = 0;
+    while index < sorted.len() {
+        let start = sorted[index];
+        let mut end = start;
+        while index + 1 < sorted.len() && sorted[index + 1] == end.saturating_add(1) {
+            index += 1;
+            end = sorted[index];
+        }
+        if start == end {
+            parts.push(start.to_string());
+        } else {
+            parts.push(format!("{start}:{end}"));
+        }
+        index += 1;
+    }
+    parts.join(",")
+}
+
+async fn move_selected_many(
+    session: &mut ImapSession,
+    uids: &[u32],
+    target_path: &str,
+    auth_type: AccountAuth,
+) -> AppResult<()> {
     if auth_type == AccountAuth::Proton {
-        session
-            .run_command_and_check_ok(proton_move_command(uid, target_path))
-            .await
-            .map_err(|error| {
-                AppError::Message(format!("IMAP message move failed: {error}"))
-            })?;
+        for chunk in uids.chunks(MAX_UIDS_PER_COMMAND) {
+            let set = format_uid_set(chunk);
+            session
+                .run_command_and_check_ok(proton_move_command_set(&set, target_path))
+                .await
+                .map_err(|error| {
+                    AppError::Message(format!("IMAP message move failed: {error}"))
+                })?;
+        }
         return Ok(());
     }
     require_uidplus(uidplus_supported(session).await)?;
-    // async-imap quotes mailbox names itself; pass the raw path.
-    session
-        .uid_copy(uid.to_string(), target_path)
-        .await
-        .map_err(|error| AppError::Message(format!("IMAP message move failed: {error}")))?;
-    session
-        .uid_store(uid.to_string(), "+FLAGS (\\Deleted)")
-        .await
-        .map_err(|error| AppError::Message(format!("IMAP message delete failed: {error}")))?
-        .try_collect::<Vec<_>>()
-        .await
-        .map_err(|error| AppError::Message(format!("IMAP message delete failed: {error}")))?;
-    expunge_uid(session, uid).await
+    for chunk in uids.chunks(MAX_UIDS_PER_COMMAND) {
+        let set = format_uid_set(chunk);
+        // async-imap quotes mailbox names itself; pass the raw path.
+        session
+            .uid_copy(set.clone(), target_path)
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP message move failed: {error}")))?;
+        session
+            .uid_store(set.clone(), "+FLAGS (\\Deleted)")
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP message delete failed: {error}")))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP message delete failed: {error}")))?;
+        expunge_uid_set(session, &set).await?;
+    }
+    Ok(())
 }
 
 pub fn move_to_trash(
@@ -795,8 +888,41 @@ pub fn delete_permanently(
     })
 }
 
+async fn delete_selected_many(
+    session: &mut ImapSession,
+    uids: &[u32],
+    auth_type: AccountAuth,
+) -> AppResult<()> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    if auth_type == AccountAuth::Proton {
+        for chunk in uids.chunks(MAX_UIDS_PER_COMMAND) {
+            delete_selected_proton_set(session, &format_uid_set(chunk)).await?;
+        }
+        return Ok(());
+    }
+    require_uidplus(uidplus_supported(session).await)?;
+    for chunk in uids.chunks(MAX_UIDS_PER_COMMAND) {
+        let set = format_uid_set(chunk);
+        session
+            .uid_store(set.clone(), "+FLAGS (\\Deleted)")
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP message delete failed: {error}")))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP message delete failed: {error}")))?;
+        expunge_uid_set(session, &set).await?;
+    }
+    Ok(())
+}
+
 async fn delete_selected_proton(session: &mut ImapSession, uid: u32) -> AppResult<()> {
-    let [mark, expunge] = proton_delete_command(uid);
+    delete_selected_proton_set(session, &uid.to_string()).await
+}
+
+async fn delete_selected_proton_set(session: &mut ImapSession, uids: &str) -> AppResult<()> {
+    let [mark, expunge] = proton_delete_command_set(uids);
     session
         .run_command_and_check_ok(&mark)
         .await
@@ -830,8 +956,12 @@ fn require_uidplus(uidplus: bool) -> AppResult<()> {
 
 async fn expunge_uid(session: &mut ImapSession, uid: u32) -> AppResult<()> {
     require_uidplus(uidplus_supported(session).await)?;
+    expunge_uid_set(session, &uid.to_string()).await
+}
+
+async fn expunge_uid_set(session: &mut ImapSession, uids: &str) -> AppResult<()> {
     session
-        .uid_expunge(uid.to_string())
+        .uid_expunge(uids.to_string())
         .await
         .map_err(|error| AppError::Message(format!("IMAP expunge failed: {error}")))?
         .try_collect::<Vec<_>>()
@@ -848,23 +978,49 @@ fn store_flag(
     flag: &str,
     enabled: bool,
 ) -> AppResult<()> {
+    store_flag_many(account, credential, folder_path, &[uid], flag, enabled)
+}
+
+fn store_flag_many(
+    account: &Account,
+    credential: &MailCredential,
+    folder_path: &str,
+    uids: &[u32],
+    flag: &str,
+    enabled: bool,
+) -> AppResult<()> {
+    if uids.is_empty() {
+        return Ok(());
+    }
     run(async {
         let mut session = open_session_async(account, credential).await?;
         session
             .select(folder_path)
             .await
             .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
-        let operation = if enabled { "+FLAGS" } else { "-FLAGS" };
+        store_flags_on(&mut session, uids, flag, enabled).await?;
+        let _ = session.logout().await;
+        Ok(())
+    })
+}
+
+async fn store_flags_on(
+    session: &mut ImapSession,
+    uids: &[u32],
+    flag: &str,
+    enabled: bool,
+) -> AppResult<()> {
+    let operation = if enabled { "+FLAGS" } else { "-FLAGS" };
+    for chunk in uids.chunks(MAX_UIDS_PER_COMMAND) {
         session
-            .uid_store(uid.to_string(), format!("{operation} ({flag})"))
+            .uid_store(format_uid_set(chunk), format!("{operation} ({flag})"))
             .await
             .map_err(|error| AppError::Message(format!("IMAP flag update failed: {error}")))?
             .try_collect::<Vec<_>>()
             .await
             .map_err(|error| AppError::Message(format!("IMAP flag update failed: {error}")))?;
-        let _ = session.logout().await;
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 pub(crate) fn open_session(
@@ -1178,11 +1334,11 @@ mod tests {
     #[test]
     fn proton_move_uses_uid_move_with_a_quoted_mailbox() {
         assert_eq!(
-            proton_move_command(42, "Archive"),
+            proton_move_command_set("42", "Archive"),
             "UID MOVE 42 \"Archive\""
         );
         assert_eq!(
-            proton_move_command(7, "Sent \"Items\""),
+            proton_move_command_set("7", "Sent \"Items\""),
             "UID MOVE 7 \"Sent \\\"Items\\\"\""
         );
     }
@@ -1190,7 +1346,7 @@ mod tests {
     #[test]
     fn proton_delete_marks_deleted_then_expunges() {
         assert_eq!(
-            proton_delete_command(42),
+            proton_delete_command_set("42"),
             [
                 "UID STORE 42 +FLAGS (\\Deleted)".to_string(),
                 "EXPUNGE".to_string()
@@ -1555,6 +1711,152 @@ mod tests {
         assert!(
             !commands.iter().any(|line| line.contains("UID SEARCH")),
             "unexpected SEARCH commands: {commands:?}"
+        );
+    }
+
+    fn uidplus_handler(line: &str, tag: &str) -> String {
+        let upper = line.to_ascii_uppercase();
+        if upper.contains("CAPABILITY") {
+            format!("* CAPABILITY IMAP4rev1 UIDPLUS\r\n{tag} OK CAPABILITY completed\r\n")
+        } else if upper.contains("UID COPY") {
+            format!("{tag} OK COPY completed\r\n")
+        } else if upper.contains("UID STORE") {
+            format!("{tag} OK STORE completed\r\n")
+        } else if upper.contains("UID EXPUNGE") {
+            format!("{tag} OK EXPUNGE completed\r\n")
+        } else {
+            format!("{tag} OK completed\r\n")
+        }
+    }
+
+    #[test]
+    fn uid_sets_compress_consecutive_runs() {
+        assert_eq!(format_uid_set(&[]), "");
+        assert_eq!(format_uid_set(&[7]), "7");
+        assert_eq!(format_uid_set(&[3, 1, 2]), "1:3");
+        assert_eq!(format_uid_set(&[6, 1, 3, 4, 6]), "1,3:4,6");
+    }
+
+    #[test]
+    fn moving_many_messages_sends_one_uid_set_command() {
+        let (port, handle) = scripted_imap_server(uidplus_handler);
+        let mut session = connect_plain(port);
+        run(move_selected_many(
+            &mut session,
+            &[3, 1, 2],
+            "Trash",
+            AccountAuth::Password,
+        ))
+        .unwrap();
+        drop(session);
+        let commands = handle.join().unwrap();
+        let copies = commands
+            .iter()
+            .filter(|line| line.contains("UID COPY"))
+            .collect::<Vec<_>>();
+        assert_eq!(copies.len(), 1, "expected one COPY: {commands:?}");
+        assert!(
+            copies[0].contains("UID COPY 1:3 \"Trash\""),
+            "expected a UID set: {commands:?}"
+        );
+        assert!(
+            commands
+                .iter()
+                .any(|line| line.contains("UID STORE 1:3 +FLAGS (\\Deleted)")),
+            "expected one STORE for the set: {commands:?}"
+        );
+        assert!(
+            commands.iter().any(|line| line.contains("UID EXPUNGE 1:3")),
+            "expected one UID EXPUNGE for the set: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn deleting_many_messages_sends_one_uid_set_command() {
+        let (port, handle) = scripted_imap_server(uidplus_handler);
+        let mut session = connect_plain(port);
+        run(delete_selected_many(
+            &mut session,
+            &[5, 4, 6],
+            AccountAuth::Password,
+        ))
+        .unwrap();
+        drop(session);
+        let commands = handle.join().unwrap();
+        assert!(
+            commands
+                .iter()
+                .any(|line| line.contains("UID STORE 4:6 +FLAGS (\\Deleted)")),
+            "expected one STORE for the set: {commands:?}"
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|line| line.contains("UID EXPUNGE"))
+                .count(),
+            1,
+            "expected one UID EXPUNGE: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn flagging_many_messages_sends_one_uid_set_command() {
+        let handler = |line: &str, tag: &str| -> String {
+            if line.to_ascii_uppercase().contains("UID STORE") {
+                format!("{tag} OK STORE completed\r\n")
+            } else {
+                format!("{tag} OK completed\r\n")
+            }
+        };
+        let (port, handle) = scripted_imap_server(handler);
+        let mut session = connect_plain(port);
+        run(store_flags_on(&mut session, &[2, 1, 3], "\\Seen", true)).unwrap();
+        drop(session);
+        let commands = handle.join().unwrap();
+        let stores = commands
+            .iter()
+            .filter(|line| line.contains("UID STORE"))
+            .collect::<Vec<_>>();
+        assert_eq!(stores.len(), 1, "expected one STORE: {commands:?}");
+        assert!(
+            stores[0].contains("UID STORE 1:3 +FLAGS (\\Seen)"),
+            "expected a UID set: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn proton_move_of_many_messages_uses_a_uid_set() {
+        assert_eq!(
+            proton_move_command_set("1:3,7", "Archive"),
+            "UID MOVE 1:3,7 \"Archive\""
+        );
+
+        let handler = |line: &str, tag: &str| -> String {
+            if line.to_ascii_uppercase().contains("UID MOVE") {
+                format!("{tag} OK MOVE completed\r\n")
+            } else {
+                format!("{tag} OK completed\r\n")
+            }
+        };
+        let (port, handle) = scripted_imap_server(handler);
+        let mut session = connect_plain(port);
+        run(move_selected_many(
+            &mut session,
+            &[8, 7, 9],
+            "Archive",
+            AccountAuth::Proton,
+        ))
+        .unwrap();
+        drop(session);
+        let commands = handle.join().unwrap();
+        let moves = commands
+            .iter()
+            .filter(|line| line.contains("UID MOVE"))
+            .collect::<Vec<_>>();
+        assert_eq!(moves.len(), 1, "expected one MOVE: {commands:?}");
+        assert!(
+            moves[0].contains("UID MOVE 7:9 \"Archive\""),
+            "expected a UID set: {commands:?}"
         );
     }
 }

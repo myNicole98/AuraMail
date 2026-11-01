@@ -38,6 +38,23 @@ function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+/// A bulk action that partially succeeded. Only the ids the backend reports
+/// failed are put back, so a hundred deleted messages are not undone by one
+/// rejected one.
+class BulkActionError extends Error {
+  readonly failedIds: number[];
+
+  constructor(failures: { message_id: number; error: string }[]) {
+    const first = failures[0]?.error ?? "The action failed";
+    super(
+      failures.length > 1
+        ? `${failures.length} messages could not be deleted: ${first}`
+        : first
+    );
+    this.failedIds = failures.map((failure) => failure.message_id);
+  }
+}
+
 function errorMessage(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
@@ -1355,10 +1372,13 @@ class AppStore {
   async markMessages(ids: number[], read: boolean): Promise<void> {
     if (!isTauri() || ids.length === 0) return;
     try {
-      await Promise.all(ids.map((id) => api.markRead(id, read)));
+      const report = await api.markMessages(ids, read);
       await this.reloadMessages();
       await this.refreshFolders();
-      this.error = null;
+      this.error =
+        report.failed.length > 0
+          ? `${report.failed.length} message${report.failed.length === 1 ? "" : "s"} could not be updated: ${report.failed[0].error}`
+          : null;
     } catch (error) {
       this.error = errorMessage(error);
     }
@@ -1416,11 +1436,8 @@ class AppStore {
     await this.queueMessageAction(
       ids,
       async () => {
-        await Promise.all(
-          ids.map((id) =>
-            permanent.has(id) ? api.deleteMessage(id) : api.trashMessage(id)
-          )
-        );
+        const report = await api.deleteMessages(ids);
+        if (report.failed.length > 0) throw new BulkActionError(report.failed);
       },
       { immediate: true }
     );
@@ -1995,25 +2012,34 @@ class AppStore {
   }
 
   private async runQueuedAction(item: { ids: number[]; run: () => Promise<void> }): Promise<void> {
+    let failure: string | null = null;
     try {
       await item.run();
       this.error = null;
     } catch (error) {
       const message = errorMessage(error);
-      if (!/still syncing/i.test(message)) this.error = message;
-      for (const id of item.ids) this.pendingMoves.delete(id);
+      if (!/still syncing/i.test(message)) {
+        failure = message;
+        this.error = message;
+      }
+      const failed = error instanceof BulkActionError ? error.failedIds : item.ids;
+      for (const id of failed) this.pendingMoves.delete(id);
     } finally {
       for (const id of item.ids) this.hiddenMessageIds.delete(id);
       try {
         await this.reloadMessages();
       } catch (error) {
-        this.error = errorMessage(error);
+        failure = errorMessage(error);
+        this.error = failure;
       }
       try {
         await this.refreshFolders();
       } catch {
         // Keep the completed action even if the folder refresh fails.
       }
+      // Reloading the list clears transient errors; put the action failure
+      // back so the user still sees why some rows returned.
+      if (failure !== null) this.error = failure;
     }
   }
 

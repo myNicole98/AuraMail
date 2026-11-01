@@ -2131,6 +2131,80 @@ pub async fn mark_read(
 }
 
 #[tauri::command]
+pub async fn mark_messages(
+    state: State<'_, AppState>,
+    message_ids: Vec<i64>,
+    read: bool,
+) -> AppResult<BulkReport> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut failed = Vec::new();
+        let mut groups: HashMap<(i64, i64), (Account, Folder, Vec<(i64, u32)>)> =
+            HashMap::new();
+        let mut seen = HashSet::new();
+        for message_id in message_ids {
+            if !seen.insert(message_id) {
+                continue;
+            }
+            match message_context(&db, message_id) {
+                Ok((message, folder, account)) => {
+                    groups
+                        .entry((account.id, folder.id))
+                        .or_insert_with(|| (account, folder, Vec::new()))
+                        .2
+                        .push((message_id, message.uid));
+                }
+                Err(error) => failed.push(BulkFailure {
+                    message_id,
+                    error: error.to_string(),
+                }),
+            }
+        }
+
+        for (_, (account, folder, messages)) in groups {
+            let credential = match crate::mail_auth::credential_for(&account, secrets.as_ref()) {
+                Ok(credential) => credential,
+                Err(error) => {
+                    for (message_id, _) in &messages {
+                        failed.push(BulkFailure {
+                            message_id: *message_id,
+                            error: error.to_string(),
+                        });
+                    }
+                    continue;
+                }
+            };
+            let uids = messages.iter().map(|(_, uid)| *uid).collect::<Vec<_>>();
+            match client::set_seen_many(&account, &credential, &folder.path, &uids, read) {
+                Ok(()) => {
+                    for (message_id, _) in &messages {
+                        if let Err(error) = mail::set_message_seen(&db, *message_id, read) {
+                            failed.push(BulkFailure {
+                                message_id: *message_id,
+                                error: error.to_string(),
+                            });
+                        }
+                    }
+                }
+                Err(error) => {
+                    for (message_id, _) in &messages {
+                        failed.push(BulkFailure {
+                            message_id: *message_id,
+                            error: error.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(BulkReport { failed })
+    })
+    .await
+    .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
 pub async fn toggle_star(state: State<'_, AppState>, message_id: i64) -> AppResult<Message> {
     let db = Arc::clone(&state.db);
     let secrets = Arc::clone(&state.secrets);
@@ -2417,6 +2491,181 @@ pub async fn delete_message(state: State<'_, AppState>, message_id: i64) -> AppR
     })
     .await
     .map_err(|_| blocking_error())?
+}
+
+#[derive(Serialize)]
+pub struct BulkFailure {
+    pub message_id: i64,
+    pub error: String,
+}
+
+#[derive(Serialize)]
+pub struct BulkReport {
+    pub failed: Vec<BulkFailure>,
+}
+
+/// Delete a whole selection in a handful of IMAP commands.
+///
+/// The previous implementation invoked the per-message commands in parallel,
+/// which opened one IMAP session per message (plus one background sync each).
+/// A 200-message delete became ~400 logins and providers dropped them; the
+/// ones that failed were restored, so most rows bounced back.
+#[tauri::command]
+pub async fn delete_messages(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    message_ids: Vec<i64>,
+) -> AppResult<BulkReport> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    let syncing = Arc::clone(&state.syncing);
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_messages_blocking(&app, &db, &secrets, &syncing, message_ids)
+    })
+    .await
+    .map_err(|_| blocking_error())?
+}
+
+fn delete_messages_blocking(
+    app: &AppHandle,
+    db: &Arc<Database>,
+    secrets: &Arc<dyn SecretStore>,
+    syncing: &Arc<Mutex<HashSet<i64>>>,
+    message_ids: Vec<i64>,
+) -> AppResult<BulkReport> {
+    struct Group {
+        account: Account,
+        folder: Folder,
+        messages: Vec<(i64, u32)>,
+    }
+
+    fn fail_group(failed: &mut Vec<BulkFailure>, messages: &[(i64, u32)], error: &str) {
+        for (message_id, _) in messages {
+            failed.push(BulkFailure {
+                message_id: *message_id,
+                error: error.to_string(),
+            });
+        }
+    }
+
+    let mut failed = Vec::new();
+    let mut groups: HashMap<(i64, i64), Group> = HashMap::new();
+    let mut seen = HashSet::new();
+    for message_id in message_ids {
+        if !seen.insert(message_id) {
+            continue;
+        }
+        if let Err(error) = ensure_message_synced(app, db, secrets, syncing, message_id) {
+            failed.push(BulkFailure {
+                message_id,
+                error: error.to_string(),
+            });
+            continue;
+        }
+        match message_context(db, message_id) {
+            Ok((message, folder, account)) => {
+                groups
+                    .entry((account.id, folder.id))
+                    .or_insert_with(|| Group {
+                        account,
+                        folder,
+                        messages: Vec::new(),
+                    })
+                    .messages
+                    .push((message_id, message.uid));
+            }
+            Err(error) => failed.push(BulkFailure {
+                message_id,
+                error: error.to_string(),
+            }),
+        }
+    }
+
+    // One sync per touched folder, not one per message.
+    let mut sync_targets = HashSet::new();
+    for group in groups.into_values() {
+        let credential = match crate::mail_auth::credential_for(&group.account, secrets.as_ref()) {
+            Ok(credential) => credential,
+            Err(error) => {
+                fail_group(&mut failed, &group.messages, &error.to_string());
+                continue;
+            }
+        };
+
+        if group.folder.role == "trash" {
+            let uids = group.messages.iter().map(|(_, uid)| *uid).collect::<Vec<_>>();
+            match client::delete_many(&group.account, &credential, &group.folder.path, &uids) {
+                Ok(()) => {
+                    for (message_id, _) in &group.messages {
+                        if let Err(error) = mail::remove_message(db, *message_id) {
+                            failed.push(BulkFailure {
+                                message_id: *message_id,
+                                error: error.to_string(),
+                            });
+                        }
+                    }
+                }
+                Err(error) => fail_group(&mut failed, &group.messages, &error.to_string()),
+            }
+            continue;
+        }
+
+        let target_path = match mail::trash_folder_path(db, group.account.id)
+            .and_then(|trash| trash_destination(&group.folder.role, trash))
+        {
+            Ok(path) => path,
+            Err(error) => {
+                fail_group(&mut failed, &group.messages, &error.to_string());
+                continue;
+            }
+        };
+        let target_id = match mail::folder_id_by_role(db, group.account.id, "trash") {
+            Ok(Some(id)) => id,
+            _ => {
+                fail_group(&mut failed, &group.messages, "trash folder is unavailable");
+                continue;
+            }
+        };
+
+        let mut pending = Vec::new();
+        for (message_id, uid) in &group.messages {
+            match mail::move_message_pending(db, *message_id, target_id) {
+                Ok(()) => pending.push((*message_id, *uid)),
+                Err(error) => failed.push(BulkFailure {
+                    message_id: *message_id,
+                    error: error.to_string(),
+                }),
+            }
+        }
+        if pending.is_empty() {
+            continue;
+        }
+        let uids = pending.iter().map(|(_, uid)| *uid).collect::<Vec<_>>();
+        match client::move_many(&group.account, &credential, &group.folder.path, &uids, &target_path)
+        {
+            Ok(()) => {
+                sync_targets.insert(target_id);
+            }
+            Err(error) => {
+                for (message_id, uid) in &pending {
+                    let _ = mail::restore_message(db, *message_id, group.folder.id, *uid);
+                }
+                fail_group(&mut failed, &pending, &error.to_string());
+            }
+        }
+    }
+
+    for folder_id in sync_targets {
+        schedule_folder_sync(
+            app,
+            Arc::clone(db),
+            Arc::clone(secrets),
+            Arc::clone(syncing),
+            folder_id,
+        );
+    }
+
+    Ok(BulkReport { failed })
 }
 
 #[tauri::command]

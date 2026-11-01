@@ -5,6 +5,7 @@ import type {
   AccountDiscovery,
   AccountInput,
   AttachmentPreview,
+  BulkReport,
   CalendarAccount,
   CalendarAccountInput,
   CalendarEvent,
@@ -266,6 +267,8 @@ export const api = {
   refreshTrayUnread: () => invoke<void>("refresh_tray_unread"),
   markRead: (messageId: number, read: boolean) =>
     invoke<Message>("mark_read", { messageId, read }),
+  markMessages: (messageIds: number[], read: boolean) =>
+    invoke<BulkReport>("mark_messages", { messageIds, read }),
   moveMessageToFolder: (messageId: number, folderId: number) =>
     invoke<void>("move_message_to_folder", { messageId, folderId }),
   setMessageClassification: (messageId: number, tabId: number | null) =>
@@ -276,6 +279,8 @@ export const api = {
   archiveThread: (accountId: number, threadKey: string) =>
     invoke<void>("archive_thread", { accountId, threadKey }),
   deleteMessage: (messageId: number) => invoke<void>("delete_message", { messageId }),
+  deleteMessages: (messageIds: number[]) =>
+    invoke<BulkReport>("delete_messages", { messageIds }),
   downloadAttachment: (attachmentId: number) =>
     invoke<string>("download_attachment", { attachmentId }),
   openDownload: (path: string) => openPath(path),
