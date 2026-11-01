@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Check, CircleAlert } from "lucide-svelte";
+  import { Bell, Check, CircleAlert, Inbox } from "lucide-svelte";
   import { api } from "../../api";
   import {
     applyThemeSettings,
@@ -80,6 +80,7 @@
       theme_panes: stored.theme_panes,
       layout_mode: stored.layout_mode,
       message_preview: stored.message_preview,
+      icon_only_tabs: stored.icon_only_tabs,
       dark_email: stored.dark_email
     };
     themeChoice = stored.theme_choice;
@@ -98,6 +99,7 @@
       theme_panes: themePanes,
       layout_mode: preferences.layout_mode,
       message_preview: preferences.message_preview,
+      icon_only_tabs: preferences.icon_only_tabs,
       dark_email: preferences.dark_email
     });
   }
@@ -311,6 +313,12 @@
     if (editingActiveSpace()) appearance.setMessagePreview(mode);
   }
 
+  function setIconOnlyTabs(value: boolean) {
+    preferences = { ...preferences, icon_only_tabs: value };
+    saveCurrentAppearance();
+    if (editingActiveSpace()) appearance.setIconOnlyTabs(value);
+  }
+
   function cardPalette(card: ThemeCard): Base16 {
     if (card.id === "light") return shiftPalette(auraLightTheme, appearance.colorVision);
     if (card.id === "dark" || card.id === "matugen" || card.id === "system") {
@@ -426,6 +434,37 @@
           label="Use email dark mode"
           onchange={(value) => void setDarkEmail(value)}
         />
+      </div>
+      <div class="settings-row tabs-row">
+        <strong>Classification tabs</strong>
+        <div class="tabs-options" role="group" aria-label="Classification tabs">
+          <button
+            type="button"
+            class="tabs-option"
+            class:active={!preferences.icon_only_tabs}
+            aria-pressed={!preferences.icon_only_tabs}
+            onclick={() => setIconOnlyTabs(false)}
+          >
+            <span class="tabs-preview" aria-hidden="true">
+              <span class="mini-tab"><Inbox size={12} /><span>Inbox</span></span>
+              <span class="mini-tab"><Bell size={12} /><span>Updates</span></span>
+            </span>
+            <span class="tabs-option-label">Full</span>
+          </button>
+          <button
+            type="button"
+            class="tabs-option"
+            class:active={preferences.icon_only_tabs}
+            aria-pressed={preferences.icon_only_tabs}
+            onclick={() => setIconOnlyTabs(true)}
+          >
+            <span class="tabs-preview" aria-hidden="true">
+              <span class="mini-tab"><Inbox size={12} /></span>
+              <span class="mini-tab"><Bell size={12} /></span>
+            </span>
+            <span class="tabs-option-label">Icon only</span>
+          </button>
+        </div>
       </div>
     </section>
 
@@ -699,8 +738,69 @@
     height: 100%;
   }
   .mail-panel {
-    align-self: start;
+    display: flex;
+    flex-direction: column;
     padding: 8px 16px 2px;
+  }
+  .tabs-row {
+    flex: 1;
+    gap: 12px;
+    padding: 12px 0;
+  }
+  .tabs-options {
+    display: flex;
+    flex: 1;
+    gap: 7px;
+    justify-content: flex-end;
+  }
+  .tabs-option {
+    display: flex;
+    min-width: 104px;
+    max-width: 150px;
+    flex: 1;
+    flex-direction: column;
+    gap: 5px;
+    padding: 8px 10px 7px;
+    border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--muted);
+    text-align: left;
+  }
+  .tabs-option:hover {
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  .tabs-option.active {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+    color: var(--text);
+  }
+  .tabs-preview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    height: 30px;
+  }
+  .tabs-preview :global(svg) {
+    flex: none;
+    color: var(--accent);
+  }
+  .mini-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text);
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .tabs-option-label {
+    color: inherit;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-align: center;
   }
   .preview-options {
     display: grid;

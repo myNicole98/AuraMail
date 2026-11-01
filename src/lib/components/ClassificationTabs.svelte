@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { flip } from "svelte/animate";
-  import { ChevronLeft, ChevronRight, Inbox, Plus } from "lucide-svelte";
+  import { ChevronLeft, ChevronRight, Mails, Plus } from "lucide-svelte";
   import { app } from "../stores/app.svelte";
   import { appearance } from "../stores/appearance.svelte";
   import type { Tab } from "../types";
@@ -29,6 +29,28 @@
   let editorOpen = $state(false);
   let editorTab = $state<Tab | null>(null);
   let editorAnchor = $state({ x: 0, y: 0 });
+  let hoverHint = $state<{ name: string; left: number; top: number } | null>(
+    null
+  );
+
+  function showHint(name: string, element: HTMLElement) {
+    if (!appearance.iconOnlyTabs) return;
+    const icon = element.querySelector("svg");
+    const anchor = icon?.getBoundingClientRect() ?? element.getBoundingClientRect();
+    hoverHint = {
+      name,
+      left: anchor.left + anchor.width / 2,
+      top: anchor.top - 2
+    };
+  }
+
+  function hideHint() {
+    hoverHint = null;
+  }
+
+  $effect(() => {
+    if (!appearance.iconOnlyTabs) hoverHint = null;
+  });
 
   $effect(() => {
     if (drag?.active || committing) return;
@@ -38,6 +60,7 @@
   $effect(() => {
     orderedTabs;
     app.tabUnreadCounts;
+    appearance.iconOnlyTabs;
     void tick().then(measure);
   });
 
@@ -89,6 +112,7 @@
   }
 
   function scrollTabs(direction: -1 | 1) {
+    hideHint();
     if (!scroller) return;
     scroller.scrollBy({
       left: direction * Math.max(120, scroller.clientWidth * 0.6),
@@ -110,6 +134,7 @@
   }
 
   function selectTab(tabId: number | null) {
+    hideHint();
     if (suppressClick) {
       suppressClick = false;
       return;
@@ -204,7 +229,7 @@
 
 <svelte:window onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp} />
 
-<div class="tabs-bar" bind:this={bar}>
+<div class="tabs-bar" class:compact={appearance.iconOnlyTabs} bind:this={bar}>
   <div
     class="tab-wrap all"
     class:active={app.selectedTabId === null}
@@ -216,9 +241,13 @@
       role="tab"
       aria-selected={app.selectedTabId === null}
       onclick={() => selectTab(null)}
+      onpointerenter={(event) => showHint("All", event.currentTarget)}
+      onpointerleave={hideHint}
+      onfocus={(event) => showHint("All", event.currentTarget)}
+      onblur={hideHint}
     >
-      <Inbox size={14} />
-      <span>All</span>
+      <Mails size={14} />
+      <span class="name">All</span>
       {#if allCount() > 0}
         <span class="count">{badge(allCount())}</span>
       {/if}
@@ -237,7 +266,14 @@
     </button>
   {/if}
 
-  <div class="tab-scroll" bind:this={scroller} onscroll={measure}>
+  <div
+    class="tab-scroll"
+    bind:this={scroller}
+    onscroll={() => {
+      hideHint();
+      measure();
+    }}
+  >
     {#each orderedTabs as tab, index (tab.id)}
       {@const Icon = tabIconComponent(tab)}
       {@const color = tabColor(tab, index, appearance.colorVision, appearance.themeDark)}
@@ -259,6 +295,10 @@
           onclick={() => selectTab(tab.id)}
           oncontextmenu={(event) => openEditor(tab, event)}
           onpointerdown={(event) => pointerDown(tab, event)}
+          onpointerenter={(event) => showHint(tab.name, event.currentTarget)}
+          onpointerleave={hideHint}
+          onfocus={(event) => showHint(tab.name, event.currentTarget)}
+          onblur={hideHint}
         >
           <Icon size={14} />
           <span class="name">{tab.name}</span>
@@ -292,6 +332,17 @@
     </button>
   {/if}
 </div>
+
+{#if appearance.iconOnlyTabs && hoverHint}
+  <div
+    class="tab-hint"
+    style:left={`${hoverHint.left}px`}
+    style:top={`${hoverHint.top}px`}
+    role="presentation"
+  >
+    <div class="tab-hint-inner">{hoverHint.name}</div>
+  </div>
+{/if}
 
 {#if editorOpen}
   {#key editorTab?.id ?? "new"}
@@ -411,5 +462,62 @@
   }
   .all.active .tab :global(svg) {
     color: var(--accent);
+  }
+  .tabs-bar.compact .tab {
+    position: relative;
+    gap: 0;
+  }
+  .tabs-bar.compact .tab-wrap {
+    margin-right: 14px;
+  }
+  .tabs-bar.compact .tab-wrap:hover,
+  .tabs-bar.compact .tab-wrap:focus-within {
+    z-index: 4;
+  }
+  .tabs-bar.compact .name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .tabs-bar.compact .count {
+    margin-left: 6px;
+  }
+  .tab-hint {
+    position: fixed;
+    z-index: 60;
+    transform: translate(-50%, -100%);
+    pointer-events: none;
+  }
+  .tab-hint-inner {
+    padding: 2px 8px;
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border-radius: 7px;
+    background: var(--bg-raised);
+    color: var(--text-strong);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--bg) 55%, transparent);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.25;
+    white-space: nowrap;
+    animation: tab-hint-in 120ms ease-out;
+  }
+  @keyframes tab-hint-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  :global([data-reduce-motion="true"]) .tab-hint-inner {
+    animation: none;
   }
 </style>

@@ -15,6 +15,7 @@ export function defaultSpaceAppearance(): SpaceAppearance {
     theme_panes: "straight",
     layout_mode: "classic",
     message_preview: "preview",
+    icon_only_tabs: false,
     dark_email: false
   };
 }
@@ -107,6 +108,7 @@ export function normalizeSpaceAppearance(value: unknown): SpaceAppearance {
     theme_panes: themePanes(stored.theme_panes),
     layout_mode: layoutMode(stored.layout_mode),
     message_preview: messagePreview(stored.message_preview),
+    icon_only_tabs: bool(stored.icon_only_tabs, defaults.icon_only_tabs),
     dark_email: bool(stored.dark_email, defaults.dark_email)
   };
 }
@@ -308,6 +310,7 @@ export function migrateLegacyAppearance(defaultSpaceId: number): void {
       theme_panes: themePanes(legacy.theme_panes),
       layout_mode: layoutMode(legacy.layout_mode),
       message_preview: messagePreview(legacy.message_preview),
+      icon_only_tabs: bool(legacy.icon_only_tabs, defaults.icon_only_tabs),
       dark_email: bool(legacy.dark_email, defaults.dark_email)
     });
   } catch {

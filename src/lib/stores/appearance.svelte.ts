@@ -23,6 +23,7 @@ class AppearanceStore {
   uiScale = $state(DEFAULT_UI_SCALE);
   layoutMode = $state<LayoutMode>("classic");
   messagePreview = $state<MessagePreview>("preview");
+  iconOnlyTabs = $state(false);
   reduceMotion = $state(false);
   highContrast = $state(false);
   textSpacing = $state(false);
@@ -41,6 +42,7 @@ class AppearanceStore {
     this.uiScale = preferences.ui_scale;
     this.layoutMode = preferences.layout_mode;
     this.messagePreview = preferences.message_preview;
+    this.iconOnlyTabs = preferences.icon_only_tabs;
     this.reduceMotion = preferences.reduce_motion;
     this.highContrast = preferences.high_contrast;
     this.textSpacing = preferences.text_spacing;
@@ -67,6 +69,11 @@ class AppearanceStore {
 
   setMessagePreview(mode: MessagePreview): void {
     this.messagePreview = mode;
+    this.persist();
+  }
+
+  setIconOnlyTabs(value: boolean): void {
+    this.iconOnlyTabs = value;
     this.persist();
   }
 
@@ -123,6 +130,7 @@ class AppearanceStore {
       ui_scale: this.uiScale,
       layout_mode: this.layoutMode,
       message_preview: this.messagePreview,
+      icon_only_tabs: this.iconOnlyTabs,
       reduce_motion: this.reduceMotion,
       high_contrast: this.highContrast,
       text_spacing: this.textSpacing,

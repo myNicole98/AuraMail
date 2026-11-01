@@ -41,6 +41,7 @@ export type SpaceAppearance = {
   theme_panes: ThemePanes;
   layout_mode: "classic" | "reader" | "stacked";
   message_preview: "compact" | "preview";
+  icon_only_tabs: boolean;
   dark_email: boolean;
 };
 

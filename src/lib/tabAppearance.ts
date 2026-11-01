@@ -27,6 +27,7 @@ import {
   Lightbulb,
   Mail,
   MailOpen,
+  Mails,
   MapPin,
   Megaphone,
   MessageCircle,
@@ -73,6 +74,7 @@ export type TabIconOption = {
 export const tabIcons: TabIconOption[] = [
   { id: "inbox", label: "Inbox", component: Inbox },
   { id: "mail", label: "Mail", component: Mail },
+  { id: "mails", label: "All mail", component: Mails },
   { id: "mail-open", label: "Open mail", component: MailOpen },
   { id: "send", label: "Sent", component: Send },
   { id: "archive", label: "Archive", component: Archive },
