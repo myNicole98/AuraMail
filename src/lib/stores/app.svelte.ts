@@ -1590,9 +1590,15 @@ class AppStore {
     }
 
     const threads = await this.threadsFor(query, key);
+    // A newer load owns the visible list; this response must not touch it.
+    if (request !== this.messageRequest) return;
     // A request from before an invalidation may no longer be trusted: neither
-    // paint it nor cache it, since the mailbox changed underneath it.
-    if (request !== this.messageRequest || epoch !== this.cacheEpoch) return;
+    // paint it nor cache it, since the mailbox changed underneath it. Ask the
+    // scheduler for fresh rows so the scope is not left on the old list.
+    if (epoch !== this.cacheEpoch) {
+      void this.reloadMessageScope();
+      return;
+    }
     const visible = this.mergePending(this.filterHidden(threads), query);
     this.rememberMessages(key, threads);
     if (!current()) return;
