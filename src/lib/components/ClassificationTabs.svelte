@@ -39,17 +39,30 @@
     null
   );
   let hoverHintKey: string | null = null;
+  let prefetchTimer: ReturnType<typeof setTimeout> | undefined;
+  let prefetchKey: string | null = null;
+
+  function scheduleTabPrefetch(key: string) {
+    if (prefetchKey === key) return;
+    prefetchKey = key;
+    clearTimeout(prefetchTimer);
+    const tabId = key === "all" ? null : Number(key);
+    prefetchTimer = setTimeout(() => {
+      void app.prefetchTab(Number.isNaN(tabId) ? null : tabId);
+    }, 120);
+  }
 
   function hoverTabs(event: PointerEvent) {
-    if (!appearance.iconOnlyTabs) return;
     const element = (event.target as Element | null)?.closest<HTMLElement>(
       "[data-tab-key]"
     );
     if (!element) {
-      hideHint();
+      if (appearance.iconOnlyTabs) hideHint();
       return;
     }
     const key = element.dataset.tabKey ?? "";
+    scheduleTabPrefetch(key);
+    if (!appearance.iconOnlyTabs) return;
     if (suppressedTab === key || hoverHintKey === key) return;
     suppressedTab = null;
     const icon = element.querySelector("svg");
@@ -70,6 +83,8 @@
   function clearHint() {
     suppressedTab = null;
     hideHint();
+    clearTimeout(prefetchTimer);
+    prefetchKey = null;
   }
 
   $effect(() => {

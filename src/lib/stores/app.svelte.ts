@@ -120,7 +120,8 @@ class AppStore {
     number,
     { folderId: number; role: string | null; running: boolean }
   >();
-  private prefetchTimer: ReturnType<typeof setTimeout> | undefined;
+  private idlePrefetchTimer: ReturnType<typeof setTimeout> | undefined;
+  private idlePrefetchRunning = false;
   private syncRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   private syncRefreshRunning = false;
   private syncRefreshQueued = false;
@@ -1497,6 +1498,22 @@ class AppStore {
   }
 
   /**
+   * Selecting a tab settles pagination back to 200 first, so a prefetch built
+   * with the current `messageLimit` would miss the cache key the click uses.
+   */
+  private prefetchQueryForTab(tabId: number | null): MessageQuery {
+    const order = loadPreferences().message_order;
+    return {
+      space_id: this.activeSpaceId ?? undefined,
+      folder_id: this.selectedFolderId ?? undefined,
+      tab_id: tabId ?? undefined,
+      unified: this.selectedFolderId === null ? this.unified : undefined,
+      limit: 200,
+      order
+    };
+  }
+
+  /**
    * Warm the cache for a tab the user is likely to open next. Best effort:
    * a superseded, invalidated, or failed prefetch never touches the UI.
    */
@@ -1511,7 +1528,7 @@ class AppStore {
     ) {
       return Promise.resolve();
     }
-    return this.prefetchQuery(this.queryForTab(tabId));
+    return this.prefetchQuery(this.prefetchQueryForTab(tabId));
   }
 
   private async prefetchQuery(query: MessageQuery): Promise<void> {
@@ -1614,7 +1631,8 @@ class AppStore {
     await this.refreshTabCounts();
   }
 
-  private scheduleUnifiedPrefetch(): void {
+  private scheduleIdlePrefetch(): void {
+    clearTimeout(this.idlePrefetchTimer);
     if (
       !isTauri() ||
       this.activeSpaceId === null ||
@@ -1625,44 +1643,49 @@ class AppStore {
     ) {
       return;
     }
-    const spaceId = this.activeSpaceId;
-    const order = loadPreferences().message_order;
-    clearTimeout(this.prefetchTimer);
-    this.prefetchTimer = setTimeout(() => {
-      void this.prefetchUnifiedViews(spaceId, order);
-    }, 900);
+    const generation = this.scopeLoadRequested;
+    this.idlePrefetchTimer = setTimeout(() => {
+      this.idlePrefetchTimer = undefined;
+      void this.prefetchIdleViews(generation);
+    }, 700);
   }
 
-  private async prefetchUnifiedViews(
-    spaceId: number,
-    order: MessageQuery["order"]
-  ): Promise<void> {
-    for (const unified of ["inbox", "archive", "spam"] as const) {
-      if (
-        this.activeSpaceId !== spaceId ||
-        this.draftsOpen ||
-        this.calendarOpen ||
-        this.searchActive ||
-        this.syncState === "syncing"
-      ) {
-        return;
+  /**
+   * Best-effort warm-up in its own lane: it never requests a scope load and
+   * never blocks the UI. Any newer selection abandons the remaining views.
+   */
+  private async prefetchIdleViews(generation: number): Promise<void> {
+    if (this.idlePrefetchRunning) return;
+    this.idlePrefetchRunning = true;
+    try {
+      for (const tab of this.tabs) {
+        if (!this.canPrefetch(generation)) return;
+        if (tab.id === this.selectedTabId) continue;
+        await this.prefetchTab(tab.id);
       }
-      const query: MessageQuery = {
-        space_id: spaceId,
-        unified,
-        limit: 200,
-        order
-      };
-      const key = JSON.stringify(query);
-      if (this.messageCache.has(key)) continue;
-      try {
-        const threads = await api.listThreads(query);
-        if (this.activeSpaceId !== spaceId || this.searchActive) return;
-        this.rememberMessages(key, threads);
-      } catch {
-        return;
+      for (const unified of ["inbox", "archive", "spam"] as const) {
+        if (!this.canPrefetch(generation)) return;
+        await this.prefetchQuery({
+          space_id: this.activeSpaceId ?? undefined,
+          unified,
+          limit: 200,
+          order: loadPreferences().message_order
+        });
       }
+    } finally {
+      this.idlePrefetchRunning = false;
     }
+  }
+
+  private canPrefetch(generation: number): boolean {
+    return (
+      generation === this.scopeLoadRequested &&
+      !this.messageScopeLoading &&
+      !this.draftsOpen &&
+      !this.calendarOpen &&
+      !this.searchActive &&
+      this.syncState !== "syncing"
+    );
   }
 
   /**
@@ -1697,6 +1720,7 @@ class AppStore {
     } finally {
       this.scopeLoadPromise = null;
       this.messageScopeLoading = false;
+      this.scheduleIdlePrefetch();
     }
   }
 
@@ -2075,7 +2099,7 @@ class AppStore {
     clearTimeout(this.searchTimer);
     clearTimeout(this.noticeTimer);
     clearTimeout(this.themeTimer);
-    clearTimeout(this.prefetchTimer);
+    clearTimeout(this.idlePrefetchTimer);
     clearTimeout(this.syncRefreshTimer);
     this.messageCache.clear();
     this.cacheEpoch += 1;
