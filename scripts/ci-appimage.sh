@@ -32,7 +32,7 @@ $SUDO apt-get install -y --no-install-recommends \
   build-essential curl wget file ca-certificates pkg-config patchelf \
   libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
   librsvg2-dev libxdo-dev libfuse2t64 libdbus-1-dev libsecret-1-dev zlib1g-dev \
-  squashfs-tools python3 desktop-file-utils
+  squashfs-tools python3 desktop-file-utils gsettings-desktop-schemas
 command -v node >/dev/null || $SUDO apt-get install -y --no-install-recommends nodejs npm
 
 curl -L --fail --retry 3 -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
@@ -71,6 +71,16 @@ if ! /tmp/linuxdeploy.AppImage --appimage-extract-and-run --appdir /tmp/AppDir; 
   unsquashfs -o "$offset" -d /tmp/linuxdeploy-root /tmp/linuxdeploy.AppImage
   /tmp/linuxdeploy-root/AppRun --appdir /tmp/AppDir
 fi
+
+# GTK reads the user's cursor/icon theme through dconf. Bundle the dconf
+# GSettings backend and the compiled schemas so the AppImage does not fall
+# back to the built-in cursor.
+mkdir -p /tmp/AppDir/usr/lib/x86_64-linux-gnu/gio/modules
+cp /usr/lib/x86_64-linux-gnu/gio/modules/libdconfsettings.so \
+  /tmp/AppDir/usr/lib/x86_64-linux-gnu/gio/modules/
+mkdir -p /tmp/AppDir/usr/share/glib-2.0/schemas
+cp /usr/share/glib-2.0/schemas/gschemas.compiled \
+  /tmp/AppDir/usr/share/glib-2.0/schemas/
 
 webkit_proc="/tmp/AppDir/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"
 test -d "$webkit_proc"
@@ -113,11 +123,14 @@ export XDG_DATA_DIRS="$this_dir/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr
 if [ -d "$this_dir/usr/share/glib-2.0/schemas" ]; then
   export GSETTINGS_SCHEMA_DIR="$this_dir/usr/share/glib-2.0/schemas:${GSETTINGS_SCHEMA_DIR:-}"
 fi
-if [ -d "$this_dir/usr/lib/x86_64-linux-gnu/gio/modules" ]; then
-  export GIO_EXTRA_MODULES="$this_dir/usr/lib/x86_64-linux-gnu/gio/modules"
-else
-  unset GIO_EXTRA_MODULES
-fi
+for gio_modules in \
+  "$this_dir/usr/lib/x86_64-linux-gnu/gio/modules" \
+  "$this_dir/usr/lib/gio/modules"; do
+  if [ -d "$gio_modules" ]; then
+    export GIO_EXTRA_MODULES="$gio_modules"
+    break
+  fi
+done
 webkit_dir="$this_dir/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"
 webkit_link="/tmp/auramail-webkit-576f0a7f"
 rm -f "$webkit_link" 2>/dev/null || true

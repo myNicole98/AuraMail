@@ -117,7 +117,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl file libfuse2t64 squashfs-tools python3 desktop-file-utils \
   libgtk-3-0t64 libwebkit2gtk-4.1-0 libayatana-appindicator3-1 \
-  librsvg2-2 libxdo3 libssl3t64 libdbus-1-3 libsecret-1-0
+  librsvg2-2 libxdo3 libssl3t64 libdbus-1-3 libsecret-1-0 gsettings-desktop-schemas
 curl -L --fail --retry 3 -o /tmp/linuxdeploy.AppImage \
   https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-07333c6/linuxdeploy-x86_64.AppImage
 chmod +x /tmp/linuxdeploy.AppImage
@@ -127,6 +127,16 @@ if ! /tmp/linuxdeploy.AppImage --appimage-extract-and-run --appdir /AppDir; then
   unsquashfs -o "$offset" -d /tmp/linuxdeploy-root /tmp/linuxdeploy.AppImage
   /tmp/linuxdeploy-root/AppRun --appdir /AppDir
 fi
+
+# GTK reads the user's cursor/icon theme through dconf. Bundle the dconf
+# GSettings backend and the compiled schemas so the AppImage does not fall
+# back to the built-in cursor.
+mkdir -p /AppDir/usr/lib/x86_64-linux-gnu/gio/modules
+cp /usr/lib/x86_64-linux-gnu/gio/modules/libdconfsettings.so \
+  /AppDir/usr/lib/x86_64-linux-gnu/gio/modules/
+mkdir -p /AppDir/usr/share/glib-2.0/schemas
+cp /usr/share/glib-2.0/schemas/gschemas.compiled \
+  /AppDir/usr/share/glib-2.0/schemas/
 
 webkit_proc="/AppDir/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"
 test -d "$webkit_proc"
@@ -164,9 +174,14 @@ export XDG_DATA_DIRS="$this_dir/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr
 if [ -d "$this_dir/usr/share/glib-2.0/schemas" ]; then
   export GSETTINGS_SCHEMA_DIR="$this_dir/usr/share/glib-2.0/schemas:${GSETTINGS_SCHEMA_DIR:-}"
 fi
-if [ -d "$this_dir/usr/lib/x86_64-linux-gnu/gio/modules" ]; then
-  export GIO_EXTRA_MODULES="$this_dir/usr/lib/x86_64-linux-gnu/gio/modules"
-fi
+for gio_modules in \
+  "$this_dir/usr/lib/x86_64-linux-gnu/gio/modules" \
+  "$this_dir/usr/lib/gio/modules"; do
+  if [ -d "$gio_modules" ]; then
+    export GIO_EXTRA_MODULES="$gio_modules"
+    break
+  fi
+done
 webkit_dir="$this_dir/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"
 webkit_link="/tmp/auramail-webkit-576f0a7f"
 rm -f "$webkit_link" 2>/dev/null || true
