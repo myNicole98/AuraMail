@@ -16,7 +16,8 @@ export function defaultSpaceAppearance(): SpaceAppearance {
     layout_mode: "classic",
     message_preview: "preview",
     icon_only_tabs: false,
-    dark_email: false
+    dark_email: false,
+    list_avatars: false
   };
 }
 
@@ -109,7 +110,8 @@ export function normalizeSpaceAppearance(value: unknown): SpaceAppearance {
     layout_mode: layoutMode(stored.layout_mode),
     message_preview: messagePreview(stored.message_preview),
     icon_only_tabs: bool(stored.icon_only_tabs, defaults.icon_only_tabs),
-    dark_email: bool(stored.dark_email, defaults.dark_email)
+    dark_email: bool(stored.dark_email, defaults.dark_email),
+    list_avatars: bool(stored.list_avatars, defaults.list_avatars)
   };
 }
 
@@ -311,7 +313,8 @@ export function migrateLegacyAppearance(defaultSpaceId: number): void {
       layout_mode: layoutMode(legacy.layout_mode),
       message_preview: messagePreview(legacy.message_preview),
       icon_only_tabs: bool(legacy.icon_only_tabs, defaults.icon_only_tabs),
-      dark_email: bool(legacy.dark_email, defaults.dark_email)
+      dark_email: bool(legacy.dark_email, defaults.dark_email),
+      list_avatars: bool(legacy.list_avatars, defaults.list_avatars)
     });
   } catch {
     // Ignore corrupt legacy settings; defaults are safe.

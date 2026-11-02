@@ -43,6 +43,7 @@ export type SpaceAppearance = {
   message_preview: "compact" | "preview";
   icon_only_tabs: boolean;
   dark_email: boolean;
+  list_avatars: boolean;
 };
 
 export type SpaceGeneral = {

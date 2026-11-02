@@ -24,6 +24,7 @@ class AppearanceStore {
   layoutMode = $state<LayoutMode>("classic");
   messagePreview = $state<MessagePreview>("preview");
   iconOnlyTabs = $state(false);
+  listAvatars = $state(false);
   reduceMotion = $state(false);
   highContrast = $state(false);
   textSpacing = $state(false);
@@ -43,6 +44,7 @@ class AppearanceStore {
     this.layoutMode = preferences.layout_mode;
     this.messagePreview = preferences.message_preview;
     this.iconOnlyTabs = preferences.icon_only_tabs;
+    this.listAvatars = preferences.list_avatars;
     this.reduceMotion = preferences.reduce_motion;
     this.highContrast = preferences.high_contrast;
     this.textSpacing = preferences.text_spacing;
@@ -74,6 +76,11 @@ class AppearanceStore {
 
   setIconOnlyTabs(value: boolean): void {
     this.iconOnlyTabs = value;
+    this.persist();
+  }
+
+  setListAvatars(value: boolean): void {
+    this.listAvatars = value;
     this.persist();
   }
 
@@ -131,6 +138,7 @@ class AppearanceStore {
       layout_mode: this.layoutMode,
       message_preview: this.messagePreview,
       icon_only_tabs: this.iconOnlyTabs,
+      list_avatars: this.listAvatars,
       reduce_motion: this.reduceMotion,
       high_contrast: this.highContrast,
       text_spacing: this.textSpacing,

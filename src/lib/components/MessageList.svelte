@@ -14,6 +14,7 @@
   import { accountColorValue } from "../accountColors";
   import { api } from "../api";
   import { relativeDate } from "../format";
+  import { loadPreferences } from "../settings";
   import { tabColor, tabIconComponent } from "../tabAppearance";
   import { app } from "../stores/app.svelte";
   import { appearance } from "../stores/appearance.svelte";
@@ -22,6 +23,7 @@
   import ClassificationTabs from "./ClassificationTabs.svelte";
   import ClassificationToast from "./ClassificationToast.svelte";
   import MailContextMenu, { type MailContextAction } from "./MailContextMenu.svelte";
+  import SenderAvatar from "./SenderAvatar.svelte";
 
   let messages = $derived(app.messages);
   let drafts = $derived(app.drafts);
@@ -42,6 +44,11 @@
   let pillTop = $state(0);
   let pillHeight = $state(0);
   let showClassificationIcon = $derived(app.selectedTabId === null && !app.draftsOpen);
+  let preferencesVersion = $state(0);
+  let profilePictures = $derived.by(() => {
+    preferencesVersion;
+    return loadPreferences().profile_pictures;
+  });
   let classificationProgress = $derived(app.classificationProgress);
   let classificationMessage = $derived(
     classificationProgress
@@ -309,6 +316,9 @@
     const onBlur = () => {
       scrollbarNear = false;
     };
+    const onPreferencesChanged = () => {
+      preferencesVersion += 1;
+    };
     const observer =
       typeof ResizeObserver === "undefined"
         ? null
@@ -321,6 +331,7 @@
     });
     window.addEventListener("pointermove", onPointerMove, { passive: true });
     window.addEventListener("blur", onBlur);
+    window.addEventListener("auramail:preferences-changed", onPreferencesChanged);
     return () => {
       observer?.disconnect();
       window.removeEventListener("auramail:clear-mail-selection", clearBulkSelection);
@@ -329,6 +340,10 @@
       });
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("blur", onBlur);
+      window.removeEventListener(
+        "auramail:preferences-changed",
+        onPreferencesChanged
+      );
     };
   });
 </script>
@@ -576,6 +591,16 @@
           onclick={(event) => onRowClick(event, message.id)}
         >
           <span class="unread-dot" aria-hidden="true"></span>
+          {#if appearance.listAvatars}
+            <span class="row-avatar">
+              <SenderAvatar
+                name={sender(message)}
+                email={message.from_addr}
+                enabled={profilePictures}
+                size={36}
+              />
+            </span>
+          {/if}
           <span class="row-main">
             <span class="row-top">
               <span class="sender">{sender(message)}</span>
@@ -988,10 +1013,10 @@
   }
   .row-open {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     flex: 1;
     min-width: 0;
-    padding: 9px 8px 9px 10px;
+    padding: 9px 8px 9px 6px;
     outline: 0;
     text-align: left;
   }
@@ -1106,6 +1131,15 @@
   }
   .row.unread .unread-dot {
     background: var(--accent);
+  }
+  .row-avatar {
+    display: grid;
+    place-items: center;
+    flex: none;
+    /* Match the compact left gutter (padding + dot + gap) so the avatar sits
+       centred between the account bar and the text. */
+    margin-right: 6px;
+    padding-top: 1px;
   }
   .row-main {
     display: flex;

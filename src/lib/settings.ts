@@ -83,6 +83,7 @@ export type SettingsPreferences = {
   layout_mode: LayoutMode;
   message_preview: MessagePreview;
   icon_only_tabs: boolean;
+  list_avatars: boolean;
   reduce_motion: boolean;
   high_contrast: boolean;
   text_spacing: boolean;
@@ -162,6 +163,7 @@ export function defaultPreferences(): SettingsPreferences {
     layout_mode: "classic",
     message_preview: "preview",
     icon_only_tabs: false,
+    list_avatars: false,
     reduce_motion: false,
     high_contrast: false,
     text_spacing: false,
@@ -235,6 +237,7 @@ function withSpaceAppearance(
     layout_mode: appearance.layout_mode,
     message_preview: appearance.message_preview,
     icon_only_tabs: appearance.icon_only_tabs,
+    list_avatars: appearance.list_avatars,
     dark_email: appearance.dark_email
   };
   const general = loadSpaceGeneral(spaceId);
@@ -326,6 +329,10 @@ export function loadPreferences(): SettingsPreferences {
         typeof stored.icon_only_tabs === "boolean"
           ? stored.icon_only_tabs
           : defaults.icon_only_tabs,
+      list_avatars:
+        typeof stored.list_avatars === "boolean"
+          ? stored.list_avatars
+          : defaults.list_avatars,
       reduce_motion:
         typeof stored.reduce_motion === "boolean"
           ? stored.reduce_motion
@@ -377,6 +384,7 @@ export function savePreferences(preferences: SettingsPreferences): void {
       layout_mode: normalized.layout_mode,
       message_preview: normalized.message_preview,
       icon_only_tabs: normalized.icon_only_tabs,
+      list_avatars: normalized.list_avatars,
       dark_email: normalized.dark_email
     });
     saveSpaceGeneral(spaceId, {

@@ -24,6 +24,7 @@
   import { app } from "../../stores/app.svelte";
   import { appearance } from "../../stores/appearance.svelte";
   import ThemedSelect from "../ThemedSelect.svelte";
+  import MessageRowPreview from "./MessageRowPreview.svelte";
   import ThemeStylePreview from "../ThemeStylePreview.svelte";
   import ToggleSwitch from "../ToggleSwitch.svelte";
   import type { Base16 } from "../../theme/base16";
@@ -81,6 +82,7 @@
       layout_mode: stored.layout_mode,
       message_preview: stored.message_preview,
       icon_only_tabs: stored.icon_only_tabs,
+      list_avatars: stored.list_avatars,
       dark_email: stored.dark_email
     };
     themeChoice = stored.theme_choice;
@@ -100,6 +102,7 @@
       layout_mode: preferences.layout_mode,
       message_preview: preferences.message_preview,
       icon_only_tabs: preferences.icon_only_tabs,
+      list_avatars: preferences.list_avatars,
       dark_email: preferences.dark_email
     });
   }
@@ -317,6 +320,12 @@
     preferences = { ...preferences, icon_only_tabs: value };
     saveCurrentAppearance();
     if (editingActiveSpace()) appearance.setIconOnlyTabs(value);
+  }
+
+  function setListAvatars(value: boolean) {
+    preferences = { ...preferences, list_avatars: value };
+    saveCurrentAppearance();
+    if (editingActiveSpace()) appearance.setListAvatars(value);
   }
 
   function cardPalette(card: ThemeCard): Base16 {
@@ -543,6 +552,26 @@
           </button>
         {/each}
       </div>
+    </div>
+  </section>
+
+  <div class="settings-label">Sender avatars</div>
+  <section class="settings-panel appearance-panel">
+    <div class="preview-options" role="group" aria-label="Sender avatars">
+      {#each [{ value: false, label: "No avatar" }, { value: true, label: "Avatar" }] as option (option.label)}
+        <button
+          type="button"
+          class="preview-option"
+          class:active={preferences.list_avatars === option.value}
+          aria-pressed={preferences.list_avatars === option.value}
+          onclick={() => setListAvatars(option.value)}
+        >
+          <span class="preview-card avatar-preview-card">
+            <MessageRowPreview avatar={option.value} />
+          </span>
+          <span class="preview-label">{option.label}</span>
+        </button>
+      {/each}
     </div>
   </section>
 
@@ -807,6 +836,13 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
     margin-top: 10px;
+  }
+  .avatar-preview-card {
+    min-height: 0;
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
+    background: var(--bg);
   }
   .preview-card {
     display: flex;
