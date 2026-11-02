@@ -46,11 +46,11 @@ html[data-theme-glass="true"] {
   --glow-primary: var(--base0D);
   --glow-secondary: var(--base0C);
   --glow-tertiary: var(--base0E);
-  --glow-1: color-mix(in srgb, var(--glow-primary) 30%, transparent);
-  --glow-2: color-mix(in srgb, var(--glow-secondary) 28%, transparent);
-  --glow-3: color-mix(in srgb, var(--glow-tertiary) 30%, transparent);
-  --glow-4: color-mix(in srgb, var(--glow-primary) 18%, transparent);
-  --glow-5: color-mix(in srgb, var(--glow-secondary) 10%, transparent);
+  --glow-1: color-mix(in srgb, var(--glow-primary) 15%, transparent);
+  --glow-2: color-mix(in srgb, var(--glow-secondary) 14%, transparent);
+  --glow-3: color-mix(in srgb, var(--glow-tertiary) 15%, transparent);
+  --glow-4: color-mix(in srgb, var(--glow-primary) 8%, transparent);
+  --glow-5: color-mix(in srgb, var(--glow-secondary) 5%, transparent);
   --glass-surface: color-mix(in srgb, var(--bg) 62%, transparent);
   --glass-nav: color-mix(in srgb, var(--bg-raised) 52%, transparent);
   --glass-list: color-mix(in srgb, var(--bg-raised) 50%, transparent);
@@ -113,10 +113,10 @@ html[data-theme-glass="true"][data-theme-scheme="Aura Dark"] {
   --glow-primary: var(--base04);
   --glow-secondary: var(--base03);
   --glow-tertiary: var(--base02);
-  --glow-1: color-mix(in srgb, var(--glow-primary) 24%, transparent);
-  --glow-2: color-mix(in srgb, var(--glow-secondary) 70%, transparent);
-  --glow-3: color-mix(in srgb, var(--glow-secondary) 50%, transparent);
-  --glow-4: color-mix(in srgb, var(--glow-tertiary) 90%, transparent);
+  --glow-1: color-mix(in srgb, var(--glow-primary) 12%, transparent);
+  --glow-2: color-mix(in srgb, var(--glow-secondary) 34%, transparent);
+  --glow-3: color-mix(in srgb, var(--glow-secondary) 24%, transparent);
+  --glow-4: color-mix(in srgb, var(--glow-tertiary) 42%, transparent);
   --glass-nav: color-mix(in srgb, var(--base00) 62%, transparent);
   --glass-list: color-mix(in srgb, var(--base00) 58%, transparent);
   --glass-reader: color-mix(in srgb, var(--base00) 64%, transparent);
@@ -153,29 +153,70 @@ html[data-theme-glass="true"] .shell > .reader {
   background-color: var(--glass-reader);
 }
 
-/* Rounded panes float as separate cards. They work with either background:
-   glass keeps the glow behind translucent cards; solid uses raised surfaces. */
-html[data-theme-panes="rounded"] .shell {
-  padding: 10px;
-  column-gap: 5px;
-  row-gap: 5px;
-  border: 0;
-  background: transparent;
-}
-
+/* The rail and the folder sidebar float as glass cards. The mail list and
+   reader share one surface, divided only by their splitter. */
 html[data-theme-panes="rounded"] .shell > .sidebar,
-html[data-theme-panes="rounded"] .shell > .message-list,
-html[data-theme-panes="rounded"] .shell > .reader {
-  border: 1px solid var(--pane-border);
-  border-radius: 16px;
-  box-shadow: var(--pane-highlight), var(--pane-shadow);
-}
-
-/* Keep the border on the outer edges, but leave the facing gap edges open. */
 html[data-theme-panes="rounded"] .shell > .app-rail {
   border: 1px solid var(--pane-border);
   border-radius: 16px;
   box-shadow: var(--pane-highlight), var(--pane-shadow);
+}
+
+/* Close the 5px gutter around the list/reader splitter so the two panes meet
+   at the line instead of floating apart. */
+html[data-theme-panes="rounded"] .shell:not(.stacked):not(.narrow) > .message-list {
+  margin-right: -5px;
+}
+
+html[data-theme-panes="rounded"] .shell:not(.stacked):not(.narrow) > .reader {
+  margin-left: -5px;
+}
+
+html[data-theme-panes="rounded"] .shell.stacked > .message-list {
+  margin-bottom: -5px;
+}
+
+html[data-theme-panes="rounded"] .shell.stacked > .reader {
+  margin-top: -5px;
+  margin-left: -5px;
+}
+
+/* The mail surface reaches the window's top and bottom edges; only the
+   navigation keeps the 10px inset. */
+html[data-theme-panes="rounded"] .shell:not(.stacked) > .message-list,
+html[data-theme-panes="rounded"] .shell:not(.stacked) > .reader {
+  margin-top: -10px;
+  margin-bottom: -10px;
+}
+
+html[data-theme-panes="rounded"] .shell:not(.stacked) > .list-splitter {
+  margin-top: -10px;
+  margin-bottom: -10px;
+}
+
+html[data-theme-panes="rounded"] .shell.stacked > .message-list {
+  margin-top: -10px;
+}
+
+html[data-theme-panes="rounded"] .shell.stacked > .reader {
+  margin-bottom: -10px;
+}
+
+html[data-theme-panes="rounded"] .shell.narrow > .message-list,
+html[data-theme-panes="rounded"] .shell.narrow > .reader {
+  margin-top: -10px;
+  margin-bottom: -10px;
+  margin-right: -10px;
+}
+
+html[data-theme-panes="rounded"] .shell:not(.stacked) > .reader {
+  margin-right: -10px;
+}
+
+/* The sidebar is a card again; a line in its gutter would read as a second
+   border. Keep the drag target, drop the paint unless it is focused. */
+html[data-theme-panes="rounded"] .shell > .sidebar-splitter .splitter:not(:focus-visible) {
+  background: transparent;
 }
 
 /* Calendar mode is a workspace inside the shell; treat its two panes like
@@ -293,28 +334,43 @@ html[data-theme-glass="true"] .event-dialog {
   box-shadow: 0 18px 46px color-mix(in srgb, #000 26%, transparent);
 }
 
-html[data-theme-panes="rounded"] .shell > .sidebar {
-  border-right: 0;
+html[data-theme-panes="rounded"] .shell {
+  padding: 10px;
+  column-gap: 5px;
+  row-gap: 5px;
+  border: 0;
+  background: transparent;
 }
 
-html[data-theme-panes="rounded"] .shell > .message-list {
-  border-right: 0;
-  border-left: 0;
-}
-
-html[data-theme-panes="rounded"] .shell > .reader {
-  border-left: 0;
-}
-
-/* Solid floating cards need their own raised surfaces; the gaps show the
-   theme base colour. The glass variants keep their translucent backgrounds. */
+/* Solid panes draw straight on the theme background; the glass variants get
+   a whisper of tint so the content still reads as a surface. */
 html[data-theme-panes="rounded"]:not([data-theme-glass="true"]) .shell > .sidebar {
   background-color: var(--bg-raised);
 }
 
 html[data-theme-panes="rounded"]:not([data-theme-glass="true"]) .shell > .message-list,
 html[data-theme-panes="rounded"]:not([data-theme-glass="true"]) .shell > .reader {
-  background-color: color-mix(in srgb, var(--bg) 84%, var(--bg-raised));
+  background-color: transparent;
+}
+
+/* The mail surface is drawn straight on the theme background, so the panes
+   and their divider leave no visible seam, and it runs to the window edges
+   on every side that is not the floating navigation. */
+html[data-theme-panes="rounded"] .shell > .message-list,
+html[data-theme-panes="rounded"] .shell > .reader {
+  height: auto;
+}
+
+/* The glass overlay spans the whole shell, not just the mail panes: one
+   translucent background behind the floating cards, so no seam can appear at
+   the mail viewer's left edge. */
+html[data-theme-glass="true"][data-theme-panes="rounded"] .shell {
+  background-color: color-mix(in srgb, var(--bg-raised) 22%, transparent);
+}
+
+html[data-theme-glass="true"][data-theme-panes="rounded"] .shell > .message-list,
+html[data-theme-glass="true"][data-theme-panes="rounded"] .shell > .reader {
+  background-color: transparent;
 }
 
 html[data-theme-glass="true"] .shell > .sidebar,

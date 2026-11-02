@@ -13,22 +13,16 @@
   const DITHER_AMPLITUDE = 4;
   const GLOW_SHAPES = [
     { token: "--glow-1", x: 0.16, y: 0.14, rx: 0.58, ry: 0.54 },
-    { token: "--glow-2", x: 0.78, y: 0.1, rx: 0.52, ry: 0.48 },
-    { token: "--glow-3", x: 0.88, y: 0.78, rx: 0.62, ry: 0.56 },
     { token: "--glow-4", x: 0.22, y: 0.88, rx: 0.5, ry: 0.58 },
     { token: "--glow-5", x: 0.58, y: 0.56, rx: 0.44, ry: 0.42 }
   ];
   const FORCED_GLOWS_DARK = [
     "color-mix(in srgb, var(--accent) 30%, transparent)",
-    "color-mix(in srgb, var(--info) 28%, transparent)",
-    "color-mix(in srgb, var(--accent-alt) 30%, transparent)",
     "color-mix(in srgb, var(--accent) 18%, transparent)",
     "color-mix(in srgb, var(--info) 10%, transparent)"
   ];
   const FORCED_GLOWS_LIGHT = [
     "color-mix(in srgb, var(--accent) 9%, transparent)",
-    "color-mix(in srgb, var(--info) 9%, transparent)",
-    "color-mix(in srgb, var(--accent-alt) 10%, transparent)",
     "color-mix(in srgb, var(--accent) 6%, transparent)",
     "color-mix(in srgb, var(--info) 5%, transparent)"
   ];
