@@ -124,14 +124,23 @@ jobs:
           node-version: 22
           cache: npm
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.0'
+
+      # The runner has no Docker daemon, so the osxcross image is pulled with
+      # crane and unpacked instead of run.
+      - name: Install the macOS cross toolchain
+        shell: bash
+        run: bash scripts/ci-macos-setup.sh
+
       - name: Install frontend dependencies
+        shell: bash
         run: npm ci
 
-      - name: Build the macOS toolchain image
-        run: docker build -f packaging/macos/Dockerfile -t auramail-macos packaging/macos
-
       - name: Build macOS app
-        run: docker run --rm -v "$PWD:/src" -w /src auramail-macos bash scripts/ci-macos.sh
+        shell: bash
+        run: bash scripts/ci-macos.sh
 
       - name: Upload macOS app
         uses: actions/upload-artifact@v3

@@ -3,8 +3,9 @@
 #
 # Tauri's macOS bundler shells out to macOS-only tools (hdiutil, codesign), so
 # this compiles both Darwin targets with --no-bundle and assembles the .app
-# itself, then ad-hoc signs it with rcodesign. Run it inside the image built
-# from packaging/macos/Dockerfile:
+# itself, then ad-hoc signs it with rcodesign. The toolchain comes either from
+# the image built from packaging/macos/Dockerfile or, in CI, from
+# scripts/ci-macos-setup.sh:
 #
 #   docker build -f packaging/macos/Dockerfile -t auramail-macos packaging/macos
 #   docker run --rm -v "$PWD:/src" -w /src auramail-macos bash scripts/ci-macos.sh
