@@ -4,7 +4,8 @@ export type SettingsSection =
   | "appearance"
   | "accessibility"
   | "signatures"
-  | "ai";
+  | "ai"
+  | "updates";
 
 export type SettingsTab = {
   id: SettingsSection;
@@ -17,7 +18,8 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { id: "appearance", label: "Appearance" },
   { id: "accessibility", label: "Accessibility" },
   { id: "signatures", label: "Signatures" },
-  { id: "ai", label: "Aura AI" }
+  { id: "ai", label: "Aura AI" },
+  { id: "updates", label: "Updates" }
 ];
 
 export function nextTabIndex(current: number, key: string, count: number): number {

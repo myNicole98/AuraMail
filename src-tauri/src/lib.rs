@@ -247,6 +247,8 @@ pub fn run() {
             commands::mark_read,
             commands::mark_messages,
             commands::check_update,
+            commands::download_update,
+            commands::install_update,
             commands::fill_message_snippets,
             commands::move_message_to_folder,
             commands::set_message_classification,

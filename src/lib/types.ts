@@ -415,7 +415,12 @@ export type BulkReport = {
 
 export type UpdateInfo = {
   version: string;
-  url: string;
+  page_url: string;
+  download_url: string | null;
+  checksums_url: string | null;
+  asset_name: string | null;
+  checksum: string | null;
+  can_install: boolean;
 };
 
 export type Attachment = {

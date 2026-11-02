@@ -2131,6 +2131,68 @@ pub async fn mark_read(
 }
 
 #[tauri::command]
+pub async fn download_update(
+    app: AppHandle,
+    url: String,
+    version: String,
+    asset_name: String,
+    checksum: String,
+) -> AppResult<String> {
+    if !crate::update::verify_url(&url) {
+        return Err(AppError::Message("the update URL is not trusted".into()));
+    }
+    if !crate::update::safe_file_name(&version) || !crate::update::safe_file_name(&asset_name) {
+        return Err(AppError::Message("the update name is invalid".into()));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| AppError::Message(error.to_string()))?;
+    let destination = data_dir.join("updates").join(&version).join(&asset_name);
+    tauri::async_runtime::spawn_blocking(move || {
+        let progress_app = app.clone();
+        crate::update::download(&url, &destination, &checksum, move |downloaded, total| {
+            let _ = progress_app.emit(
+                "update://progress",
+                serde_json::json!({ "downloaded": downloaded, "total": total }),
+            );
+        })
+        .map_err(AppError::Message)?;
+        Ok(destination.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
+pub fn install_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    staged: String,
+) -> AppResult<()> {
+    let staged = PathBuf::from(staged);
+    if !staged.is_file() {
+        return Err(AppError::Message("the update file is missing".into()));
+    }
+    let version = app.package_info().version.to_string();
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| AppError::Message(error.to_string()))?;
+    let backup = data_dir.join(format!("auramail.db.backup-{version}"));
+    let _ = std::fs::remove_file(&backup);
+    let _ = state
+        .db
+        .conn
+        .lock()
+        .unwrap()
+        .execute("VACUUM INTO ?1", [backup.to_string_lossy().to_string()]);
+    crate::update::install(&staged)?;
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn check_update(app: AppHandle) -> AppResult<Option<crate::update::UpdateInfo>> {
     let current = app.package_info().version.to_string();
     tauri::async_runtime::spawn_blocking(move || Ok(crate::update::check(&current)))

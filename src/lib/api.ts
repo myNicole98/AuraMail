@@ -162,6 +162,13 @@ export const api = {
     invoke<Contact[]>("list_contacts", { query, limit }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
+  downloadUpdate: (input: {
+    version: string;
+    url: string;
+    assetName: string;
+    checksum: string;
+  }) => invoke<string>("download_update", input),
+  installUpdate: (staged: string) => invoke<void>("install_update", { staged }),
   openComposeWindow: (mode: string, messageId?: number | null, draftId?: number | null) =>
     invoke<void>("open_compose_window", {
       mode,

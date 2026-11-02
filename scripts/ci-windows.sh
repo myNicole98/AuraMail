@@ -58,10 +58,19 @@ makensis \
   -DWEBVIEW2_BOOTSTRAPPER="$WORK/MicrosoftEdgeWebview2Setup.exe" \
   scripts/windows-installer.nsi
 
+PAYLOAD="$WORK/payload"
+mkdir -p "$PAYLOAD/resources/matugen" "$PAYLOAD/resources/logo"
+cp "$APP" "$PAYLOAD/AuraMail.exe"
+cp "$SIDECAR" "$PAYLOAD/auramail-proton-bridge.exe"
+cp resources/matugen/auramail.toml resources/matugen/auramail.json \
+  "$PAYLOAD/resources/matugen/"
+cp resources/logo/aura_mail_icon_only.svg "$PAYLOAD/resources/logo/"
+(cd "$PAYLOAD" && zip -qry "$ROOT/release/AuraMail-${VERSION}-windows-update.zip" .)
+
 INSTALLER="release/AuraMail-${VERSION}-x64-setup.exe"
 if [ ! -f "$INSTALLER" ]; then
   echo "error: installer was not produced: $INSTALLER" >&2
   exit 1
 fi
 
-ls -lh "$INSTALLER"
+ls -lh "$INSTALLER" "release/AuraMail-${VERSION}-windows-update.zip"

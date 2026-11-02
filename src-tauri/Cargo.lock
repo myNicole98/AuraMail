@@ -305,6 +305,7 @@ dependencies = [
  "icalendar",
  "keyring",
  "lettre",
+ "libc",
  "libloading 0.8.9",
  "mail-parser",
  "native-tls",

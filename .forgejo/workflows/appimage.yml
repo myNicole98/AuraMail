@@ -91,7 +91,7 @@ jobs:
       - name: Install Windows cross-build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang lld llvm nsis
+          sudo apt-get install -y --no-install-recommends clang lld llvm nsis zip
           # Ubuntu's clang package does not ship the clang-cl driver name.
           printf '#!/bin/sh\nexec /usr/bin/clang --driver-mode=cl "$@"\n' \
             | sudo tee /usr/local/bin/clang-cl >/dev/null
@@ -109,7 +109,9 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: windows-installer
-          path: release/*.exe
+          path: |
+            release/*.exe
+            release/*-windows-update.zip
           if-no-files-found: error
 
   macos:
@@ -172,7 +174,9 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: macos-app
-          path: release/*.dmg
+          path: |
+            release/*.dmg
+            release/*-macos-update.zip
           if-no-files-found: error
 
   publish:
@@ -216,11 +220,21 @@ jobs:
             -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             --data-binary @"$RUNNER_TEMP/release.json" \
             | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
-          find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' -o -name '*.dmg' \) -print
-          for f in $(find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' -o -name '*.dmg' \)); do
+          (
+            cd artifacts
+            find . -type f \( -name '*.AppImage' -o -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \) -print0 |
+              sort -z |
+              while IFS= read -r -d '' file; do
+                printf '%s  %s\n' "$(sha256sum "$file" | cut -d' ' -f1)" "$(basename "$file")"
+              done
+          ) > "$RUNNER_TEMP/SHA256SUMS"
+          find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \) -print
+          for f in $(find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \)); do
             curl -fsS -X POST "$API/releases/$ID/assets?name=$(basename "$f")" \
               -H "Authorization: token $TOKEN" -F "attachment=@$f"
           done
+          curl -fsS -X POST "$API/releases/$ID/assets?name=SHA256SUMS" \
+            -H "Authorization: token $TOKEN" -F "attachment=@$RUNNER_TEMP/SHA256SUMS"
           curl -fsS -X PATCH "$API/releases/$ID" \
             -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             -d '{"draft":false}'
