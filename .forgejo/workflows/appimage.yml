@@ -126,7 +126,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gateway="$(ip route show default | awk '{print $3; exit}')"
+          # /proc/net/route always exists, unlike iproute2 in a slim image.
+          gateway=""
+          while read -r _iface destination gateway_hex _rest; do
+            if [ "$destination" = "00000000" ]; then
+              a=$((16#${gateway_hex:6:2}))
+              b=$((16#${gateway_hex:4:2}))
+              c=$((16#${gateway_hex:2:2}))
+              d=$((16#${gateway_hex:0:2}))
+              gateway="$a.$b.$c.$d"
+              break
+            fi
+          done < /proc/net/route
           test -n "$gateway" || { echo "no default gateway; DIND is unreachable" >&2; exit 1; }
           echo "DOCKER_HOST=tcp://$gateway:2375" >> "$GITHUB_ENV"
           docker info >/dev/null
