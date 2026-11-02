@@ -139,7 +139,8 @@ jobs:
             fi
           done < /proc/net/route
           test -n "$gateway" || { echo "no default gateway; DIND is unreachable" >&2; exit 1; }
-          echo "DOCKER_HOST=tcp://$gateway:2375" >> "$GITHUB_ENV"
+          export DOCKER_HOST="tcp://$gateway:2375"
+          echo "DOCKER_HOST=$DOCKER_HOST" >> "$GITHUB_ENV"
           docker info >/dev/null
 
       # Jobs run inside the DIND daemon, which cannot see this container's
