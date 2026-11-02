@@ -140,7 +140,9 @@
       .setMailPreferences({
         trusted_senders: preferences.trusted_senders,
         always_load_images: preferences.always_load_images,
-        profile_pictures: preferences.profile_pictures
+        profile_pictures: preferences.profile_pictures,
+        bimi_logos: preferences.bimi_logos,
+        gravatar_pictures: preferences.gravatar_pictures
       })
       .catch(() => {});
     window.dispatchEvent(new CustomEvent("auramail:preferences-changed"));

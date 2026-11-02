@@ -47,7 +47,11 @@
   let preferencesVersion = $state(0);
   let profilePictures = $derived.by(() => {
     preferencesVersion;
-    return loadPreferences().profile_pictures;
+    const preferences = loadPreferences();
+    return (
+      preferences.profile_pictures &&
+      (preferences.bimi_logos || preferences.gravatar_pictures)
+    );
   });
   let classificationProgress = $derived(app.classificationProgress);
   let classificationMessage = $derived(

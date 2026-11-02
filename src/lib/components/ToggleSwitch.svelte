@@ -3,17 +3,20 @@
     checked,
     label,
     onchange,
-    disabled = false
+    disabled = false,
+    small = false
   }: {
     checked: boolean;
     label: string;
     onchange: (value: boolean) => void;
     disabled?: boolean;
+    small?: boolean;
   } = $props();
 </script>
 
 <button
   class="switch"
+  class:small
   type="button"
   role="switch"
   aria-checked={checked}
@@ -36,6 +39,10 @@
     background: color-mix(in srgb, var(--muted) 22%, var(--bg));
     transition: background 160ms ease, border-color 160ms ease;
   }
+  .switch.small {
+    width: 32px;
+    height: 18px;
+  }
   .switch span {
     position: absolute;
     top: 3px;
@@ -51,9 +58,18 @@
     border-color: var(--accent);
     background: var(--accent);
   }
+  .switch.small span {
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+  }
   .switch[aria-checked="true"] span {
     transform: translateX(16px);
     background: var(--bg);
+  }
+  .switch.small[aria-checked="true"] span {
+    transform: translateX(14px);
   }
   .switch:disabled { opacity: 0.5; cursor: default; }
   .switch:focus-visible { border-color: var(--text-strong); }

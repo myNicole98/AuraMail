@@ -124,6 +124,14 @@ fn cache_miss(db: &Database, email: &str, now: i64) -> AppResult<()> {
     Ok(())
 }
 
+fn source_enabled(source: &str, bimi_logos: bool, gravatar_pictures: bool) -> bool {
+    match source {
+        "bimi" => bimi_logos,
+        "gravatar" => gravatar_pictures,
+        _ => true,
+    }
+}
+
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -139,6 +147,8 @@ pub async fn resolve(
     if !preload::profile_pictures(db, space_id)? {
         return Ok(None);
     }
+    let bimi_logos = preload::bimi_logos(db, space_id)?;
+    let gravatar_pictures = preload::gravatar_pictures(db, space_id)?;
     let email = normalize_email(email);
     if email.is_empty() {
         return Ok(None);
@@ -146,9 +156,10 @@ pub async fn resolve(
     let now = unix_now();
     if let Some(cached) = cache_lookup(db, &email)? {
         if let Some(avatar) = cached.data {
-            return Ok(Some(avatar));
-        }
-        if cached.source == "missing" && miss_is_fresh(cached.fetched_at, now) {
+            if source_enabled(&cached.source, bimi_logos, gravatar_pictures) {
+                return Ok(Some(avatar));
+            }
+        } else if cached.source == "missing" && miss_is_fresh(cached.fetched_at, now) {
             return Ok(None);
         }
     }
@@ -159,18 +170,22 @@ pub async fn resolve(
         .build()
         .map_err(|_| crate::error::AppError::Message("avatar loader is unavailable".into()))?;
 
-    if let Some(domain) = email.split_once('@').map(|(_, domain)| domain) {
-        if let Some(logo) = bimi_logo_url(domain).await {
-            if let Some(avatar) = fetch_avatar(&client, &logo).await {
-                cache_hit(db, &email, "bimi", &avatar, now)?;
-                return Ok(Some(avatar));
+    if bimi_logos {
+        if let Some(domain) = email.split_once('@').map(|(_, domain)| domain) {
+            if let Some(logo) = bimi_logo_url(domain).await {
+                if let Some(avatar) = fetch_avatar(&client, &logo).await {
+                    cache_hit(db, &email, "bimi", &avatar, now)?;
+                    return Ok(Some(avatar));
+                }
             }
         }
     }
 
-    if let Some(avatar) = fetch_avatar(&client, &gravatar_url(&email)).await {
-        cache_hit(db, &email, "gravatar", &avatar, now)?;
-        return Ok(Some(avatar));
+    if gravatar_pictures {
+        if let Some(avatar) = fetch_avatar(&client, &gravatar_url(&email)).await {
+            cache_hit(db, &email, "gravatar", &avatar, now)?;
+            return Ok(Some(avatar));
+        }
     }
 
     cache_miss(db, &email, now)?;
@@ -342,10 +357,22 @@ mod tests {
         assert!(!miss_is_fresh(100, 100 + MISS_TTL_SECONDS));
     }
 
+    #[test]
+    fn cached_sources_only_show_for_enabled_tiers() {
+        assert!(source_enabled("bimi", true, false));
+        assert!(!source_enabled("bimi", false, true));
+        assert!(source_enabled("gravatar", false, true));
+        assert!(!source_enabled("gravatar", true, false));
+    }
+
     #[tokio::test]
     async fn resolves_a_cached_hit() {
         let db = Database::open_memory().unwrap();
         let space_id = crate::spaces::default_id(&db).unwrap();
+        crate::mail::preload::set_preferences(
+            &db, space_id, &[], false, true, false, true,
+        )
+        .unwrap();
         let email = "ada@example.com";
         let avatar = AvatarData {
             mime: "image/png".into(),
@@ -359,13 +386,17 @@ mod tests {
     async fn respects_a_fresh_cached_miss() {
         let db = Database::open_memory().unwrap();
         let space_id = crate::spaces::default_id(&db).unwrap();
+        crate::mail::preload::set_preferences(
+            &db, space_id, &[], false, true, false, true,
+        )
+        .unwrap();
         let email = "ada@example.com";
         cache_miss(&db, email, unix_now()).unwrap();
         assert_eq!(resolve(&db, email, space_id).await.unwrap(), None);
     }
 
     #[tokio::test]
-    async fn returns_nothing_when_profile_pictures_are_disabled() {
+    async fn returns_nothing_when_avatar_lookups_are_disabled() {
         let db = Database::open_memory().unwrap();
         let space_id = crate::spaces::default_id(&db).unwrap();
         let email = "ada@example.com";
@@ -374,7 +405,10 @@ mod tests {
             bytes: vec![1, 2, 3],
         };
         cache_hit(&db, email, "gravatar", &avatar, unix_now()).unwrap();
-        crate::mail::preload::set_preferences(&db, space_id, &[], false, false).unwrap();
+        crate::mail::preload::set_preferences(
+            &db, space_id, &[], false, false, true, true,
+        )
+        .unwrap();
         assert_eq!(resolve(&db, email, space_id).await.unwrap(), None);
     }
 }

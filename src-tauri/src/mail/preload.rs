@@ -18,6 +18,8 @@ const PRELOAD_BATCH: usize = 10;
 pub const TRUSTED_SENDERS_KEY: &str = "mail.trusted_senders";
 pub const ALWAYS_LOAD_IMAGES_KEY: &str = "mail.always_load_images";
 pub const PROFILE_PICTURES_KEY: &str = "mail.profile_pictures";
+pub const BIMI_LOGOS_KEY: &str = "mail.bimi_logos";
+pub const GRAVATAR_PICTURES_KEY: &str = "mail.gravatar_pictures";
 
 fn scoped_key(space_id: i64, key: &str) -> String {
     format!("space:{space_id}:{key}")
@@ -144,10 +146,27 @@ pub fn always_load_images(db: &Database, space_id: i64) -> AppResult<bool> {
 }
 
 pub fn profile_pictures(db: &Database, space_id: i64) -> AppResult<bool> {
-    Ok(!matches!(
+    Ok(matches!(
         setting_for_space(db, space_id, PROFILE_PICTURES_KEY)?.as_deref(),
-        Some("false") | Some("0")
+        Some("true") | Some("1")
     ))
+}
+
+fn avatar_tier(db: &Database, space_id: i64, key: &str) -> AppResult<bool> {
+    match setting_for_space(db, space_id, key)? {
+        Some(value) => Ok(matches!(value.as_str(), "true" | "1")),
+        // The tiers sit under the master switch, so they start selected once
+        // it is turned on.
+        None => Ok(true),
+    }
+}
+
+pub fn bimi_logos(db: &Database, space_id: i64) -> AppResult<bool> {
+    avatar_tier(db, space_id, BIMI_LOGOS_KEY)
+}
+
+pub fn gravatar_pictures(db: &Database, space_id: i64) -> AppResult<bool> {
+    avatar_tier(db, space_id, GRAVATAR_PICTURES_KEY)
 }
 
 pub fn set_preferences(
@@ -156,6 +175,8 @@ pub fn set_preferences(
     trusted_senders: &[String],
     always_load_images: bool,
     profile_pictures: bool,
+    bimi_logos: bool,
+    gravatar_pictures: bool,
 ) -> AppResult<()> {
     spaces::by_id(db, space_id)?;
     let mut normalized = trusted_senders
@@ -176,6 +197,14 @@ pub fn set_preferences(
     db.set_setting(
         &scoped_key(space_id, PROFILE_PICTURES_KEY),
         if profile_pictures { "true" } else { "false" },
+    )?;
+    db.set_setting(
+        &scoped_key(space_id, BIMI_LOGOS_KEY),
+        if bimi_logos { "true" } else { "false" },
+    )?;
+    db.set_setting(
+        &scoped_key(space_id, GRAVATAR_PICTURES_KEY),
+        if gravatar_pictures { "true" } else { "false" },
     )?;
     Ok(())
 }
@@ -277,7 +306,10 @@ async fn fetch_image(client: &reqwest::Client, url: &str) -> Option<(String, Vec
 
 #[cfg(test)]
 mod tests {
-    use super::{image_mime, remove_inline_attachments, set_preferences, trusted_senders};
+    use super::{
+        image_mime, remove_inline_attachments, scoped_key, set_preferences,
+        trusted_senders, PROFILE_PICTURES_KEY,
+    };
     use crate::db::Database;
     use crate::mail::parse::ParsedAttachment;
 
@@ -328,6 +360,8 @@ mod tests {
             default.id,
             &["ada@example.com".into()],
             true,
+            true,
+            true,
             false,
         )
         .unwrap();
@@ -336,25 +370,42 @@ mod tests {
             vec!["ada@example.com".to_string()]
         );
         assert!(super::always_load_images(&db, default.id).unwrap());
-        assert!(!super::profile_pictures(&db, default.id).unwrap());
+        assert!(super::profile_pictures(&db, default.id).unwrap());
+        assert!(super::bimi_logos(&db, default.id).unwrap());
+        assert!(!super::gravatar_pictures(&db, default.id).unwrap());
         assert!(trusted_senders(&db, work.id).unwrap().is_empty());
         assert!(!super::always_load_images(&db, work.id).unwrap());
-        assert!(super::profile_pictures(&db, work.id).unwrap());
+        assert!(!super::profile_pictures(&db, work.id).unwrap());
+        assert!(super::bimi_logos(&db, work.id).unwrap());
+        assert!(super::gravatar_pictures(&db, work.id).unwrap());
     }
 
     #[test]
-    fn profile_pictures_default_on() {
+    fn profile_pictures_default_off_with_both_tiers_ready() {
         let db = Database::open_memory().unwrap();
         let space_id = crate::spaces::default_id(&db).unwrap();
-        assert!(super::profile_pictures(&db, space_id).unwrap());
-    }
-
-    #[test]
-    fn profile_pictures_persist_opt_out() {
-        let db = Database::open_memory().unwrap();
-        let space_id = crate::spaces::default_id(&db).unwrap();
-        set_preferences(&db, space_id, &[], false, false).unwrap();
         assert!(!super::profile_pictures(&db, space_id).unwrap());
+        assert!(super::bimi_logos(&db, space_id).unwrap());
+        assert!(super::gravatar_pictures(&db, space_id).unwrap());
+    }
+
+    #[test]
+    fn avatar_lookups_persist_independently() {
+        let db = Database::open_memory().unwrap();
+        let space_id = crate::spaces::default_id(&db).unwrap();
+
+        set_preferences(&db, space_id, &[], false, true, true, false).unwrap();
+        assert!(super::profile_pictures(&db, space_id).unwrap());
+        assert!(super::bimi_logos(&db, space_id).unwrap());
+        assert!(!super::gravatar_pictures(&db, space_id).unwrap());
+
+        set_preferences(&db, space_id, &[], false, true, false, true).unwrap();
+        assert!(!super::bimi_logos(&db, space_id).unwrap());
+        assert!(super::gravatar_pictures(&db, space_id).unwrap());
+
+        set_preferences(&db, space_id, &[], false, false, false, true).unwrap();
+        assert!(!super::profile_pictures(&db, space_id).unwrap());
+        assert!(super::gravatar_pictures(&db, space_id).unwrap());
     }
 
     #[test]
@@ -365,6 +416,8 @@ mod tests {
             &db,
             space_id,
             &["  ADA@Example.com ".into(), "ada@example.com".into()],
+            true,
+            true,
             true,
             true,
         )

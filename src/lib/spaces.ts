@@ -29,7 +29,9 @@ export function defaultSpaceGeneral(): SpaceGeneral {
     attachment_thumbnails: true,
     reveal_download: false,
     always_load_images: false,
-    profile_pictures: true,
+    profile_pictures: false,
+    bimi_logos: true,
+    gravatar_pictures: true,
     trusted_senders: [],
     notifications: false,
     new_mail_sound: true,
@@ -228,6 +230,11 @@ export function normalizeSpaceGeneral(value: unknown): SpaceGeneral {
     profile_pictures: bool(
       stored.profile_pictures,
       defaults.profile_pictures
+    ),
+    bimi_logos: bool(stored.bimi_logos, defaults.bimi_logos),
+    gravatar_pictures: bool(
+      stored.gravatar_pictures,
+      defaults.gravatar_pictures
     ),
     trusted_senders: trusted,
     notifications: bool(stored.notifications, defaults.notifications),

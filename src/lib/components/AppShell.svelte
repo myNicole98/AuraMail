@@ -254,13 +254,18 @@
         always_load_images:
           local.always_load_images || stored.always_load_images,
         profile_pictures:
-          local.profile_pictures && stored.profile_pictures
+          local.profile_pictures && stored.profile_pictures,
+        bimi_logos: local.bimi_logos && stored.bimi_logos,
+        gravatar_pictures:
+          local.gravatar_pictures && stored.gravatar_pictures
       };
       savePreferences(merged);
       await api.setMailPreferences({
         trusted_senders: merged.trusted_senders,
         always_load_images: merged.always_load_images,
-        profile_pictures: merged.profile_pictures
+        profile_pictures: merged.profile_pictures,
+        bimi_logos: merged.bimi_logos,
+        gravatar_pictures: merged.gravatar_pictures
       });
       window.dispatchEvent(new CustomEvent("auramail:preferences-changed"));
     } catch {

@@ -54,6 +54,8 @@
       reveal_download: preferences.reveal_download,
       always_load_images: preferences.always_load_images,
       profile_pictures: preferences.profile_pictures,
+      bimi_logos: preferences.bimi_logos,
+      gravatar_pictures: preferences.gravatar_pictures,
       trusted_senders: preferences.trusted_senders,
       notifications: desktopPreferences.notifications,
       new_mail_sound: desktopPreferences.newMailSound,
@@ -72,6 +74,8 @@
       reveal_download: preferences.reveal_download,
       always_load_images: preferences.always_load_images,
       profile_pictures: preferences.profile_pictures,
+      bimi_logos: preferences.bimi_logos,
+      gravatar_pictures: preferences.gravatar_pictures,
       trusted_senders: preferences.trusted_senders
     };
   }
@@ -138,6 +142,16 @@
     notifyPreferences();
   }
 
+  function setBimiLogos(value: boolean) {
+    persistGeneral({ bimi_logos: value });
+    notifyPreferences();
+  }
+
+  function setGravatarPictures(value: boolean) {
+    persistGeneral({ gravatar_pictures: value });
+    notifyPreferences();
+  }
+
   function setAlwaysLoadImages(value: boolean) {
     persistGeneral({ always_load_images: value });
     notifyPreferences();
@@ -169,7 +183,9 @@
         {
           trusted_senders: preferences.trusted_senders,
           always_load_images: preferences.always_load_images,
-          profile_pictures: preferences.profile_pictures
+          profile_pictures: preferences.profile_pictures,
+          bimi_logos: preferences.bimi_logos,
+          gravatar_pictures: preferences.gravatar_pictures
         },
         editingSpaceId
       )
@@ -358,6 +374,28 @@
           label="Sender profile pictures"
           onchange={setProfilePictures}
         />
+      </div>
+      <div class="settings-nested" class:disabled={!preferences.profile_pictures}>
+        <div class="settings-row">
+          <strong>BIMI logos</strong>
+          <ToggleSwitch
+            checked={preferences.bimi_logos}
+            label="BIMI logos"
+            small
+            disabled={!preferences.profile_pictures}
+            onchange={setBimiLogos}
+          />
+        </div>
+        <div class="settings-row">
+          <strong>Gravatar pictures</strong>
+          <ToggleSwitch
+            checked={preferences.gravatar_pictures}
+            label="Gravatar pictures"
+            small
+            disabled={!preferences.profile_pictures}
+            onchange={setGravatarPictures}
+          />
+        </div>
       </div>
     </section>
 

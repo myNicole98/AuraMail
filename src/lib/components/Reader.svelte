@@ -98,7 +98,11 @@
   });
   let showProfilePictures = $derived.by(() => {
     preferencesVersion;
-    return loadPreferences().profile_pictures;
+    const preferences = loadPreferences();
+    return (
+      preferences.profile_pictures &&
+      (preferences.bimi_logos || preferences.gravatar_pictures)
+    );
   });
   let themeColors = $state<ThemeColors>(readThemeColors());
   let darkEmailPreference = $state(loadPreferences().dark_email);
@@ -199,7 +203,9 @@
         .setMailPreferences({
           trusted_senders: next.trusted_senders,
           always_load_images: next.always_load_images,
-          profile_pictures: next.profile_pictures
+          profile_pictures: next.profile_pictures,
+          bimi_logos: next.bimi_logos,
+          gravatar_pictures: next.gravatar_pictures
         })
         .catch(() => {});
       window.dispatchEvent(new CustomEvent("auramail:preferences-changed"));

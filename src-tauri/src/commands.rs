@@ -2919,6 +2919,8 @@ pub struct MailPreferences {
     pub trusted_senders: Vec<String>,
     pub always_load_images: bool,
     pub profile_pictures: bool,
+    pub bimi_logos: bool,
+    pub gravatar_pictures: bool,
 }
 
 #[tauri::command]
@@ -2946,6 +2948,8 @@ pub async fn set_mail_preferences(
             &preferences.trusted_senders,
             preferences.always_load_images,
             preferences.profile_pictures,
+            preferences.bimi_logos,
+            preferences.gravatar_pictures,
         )?;
         mail_preferences(&db, space_id)
     })
@@ -2958,6 +2962,8 @@ fn mail_preferences(db: &Database, space_id: i64) -> AppResult<MailPreferences> 
         trusted_senders: mail::preload::trusted_senders(db, space_id)?,
         always_load_images: mail::preload::always_load_images(db, space_id)?,
         profile_pictures: mail::preload::profile_pictures(db, space_id)?,
+        bimi_logos: mail::preload::bimi_logos(db, space_id)?,
+        gravatar_pictures: mail::preload::gravatar_pictures(db, space_id)?,
     })
 }
 

@@ -74,6 +74,8 @@ export type SettingsPreferences = {
   dark_email: boolean;
   always_load_images: boolean;
   profile_pictures: boolean;
+  bimi_logos: boolean;
+  gravatar_pictures: boolean;
   trusted_senders: string[];
   theme_choice: ThemeChoice;
   theme_accent: string;
@@ -153,7 +155,9 @@ export function defaultPreferences(): SettingsPreferences {
     match_voice: false,
     dark_email: false,
     always_load_images: false,
-    profile_pictures: true,
+    profile_pictures: false,
+    bimi_logos: true,
+    gravatar_pictures: true,
     trusted_senders: [],
     theme_choice: "system",
     theme_accent: "",
@@ -250,8 +254,20 @@ function withSpaceAppearance(
     reveal_download: general.reveal_download,
     always_load_images: general.always_load_images,
     profile_pictures: general.profile_pictures,
+    bimi_logos: general.bimi_logos,
+    gravatar_pictures: general.gravatar_pictures,
     trusted_senders: general.trusted_senders
   };
+}
+
+function storedAvatarTier(
+  stored: Record<string, unknown>,
+  key: "bimi_logos" | "gravatar_pictures",
+  fallback: boolean
+): boolean {
+  return typeof stored[key] === "boolean"
+    ? (stored[key] as boolean)
+    : fallback;
 }
 
 export function loadPreferences(): SettingsPreferences {
@@ -292,6 +308,16 @@ export function loadPreferences(): SettingsPreferences {
         typeof stored.profile_pictures === "boolean"
           ? stored.profile_pictures
           : defaults.profile_pictures,
+      bimi_logos: storedAvatarTier(
+        stored,
+        "bimi_logos",
+        defaults.bimi_logos
+      ),
+      gravatar_pictures: storedAvatarTier(
+        stored,
+        "gravatar_pictures",
+        defaults.gravatar_pictures
+      ),
       trusted_senders: Array.isArray(stored.trusted_senders)
         ? Array.from(
             new Set(
@@ -396,6 +422,8 @@ export function savePreferences(preferences: SettingsPreferences): void {
       reveal_download: normalized.reveal_download,
       always_load_images: normalized.always_load_images,
       profile_pictures: normalized.profile_pictures,
+      bimi_logos: normalized.bimi_logos,
+      gravatar_pictures: normalized.gravatar_pictures,
       trusted_senders: normalized.trusted_senders
     });
   }

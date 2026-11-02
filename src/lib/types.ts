@@ -54,6 +54,8 @@ export type SpaceGeneral = {
   reveal_download: boolean;
   always_load_images: boolean;
   profile_pictures: boolean;
+  bimi_logos: boolean;
+  gravatar_pictures: boolean;
   trusted_senders: string[];
   notifications: boolean;
   new_mail_sound: boolean;
@@ -288,6 +290,8 @@ export type MailPreferences = {
   trusted_senders: string[];
   always_load_images: boolean;
   profile_pictures: boolean;
+  bimi_logos: boolean;
+  gravatar_pictures: boolean;
 };
 
 export type DesktopCloseAction = "tray" | "quit";
