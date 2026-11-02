@@ -172,9 +172,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: macos-app
-          path: |
-            release/*.zip
-            release/*.dmg
+          path: release/*.dmg
           if-no-files-found: error
 
   publish:
@@ -218,8 +216,8 @@ jobs:
             -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
             --data-binary @"$RUNNER_TEMP/release.json" \
             | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
-          find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' -o -name '*.zip' -o -name '*.dmg' \) -print
-          for f in $(find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' -o -name '*.zip' -o -name '*.dmg' \)); do
+          find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' -o -name '*.dmg' \) -print
+          for f in $(find artifacts -type f \( -name '*.AppImage' -o -name '*.exe' -o -name '*.dmg' \)); do
             curl -fsS -X POST "$API/releases/$ID/assets?name=$(basename "$f")" \
               -H "Authorization: token $TOKEN" -F "attachment=@$f"
           done

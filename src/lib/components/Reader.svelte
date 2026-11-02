@@ -399,7 +399,9 @@
     <div class="subject-row">
       <button
         class="icon-btn back"
+        class:empty={message === null}
         type="button"
+        disabled={message === null}
         aria-label="Back to message list"
         onclick={() => app.clearSelection()}
       >
@@ -741,6 +743,15 @@
   }
   .reader.reader-focus .back {
     display: grid;
+  }
+  /* With nothing selected the arrow has nothing to go back to. */
+  .back.empty {
+    color: var(--muted);
+    opacity: 0.5;
+  }
+  .back.empty:hover {
+    color: var(--muted);
+    background: transparent;
   }
   .actions {
     display: flex;

@@ -10,11 +10,10 @@
 #   docker build -f packaging/macos/Dockerfile -t auramail-macos packaging/macos
 #   docker run --rm -v "$PWD:/src" -w /src auramail-macos bash scripts/ci-macos.sh
 #
-# The result is release/AuraMail-<version>-universal.dmg (an HFS+ image with
-# the app and an Applications shortcut, compressed by libdmg-hfsplus) and the
-# same app as a zip. It is unsigned apart from the ad-hoc signature macOS
-# requires on Apple Silicon, so Gatekeeper asks the user to confirm the first
-# launch.
+# The result is release/AuraMail-<version>-universal.dmg: an HFS+ image with
+# the app and an Applications shortcut, compressed by libdmg-hfsplus. It is
+# unsigned apart from the ad-hoc signature macOS requires on Apple Silicon, so
+# Gatekeeper asks the user to confirm the first launch.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,7 +24,6 @@ test -n "$VERSION"
 
 TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
 APP="release/AuraMail.app"
-OUT="release/AuraMail-${VERSION}-universal.zip"
 DMG="release/AuraMail-${VERSION}-universal.dmg"
 
 require() {
@@ -129,9 +127,6 @@ echo "==> signing (ad-hoc)"
 rcodesign sign "$APP"
 
 echo "==> packaging"
-rm -f "$OUT"
-(cd release && zip -qry "AuraMail-${VERSION}-universal.zip" "AuraMail.app")
-
 # The drag-and-drop installer is an HFS+ image holding the app plus an
 # Applications symlink, compressed into a DMG. libdmg-hfsplus writes both
 # without macOS tooling; hdutil fills the volume file by file because its
@@ -166,5 +161,4 @@ hdutil "$image" symlink /Applications /Applications >/dev/null
 rm -f "$DMG"
 dmg build "$image" "$DMG" >/dev/null
 
-echo "built $OUT"
 echo "built $DMG"
