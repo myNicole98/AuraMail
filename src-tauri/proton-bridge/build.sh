@@ -69,6 +69,16 @@ case "$target_triple" in
 		export GOARCH=amd64
 		extension=".exe"
 		;;
+	x86_64-apple-darwin)
+		export GOOS=darwin
+		export GOARCH=amd64
+		extension=""
+		;;
+	aarch64-apple-darwin)
+		export GOOS=darwin
+		export GOARCH=arm64
+		extension=""
+		;;
 	*)
 		echo "error: unsupported sidecar target: $target_triple" >&2
 		exit 1
