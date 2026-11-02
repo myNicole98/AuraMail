@@ -23,6 +23,7 @@ mod smtp;
 mod spaces;
 mod tabs;
 mod theme;
+mod update;
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -245,6 +246,7 @@ pub fn run() {
             commands::get_message,
             commands::mark_read,
             commands::mark_messages,
+            commands::check_update,
             commands::fill_message_snippets,
             commands::move_message_to_folder,
             commands::set_message_classification,

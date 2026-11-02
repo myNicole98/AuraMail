@@ -2131,6 +2131,14 @@ pub async fn mark_read(
 }
 
 #[tauri::command]
+pub async fn check_update(app: AppHandle) -> AppResult<Option<crate::update::UpdateInfo>> {
+    let current = app.package_info().version.to_string();
+    tauri::async_runtime::spawn_blocking(move || Ok(crate::update::check(&current)))
+        .await
+        .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
 pub async fn mark_messages(
     state: State<'_, AppState>,
     message_ids: Vec<i64>,

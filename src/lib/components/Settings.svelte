@@ -11,6 +11,8 @@
     X
   } from "lucide-svelte";
   import { appVersion } from "../version";
+  import { api } from "../api";
+  import type { UpdateInfo } from "../types";
   import AccessibilitySettings from "./settings/AccessibilitySettings.svelte";
   import AccountSettings from "./settings/AccountSettings.svelte";
   import AiSettings from "./settings/AiSettings.svelte";
@@ -47,6 +49,7 @@
 
   let active = $state<SettingsSection>("general");
   let activeFocusAccountId = $state<number | null>(null);
+  let update = $state<UpdateInfo | null>(null);
   let tabElements: (HTMLButtonElement | undefined)[] = [];
   let previousFocus: HTMLElement | null = null;
 
@@ -108,7 +111,18 @@
       const index = SETTINGS_TABS.findIndex((tab) => tab.id === active);
       (tabElements[index] ?? tabElements[0])?.focus();
     });
+    // Checked only when Settings opens; a failure stays silent.
+    void api
+      .checkUpdate()
+      .then((result) => {
+        update = result;
+      })
+      .catch(() => {});
   });
+
+  function openUpdate(): void {
+    if (update) void api.openExternal(update.url).catch(() => {});
+  }
 
   onDestroy(() => {
     previousFocus?.focus();
@@ -187,7 +201,14 @@
   </div>
 
   <footer class="settings-foot">
-    <span><b>About AuraMail</b> · Version {appVersion}</span>
+    <span>
+      <b>About AuraMail</b> · Version {appVersion}
+      {#if update}
+        · <button class="update-available" type="button" onclick={openUpdate}>
+          Update available: v{update.version}
+        </button>
+      {/if}
+    </span>
     <span>Local-first mail</span>
   </footer>
 </div>

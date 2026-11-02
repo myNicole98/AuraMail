@@ -413,6 +413,11 @@ export type BulkReport = {
   failed: BulkFailure[];
 };
 
+export type UpdateInfo = {
+  version: string;
+  url: string;
+};
+
 export type Attachment = {
   id: number;
   message_id: number;

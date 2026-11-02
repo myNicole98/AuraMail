@@ -50,7 +50,8 @@ import type {
   TabUnreadCounts,
   ThreadMessage,
   ThemePalettePayload,
-  ThemeSettings
+  ThemeSettings,
+  UpdateInfo
 } from "./types";
 import { activeSpaceId } from "./spaces";
 
@@ -160,6 +161,7 @@ export const api = {
   listContacts: (query?: string, limit?: number) =>
     invoke<Contact[]>("list_contacts", { query, limit }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
+  checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
   openComposeWindow: (mode: string, messageId?: number | null, draftId?: number | null) =>
     invoke<void>("open_compose_window", {
       mode,

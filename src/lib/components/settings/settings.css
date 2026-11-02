@@ -231,6 +231,28 @@
   font-weight: 550;
 }
 
+.settings-foot .update-available {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.settings-foot .update-available:hover {
+  color: color-mix(in srgb, var(--accent) 72%, var(--text));
+}
+
+.settings-foot .update-available:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 .settings-root .card {
   padding: 16px;
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
