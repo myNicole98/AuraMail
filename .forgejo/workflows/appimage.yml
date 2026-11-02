@@ -116,12 +116,20 @@ jobs:
     needs: meta
     if: needs.meta.outputs.exists == 'false'
     runs-on: ubuntu-24.04
-    env:
-      # Job containers run on the runner's DIND daemon. The name is mapped to
-      # the daemon by container.options in the runner config.
-      DOCKER_HOST: tcp://docker-in-docker:2375
     steps:
       - uses: actions/checkout@v4
+
+      # Job containers are created by the runner's DIND daemon, so the
+      # container's default gateway is that daemon. Point the CLI at it; no
+      # runner configuration or host-gateway entry is needed.
+      - name: Connect to the Docker daemon
+        shell: bash
+        run: |
+          set -euo pipefail
+          gateway="$(ip route show default | awk '{print $3; exit}')"
+          test -n "$gateway" || { echo "no default gateway; DIND is unreachable" >&2; exit 1; }
+          echo "DOCKER_HOST=tcp://$gateway:2375" >> "$GITHUB_ENV"
+          docker info >/dev/null
 
       # Jobs run inside the DIND daemon, which cannot see this container's
       # filesystem. Build an image with the toolchain, copy the checkout into
