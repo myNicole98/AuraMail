@@ -71,15 +71,16 @@ RUN curl -fsSL -o /tmp/rcodesign.tar.gz \
   && chmod 755 /usr/local/bin/rcodesign \
   && rm /tmp/rcodesign.tar.gz
 
-# libdmg-hfsplus builds the compressed DMG from an HFS+ image. It is built
-# without OpenSSL: the FileVault code does not compile against OpenSSL 3, and
-# encrypted images are not needed here.
+# libdmg-hfsplus builds the compressed DMG from an HFS+ image. Its OpenSSL
+# (FileVault) block is forced off: that code does not compile against OpenSSL 3
+# and encrypted images are not needed here. CMake's
+# CMAKE_DISABLE_FIND_PACKAGE_OpenSSL has no effect because the project INCLUDEs
+# FindOpenSSL directly.
 ARG LIBDMG_COMMIT=7ac55ec64c96f7800d9818ce64c79670e7f02b67
 RUN git clone "https://github.com/planetbeing/libdmg-hfsplus" /tmp/libdmg \
   && git -C /tmp/libdmg checkout -q "${LIBDMG_COMMIT}" \
-  && cmake -S /tmp/libdmg -B /tmp/libdmg/build \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON \
+  && sed -i 's/^IF(OPENSSL_FOUND)/IF(FALSE)/; s/^ENDIF(OPENSSL_FOUND)/ENDIF()/' /tmp/libdmg/dmg/CMakeLists.txt \
+  && cmake -S /tmp/libdmg -B /tmp/libdmg/build -DCMAKE_BUILD_TYPE=Release \
   && make -C /tmp/libdmg/build -j"$(nproc)" \
   && install -m 755 /tmp/libdmg/build/dmg/dmg /usr/local/bin/dmg \
   && install -m 755 /tmp/libdmg/build/hdutil/hdutil /usr/local/bin/hdutil \

@@ -116,31 +116,37 @@ jobs:
     needs: meta
     if: needs.meta.outputs.exists == 'false'
     runs-on: ubuntu-24.04
+    env:
+      # Job containers run on the runner's DIND daemon. The name is mapped to
+      # the daemon by container.options in the runner config.
+      DOCKER_HOST: tcp://docker-in-docker:2375
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.0'
-
-      # The runner has no Docker daemon, so the osxcross image is pulled with
-      # crane and unpacked instead of run.
-      - name: Install the macOS cross toolchain
+      # Jobs run inside the DIND daemon, which cannot see this container's
+      # filesystem. Build an image with the toolchain, copy the checkout into
+      # a container over the API, and copy the artifacts back out.
+      - name: Build the macOS toolchain image
         shell: bash
-        run: bash scripts/ci-macos-setup.sh
-
-      - name: Install frontend dependencies
-        shell: bash
-        run: npm ci
+        run: docker build -f packaging/macos/Dockerfile -t auramail-macos packaging/macos
 
       - name: Build macOS app
         shell: bash
-        run: bash scripts/ci-macos.sh
+        run: |
+          set -euo pipefail
+          docker create --name auramail-macos-build \
+            auramail-macos bash -lc 'npm ci && bash scripts/ci-macos.sh'
+          tar -cf - \
+            --exclude=./node_modules \
+            --exclude=./src-tauri/target \
+            --exclude=./dist \
+            --exclude=./release \
+            --exclude=./.git \
+            . | docker cp - auramail-macos-build:/src
+          docker start -a auramail-macos-build
+          mkdir -p release
+          docker cp auramail-macos-build:/src/release/. release/
+          docker rm auramail-macos-build
 
       - name: Upload macOS app
         uses: actions/upload-artifact@v3
