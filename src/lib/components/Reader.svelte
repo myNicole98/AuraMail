@@ -21,13 +21,20 @@
   import { formatFullDate } from "../format";
   import {
     bodyDocument,
+    emailDarkEnabled,
     formatBytes,
     hasImages,
     hasQuotedContent,
     isSafeExternalUrl,
     type ThemeColors
   } from "../reader";
-  import { loadPreferences, savePreferences, senderIsTrusted } from "../settings";
+  import {
+    loadPreferences,
+    prefersDarkScheme,
+    savePreferences,
+    senderIsTrusted,
+    watchSystemTheme
+  } from "../settings";
   import { app } from "../stores/app.svelte";
   import { appearance } from "../stores/appearance.svelte";
   import type { Attachment, ComposeMode, MessageDetail } from "../types";
@@ -94,7 +101,12 @@
     return loadPreferences().profile_pictures;
   });
   let themeColors = $state<ThemeColors>(readThemeColors());
-  let darkEmail = $state(loadPreferences().dark_email);
+  let darkEmailPreference = $state(loadPreferences().dark_email);
+  let themeChoice = $state(loadPreferences().theme_choice);
+  let systemDark = $state(prefersDarkScheme());
+  let darkEmail = $derived(
+    emailDarkEnabled(darkEmailPreference, themeChoice, systemDark)
+  );
   let emailHtml = $derived(
     detail?.html_body
       ? allowImages && cachedImageHtml
@@ -220,12 +232,18 @@
       attributeFilter: ["style", "data-theme-scheme"]
     });
     const refreshPreferences = () => {
-      darkEmail = loadPreferences().dark_email;
+      const preferences = loadPreferences();
+      darkEmailPreference = preferences.dark_email;
+      themeChoice = preferences.theme_choice;
       preferencesVersion += 1;
     };
+    const stopSystemTheme = watchSystemTheme((dark) => {
+      systemDark = dark;
+    });
     window.addEventListener("auramail:preferences-changed", refreshPreferences);
     return () => {
       observer.disconnect();
+      stopSystemTheme();
       window.removeEventListener("auramail:preferences-changed", refreshPreferences);
     };
   });

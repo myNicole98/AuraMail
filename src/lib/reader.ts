@@ -1,11 +1,26 @@
 const SAFE_SCHEMES = new Set(["http:", "https:", "mailto:"]);
 
+import type { ThemeChoice } from "./theme/catalog";
+
 export type ThemeColors = {
   background: string;
   backgroundRaised: string;
   text: string;
   link: string;
 };
+
+/// Themes that follow the live palette should also decide when mail bodies
+/// are rendered dark. Fixed light/dark themes keep the explicit preference.
+export function emailDarkEnabled(
+  preference: boolean,
+  themeChoice: ThemeChoice,
+  themeDark: boolean
+): boolean {
+  if (!preference) return false;
+  return themeChoice === "matugen" || themeChoice === "system"
+    ? themeDark
+    : true;
+}
 
 export function bodyCsp(): string {
   return "default-src 'none'; script-src 'none'; img-src data:; style-src 'unsafe-inline'; style-src-elem 'unsafe-inline'; style-src-attr 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none';";
