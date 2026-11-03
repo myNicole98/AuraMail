@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CalendarDays, Mail, Settings } from "lucide-svelte";
+  import { CalendarDays, Mail, Settings, Users } from "lucide-svelte";
   import { app } from "../stores/app.svelte";
 
   let {
@@ -12,11 +12,11 @@
   <div class="rail-group">
     <button
       class="rail-button"
-      class:active={!app.calendarOpen}
+      class:active={app.mailVisible}
       type="button"
       aria-label="Mail"
       title="Mail"
-      aria-pressed={!app.calendarOpen}
+      aria-pressed={app.mailVisible}
       onclick={() => app.selectMail()}
     >
       <Mail size={18} strokeWidth={1.8} />
@@ -31,6 +31,17 @@
       onclick={() => app.selectCalendar()}
     >
       <CalendarDays size={18} strokeWidth={1.8} />
+    </button>
+    <button
+      class="rail-button"
+      class:active={app.contactsOpen}
+      type="button"
+      aria-label="Contacts"
+      title="Contacts"
+      aria-pressed={app.contactsOpen}
+      onclick={() => app.selectContacts()}
+    >
+      <Users size={18} strokeWidth={1.8} />
     </button>
   </div>
 

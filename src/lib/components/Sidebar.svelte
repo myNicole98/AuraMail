@@ -115,7 +115,7 @@
     <SpaceSelector {collapsed} onOpenAccountSettings={openAccountSettings} />
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "inbox"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && app.mailVisible && app.unified === "inbox"}
       type="button"
       aria-label="Inbox"
       title="Inbox"
@@ -132,7 +132,7 @@
 
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "sent"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && app.mailVisible && app.unified === "sent"}
       type="button"
       aria-label="Sent"
       title="Sent"
@@ -146,7 +146,7 @@
 
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "archive"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && app.mailVisible && app.unified === "archive"}
       type="button"
       aria-label="Archive"
       title="Archive"
@@ -160,7 +160,7 @@
 
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "spam"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && app.mailVisible && app.unified === "spam"}
       type="button"
       aria-label="Spam"
       title="Spam"
@@ -177,7 +177,7 @@
 
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "trash"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && app.mailVisible && app.unified === "trash"}
       type="button"
       aria-label="Trash"
       title="Trash"
@@ -191,7 +191,7 @@
 
     <button
       class="nav-item"
-      class:active={app.selectedFolderId === null && !app.draftsOpen && !app.calendarOpen && app.unified === "starred"}
+      class:active={app.selectedFolderId === null && !app.draftsOpen && app.mailVisible && app.unified === "starred"}
       type="button"
       aria-label="Starred"
       title="Starred"
@@ -205,7 +205,7 @@
 
     <button
       class="nav-item"
-      class:active={app.draftsOpen && !app.calendarOpen}
+      class:active={app.draftsOpen && app.mailVisible}
       type="button"
       aria-label="Drafts"
       title="Drafts"

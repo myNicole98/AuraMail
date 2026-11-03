@@ -87,7 +87,20 @@ class AppStore {
   messages = $state<ThreadMessage[]>([]);
   drafts = $state<DraftSummary[]>([]);
   draftsOpen = $state(false);
-  calendarOpen = $state(false);
+  workspace = $state<"mail" | "calendar" | "contacts">("mail");
+  pendingContactId = $state<number | null>(null);
+
+  get calendarOpen(): boolean {
+    return this.workspace === "calendar";
+  }
+
+  get contactsOpen(): boolean {
+    return this.workspace === "contacts";
+  }
+
+  get mailVisible(): boolean {
+    return this.workspace === "mail";
+  }
   draftsLoading = $state(false);
   selectedFolderId = $state<number | null>(null);
   selectedTabId = $state<number | null>(null);
@@ -450,7 +463,7 @@ class AppStore {
       ) {
         this.selectedTabId = null;
       }
-      if (this.draftsOpen || this.calendarOpen || !includeMessages) return;
+      if (this.draftsOpen || !this.mailVisible || !includeMessages) return;
       this.invalidateMessageCache();
       await this.requestScopeLoad();
       if (this.scopeLoadFailure) throw this.scopeLoadFailure;
@@ -487,7 +500,7 @@ class AppStore {
       this.loadingMore ||
       this.noMoreMessages ||
       this.draftsOpen ||
-      this.calendarOpen ||
+      !this.mailVisible ||
       this.messageScopeLoading ||
       this.progressiveRenderActive
     ) {
@@ -580,7 +593,7 @@ class AppStore {
       this.selectedTabId = null;
       this.unified = workflow.unified;
       this.draftsOpen = false;
-      this.calendarOpen = false;
+      this.workspace = "mail";
       this.resetPagination();
       // Let the fade cover the content swap before loading the new space.
       const fadeDelay = loadPreferences().reduce_motion ? 0 : 180;
@@ -615,7 +628,7 @@ class AppStore {
 
   async selectFolder(folderId: number | null): Promise<void> {
     this.clearSelection();
-    this.calendarOpen = false;
+    this.workspace = "mail";
     this.draftsOpen = false;
     this.search = "";
     this.selectedFolderId = folderId;
@@ -627,7 +640,7 @@ class AppStore {
 
   async selectUnified(unified: "inbox" | "sent" | "archive" | "spam" | "trash" | "starred"): Promise<void> {
     this.clearSelection();
-    this.calendarOpen = false;
+    this.workspace = "mail";
     this.draftsOpen = false;
     this.search = "";
     this.selectedFolderId = null;
@@ -640,7 +653,7 @@ class AppStore {
 
   async selectTab(tabId: number | null): Promise<void> {
     this.selectedTabId = tabId;
-    this.calendarOpen = false;
+    this.workspace = "mail";
     this.draftsOpen = false;
     this.search = "";
     this.resetPagination();
@@ -984,21 +997,30 @@ class AppStore {
 
   selectCalendar(): void {
     this.clearSelection();
-    this.calendarOpen = true;
+    this.workspace = "calendar";
+    this.draftsOpen = false;
+    this.search = "";
+    this.resetPagination();
+  }
+
+  selectContacts(contactId: number | null = null): void {
+    this.clearSelection();
+    this.workspace = "contacts";
+    this.pendingContactId = contactId;
     this.draftsOpen = false;
     this.search = "";
     this.resetPagination();
   }
 
   selectMail(): void {
-    if (!this.calendarOpen) return;
-    this.calendarOpen = false;
+    if (this.workspace === "mail") return;
+    this.workspace = "mail";
     void this.reloadMessageScope();
   }
 
   async selectDrafts(): Promise<void> {
     this.clearSelection();
-    this.calendarOpen = false;
+    this.workspace = "mail";
     this.draftsOpen = true;
     this.search = "";
     this.selectedFolderId = null;
@@ -1536,7 +1558,7 @@ class AppStore {
       this.messageScopeLoading ||
       this.searchActive ||
       this.draftsOpen ||
-      this.calendarOpen ||
+      !this.mailVisible ||
       this.syncState === "syncing"
     ) {
       return Promise.resolve();
@@ -1653,7 +1675,7 @@ class AppStore {
       !isTauri() ||
       this.activeSpaceId === null ||
       this.draftsOpen ||
-      this.calendarOpen ||
+      !this.mailVisible ||
       this.searchActive ||
       this.syncState === "syncing"
     ) {
@@ -1701,7 +1723,7 @@ class AppStore {
       generation === this.scopeLoadRequested &&
       !this.messageScopeLoading &&
       !this.draftsOpen &&
-      !this.calendarOpen &&
+      this.mailVisible &&
       !this.searchActive &&
       this.syncState !== "syncing"
     );
@@ -1793,7 +1815,7 @@ class AppStore {
     this.syncRefreshRunning = true;
     try {
       await this.refreshFolders();
-      if (!this.draftsOpen && !this.calendarOpen) await this.reloadMessages();
+      if (!this.draftsOpen && this.mailVisible) await this.reloadMessages();
       this.error = null;
     } catch (error) {
       this.error = errorMessage(error);

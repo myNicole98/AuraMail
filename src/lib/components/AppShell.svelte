@@ -6,6 +6,7 @@
   import AppRail from "./AppRail.svelte";
   import BootSplash from "./BootSplash.svelte";
   import Calendar from "./Calendar.svelte";
+  import Contacts from "./Contacts.svelte";
   import GlowBackdrop from "./GlowBackdrop.svelte";
   import MessageList from "./MessageList.svelte";
   import Reader from "./Reader.svelte";
@@ -67,7 +68,7 @@
   let readerFocus = $derived(mode === "reader" && app.selectedMessageId !== null);
   let gridTemplate = $derived.by(() => {
     const rail = "48px";
-    if (app.calendarOpen) {
+    if (!app.mailVisible) {
       return `${rail} minmax(0, 1fr)`;
     }
     if (mode === "stacked") {
@@ -79,7 +80,7 @@
     return `${rail} ${columns.sidebar}px ${columns.collapsed ? 0 : 1}px ${columns.list}px 1px minmax(0, 1fr)`;
   });
   let gridRows = $derived(
-    app.calendarOpen
+    !app.mailVisible
       ? "minmax(0, 1fr)"
       : mode === "stacked"
         ? `${layout.stackHeight}px 1px minmax(0, 1fr)`
@@ -96,9 +97,14 @@
   let layoutTimer: ReturnType<typeof setTimeout> | undefined;
   let lastSystemDark: boolean | null = null;
   let calendarMounted = $state(false);
+  let contactsMounted = $state(false);
 
   $effect(() => {
     if (app.calendarOpen) calendarMounted = true;
+  });
+
+  $effect(() => {
+    if (app.contactsOpen) contactsMounted = true;
   });
 
   async function applySystemTheme(force = false): Promise<void> {
@@ -534,9 +540,9 @@
   class:animating={animatingLayout}
   class:narrow={narrow !== null}
   class:reader-open={narrow === "reader"}
-  class:stacked={mode === "stacked" && !app.calendarOpen}
+  class:stacked={mode === "stacked" && app.mailVisible}
   class:reader-focus={readerFocus}
-  class:calendar-open={app.calendarOpen}
+  class:calendar-open={!app.mailVisible}
   style:grid-template-columns={gridTemplate}
   style:grid-template-rows={gridRows}
 >
@@ -546,7 +552,12 @@
       <Calendar />
     </div>
   {/if}
-  {#if !app.calendarOpen}
+  {#if contactsMounted}
+    <div class="calendar-host" class:hidden={!app.contactsOpen}>
+      <Contacts />
+    </div>
+  {/if}
+  {#if app.mailVisible}
     <Sidebar
       collapsed={columns.collapsed}
       canToggle={canToggle}
