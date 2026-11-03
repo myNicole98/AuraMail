@@ -24,9 +24,6 @@
     await tick();
     viewport?.querySelector<HTMLElement>(".step-panel.active h1")?.focus({ preventScroll: true });
     if (viewport) viewport.scrollLeft = 0;
-    setTimeout(() => {
-      window.dispatchEvent(new Event("auramail:redraw-backdrop"));
-    }, 460);
   }
 
   function connected(nextAccount: Account) {
@@ -49,7 +46,7 @@
 
 <div class="onboarding">
   <div class="preview-side">
-    <OnboardingPreview label={labels[step]} />
+    <OnboardingPreview />
   </div>
   <div class="step-side">
     <div class="progress" aria-label={`Step ${step + 1} of ${labels.length}`}>
@@ -99,11 +96,6 @@
     height: 100dvh;
     overflow: hidden;
     background-color: var(--bg);
-    background-image: var(--glass-backdrop-image);
-    background-position: 0 0;
-    background-repeat: no-repeat;
-    background-size: 100% 100%;
-    image-rendering: pixelated;
   }
   .preview-side {
     min-width: 0;

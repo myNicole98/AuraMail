@@ -22,11 +22,11 @@
     min-width: 120px;
     padding: 10px 17px;
     border-radius: 9px;
-    background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent) 76%, var(--accent-alt)));
+    background: var(--accent);
     color: var(--bg);
-    font-size: 11px;
-    font-weight: 700;
-    box-shadow: 0 8px 26px color-mix(in srgb, var(--accent) 26%, transparent);
+    font-size: 10.5px;
+    font-weight: 650;
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 24%, transparent);
   }
   .primary:hover { filter: brightness(1.08); }
 </style>

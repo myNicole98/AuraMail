@@ -155,9 +155,9 @@ pub fn profile_pictures(db: &Database, space_id: i64) -> AppResult<bool> {
 fn avatar_tier(db: &Database, space_id: i64, key: &str) -> AppResult<bool> {
     match setting_for_space(db, space_id, key)? {
         Some(value) => Ok(matches!(value.as_str(), "true" | "1")),
-        // The tiers sit under the master switch, so they start selected once
-        // it is turned on.
-        None => Ok(true),
+        // Every lookup is opt-in: the master switch alone must not contact a
+        // provider the user never chose.
+        None => Ok(false),
     }
 }
 
@@ -376,17 +376,17 @@ mod tests {
         assert!(trusted_senders(&db, work.id).unwrap().is_empty());
         assert!(!super::always_load_images(&db, work.id).unwrap());
         assert!(!super::profile_pictures(&db, work.id).unwrap());
-        assert!(super::bimi_logos(&db, work.id).unwrap());
-        assert!(super::gravatar_pictures(&db, work.id).unwrap());
+        assert!(!super::bimi_logos(&db, work.id).unwrap());
+        assert!(!super::gravatar_pictures(&db, work.id).unwrap());
     }
 
     #[test]
-    fn profile_pictures_default_off_with_both_tiers_ready() {
+    fn every_avatar_lookup_defaults_off() {
         let db = Database::open_memory().unwrap();
         let space_id = crate::spaces::default_id(&db).unwrap();
         assert!(!super::profile_pictures(&db, space_id).unwrap());
-        assert!(super::bimi_logos(&db, space_id).unwrap());
-        assert!(super::gravatar_pictures(&db, space_id).unwrap());
+        assert!(!super::bimi_logos(&db, space_id).unwrap());
+        assert!(!super::gravatar_pictures(&db, space_id).unwrap());
     }
 
     #[test]

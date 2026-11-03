@@ -741,9 +741,14 @@
   .actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
   .spacer { flex: 1; }
   .ghost,
-  .primary { padding: 9px 16px; border-radius: 8px; font-size: 10.5px; font-weight: 650; }
+  .primary { padding: 10px 17px; border-radius: 9px; font-size: 10.5px; font-weight: 650; }
   .ghost { border: 1px solid color-mix(in srgb, var(--border) 80%, transparent); color: var(--muted); }
-  .primary { background: var(--accent); color: var(--bg); }
+  .primary {
+    background: var(--accent);
+    color: var(--bg);
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+  .primary:hover:not(:disabled) { filter: brightness(1.08); }
   .primary:disabled { opacity: 0.38; cursor: default; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 640px) {

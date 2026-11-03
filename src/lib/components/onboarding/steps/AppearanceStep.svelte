@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check } from "lucide-svelte";
+  import { Bell, Check, Inbox } from "lucide-svelte";
   import { api } from "../../../api";
   import {
     applyMatugenPalette,
@@ -10,6 +10,7 @@
     THEME_BACKGROUNDS,
     THEME_PANES,
     updatePreferences,
+    type MessagePreview,
     type ThemeBackground,
     type ThemePanes
   } from "../../../settings";
@@ -36,10 +37,25 @@
   let selectedTheme = $state(initial.theme_choice);
   let background = $state<ThemeBackground>(initial.theme_background);
   let panes = $state<ThemePanes>(initial.theme_panes);
+  let messagePreview = $state<MessagePreview>(initial.message_preview);
+  let iconOnlyTabs = $state(initial.icon_only_tabs);
+  let listAvatars = $state(initial.list_avatars);
   let message = $state<string | null>(null);
   let failure = $state<string | null>(null);
   const themes = themeCards;
   const layouts = ["classic", "reader", "stacked"] as const;
+  const previewChoices: { value: MessagePreview; label: string }[] = [
+    { value: "compact", label: "Compact" },
+    { value: "preview", label: "Preview" }
+  ];
+  const tabChoices = [
+    { value: false, label: "Full" },
+    { value: true, label: "Icon only" }
+  ];
+  const avatarChoices = [
+    { value: false, label: "No avatar" },
+    { value: true, label: "Avatar" }
+  ];
 
   function isTauri(): boolean {
     return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -127,6 +143,24 @@
     void applyShape();
   }
 
+  function setMessagePreviewChoice(value: MessagePreview) {
+    messagePreview = value;
+    updatePreferences({ message_preview: value });
+    appearance.setMessagePreview(value);
+  }
+
+  function setIconOnlyTabsChoice(value: boolean) {
+    iconOnlyTabs = value;
+    updatePreferences({ icon_only_tabs: value });
+    appearance.setIconOnlyTabs(value);
+  }
+
+  function setListAvatarsChoice(value: boolean) {
+    listAvatars = value;
+    updatePreferences({ list_avatars: value });
+    appearance.setListAvatars(value);
+  }
+
   function layoutLabel(layout: (typeof layouts)[number]): string {
     if (layout === "reader") return "Focus";
     if (layout === "stacked") return "Stacked";
@@ -188,6 +222,69 @@
       </div>
     </div>
   </div>
+  <span class="group-label">Message list</span>
+  <div class="choice-row" role="group" aria-label="Message list">
+    {#each previewChoices as option (option.value)}
+      <button
+        type="button"
+        class:active={messagePreview === option.value}
+        aria-pressed={messagePreview === option.value}
+        onclick={() => setMessagePreviewChoice(option.value)}
+      >
+        <span class="mini-row" aria-hidden="true">
+          <span class="mini-avatar">AL</span>
+          <span class="mini-lines">
+            <span class="mini-top"><span>Ada Lovelace</span><span>10:24</span></span>
+            <span class="mini-subject">Project update</span>
+            {#if option.value === "preview"}
+              <span class="mini-snippet">The latest notes are ready for review.</span>
+            {/if}
+          </span>
+        </span>
+        <span class="choice-label">{option.label}</span>
+      </button>
+    {/each}
+  </div>
+
+  <span class="group-label">Classification tabs</span>
+  <div class="choice-row" role="group" aria-label="Classification tabs">
+    {#each tabChoices as option (option.label)}
+      <button
+        type="button"
+        class:active={iconOnlyTabs === option.value}
+        aria-pressed={iconOnlyTabs === option.value}
+        onclick={() => setIconOnlyTabsChoice(option.value)}
+      >
+        <span class="mini-tabs" aria-hidden="true">
+          <span class="mini-tab"><Inbox size={9} />{#if !option.value}<span>Inbox</span>{/if}</span>
+          <span class="mini-tab"><Bell size={9} />{#if !option.value}<span>Updates</span>{/if}</span>
+        </span>
+        <span class="choice-label">{option.label}</span>
+      </button>
+    {/each}
+  </div>
+
+  <span class="group-label">Sender avatars</span>
+  <div class="choice-row" role="group" aria-label="Sender avatars">
+    {#each avatarChoices as option (option.label)}
+      <button
+        type="button"
+        class:active={listAvatars === option.value}
+        aria-pressed={listAvatars === option.value}
+        onclick={() => setListAvatarsChoice(option.value)}
+      >
+        <span class="mini-row" aria-hidden="true">
+          {#if option.value}<span class="mini-avatar">AL</span>{/if}
+          <span class="mini-lines">
+            <span class="mini-top"><span>Ada Lovelace</span><span>10:24</span></span>
+            <span class="mini-subject">Project update</span>
+          </span>
+        </span>
+        <span class="choice-label">{option.label}</span>
+      </button>
+    {/each}
+  </div>
+
   <span class="group-label">Theme</span>
   <div class="theme-grid" role="group" aria-label="Theme">
     {#each themes as card (card.id)}
@@ -231,7 +328,8 @@
   .theme-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
   .theme-grid button,
   .layout-row button,
-  .style-row button {
+  .style-row button,
+  .choice-row button {
     display: flex;
     flex-direction: column;
     gap: 7px;
@@ -245,7 +343,8 @@
   }
   .theme-grid button.active,
   .layout-row button.active,
-  .style-row button.active {
+  .style-row button.active,
+  .choice-row button.active {
     border-color: var(--accent);
     box-shadow: 0 0 0 1px var(--accent);
     color: var(--text-strong);
@@ -280,6 +379,55 @@
   .layout-shape em {
     background: color-mix(in srgb, var(--muted) 20%, transparent);
   }
+  .choice-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .choice-row button { padding: 7px; gap: 6px; }
+  .choice-label { font-size: 9px; }
+  .mini-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    width: 100%;
+    min-height: 36px;
+    padding: 6px 7px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bg) 70%, var(--bg-raised));
+  }
+  .mini-avatar {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    flex: none;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 16%, var(--bg-hover));
+    color: var(--text-strong);
+    font-size: 6.5px;
+    font-weight: 700;
+  }
+  .mini-lines { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+  .mini-top { display: flex; justify-content: space-between; gap: 6px; color: var(--text); font-size: 7px; }
+  .mini-subject { overflow: hidden; color: var(--text); font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-snippet { overflow: hidden; color: var(--muted); font-size: 6.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    min-height: 36px;
+    padding: 6px 7px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bg) 70%, var(--bg-raised));
+  }
+  .mini-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 6px;
+    border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    border-radius: 99px;
+    color: var(--muted);
+    font-size: 6.5px;
+  }
   .layout-shape.reader { grid-template-columns: 22% 0 1fr; }
   .layout-shape.reader b { overflow: hidden; opacity: 0; }
   .layout-shape.stacked { grid-template-columns: 22% 78%; grid-template-rows: 50% 50%; }
@@ -291,9 +439,14 @@
   .failure { margin: 0; color: var(--danger); font-size: 9.5px; }
   .actions { display: flex; justify-content: space-between; }
   .ghost,
-  .primary { padding: 9px 16px; border-radius: 8px; font-size: 10.5px; font-weight: 650; }
+  .primary { padding: 10px 17px; border-radius: 9px; font-size: 10.5px; font-weight: 650; }
   .ghost { border: 1px solid color-mix(in srgb, var(--border) 80%, transparent); color: var(--muted); }
-  .primary { background: var(--accent); color: var(--bg); }
+  .primary {
+    background: var(--accent);
+    color: var(--bg);
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+  .primary:hover { filter: brightness(1.08); }
   @media (max-width: 639px) {
     .theme-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .style-groups { grid-template-columns: minmax(0, 1fr); }

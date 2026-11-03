@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BrainCircuit, Check, Inbox } from "lucide-svelte";
+  import { Check, Inbox, Settings2 } from "lucide-svelte";
   import type { Account } from "../../../types";
   import StepHeader from "../StepHeader.svelte";
 
@@ -34,8 +34,8 @@
     </div>
   {/if}
   <div class="promise">
-    <BrainCircuit size={14} />
-    <span>Your setup choices are saved.</span>
+    <Settings2 size={14} />
+    <span>You can change these later in Settings.</span>
   </div>
   <div class="actions">
     {#if onBack}

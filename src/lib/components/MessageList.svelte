@@ -594,9 +594,11 @@
           aria-pressed={selected.has(message.id)}
           onclick={(event) => onRowClick(event, message.id)}
         >
-          <span class="unread-dot" aria-hidden="true"></span>
+          {#if !appearance.listAvatars}
+            <span class="unread-dot" aria-hidden="true"></span>
+          {/if}
           {#if appearance.listAvatars}
-            <span class="row-avatar">
+            <span class="row-avatar" class:unread={!message.is_seen}>
               <SenderAvatar
                 name={sender(message)}
                 email={message.from_addr}
@@ -1139,11 +1141,18 @@
   .row-avatar {
     display: grid;
     place-items: center;
+    position: relative;
     flex: none;
     /* Match the compact left gutter (padding + dot + gap) so the avatar sits
        centred between the account bar and the text. */
+    margin-left: 4px;
     margin-right: 6px;
     padding-top: 1px;
+  }
+  /* With avatars the separate unread dot reads as a stray speck; show the
+     unread state as a ring around the picture instead. */
+  .row-avatar.unread :global(.avatar) {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 78%, transparent);
   }
   .row-main {
     display: flex;

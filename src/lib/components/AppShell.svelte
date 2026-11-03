@@ -185,7 +185,6 @@
 
   function completeOnboarding(): void {
     onboardingDue = false;
-    document.documentElement.style.removeProperty("--glass-backdrop-image");
     openFade = true;
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -515,8 +514,8 @@
 />
 
 
-{#if splashDone}
-  <GlowBackdrop force={onboardingDue} exportImage={onboardingDue} />
+{#if splashDone && !onboardingDue}
+  <GlowBackdrop />
 {/if}
 {#if !app.booted || !splashDone}
   <div

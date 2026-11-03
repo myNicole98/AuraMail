@@ -426,13 +426,18 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 9px 15px;
-    border-radius: 8px;
+    padding: 10px 17px;
+    border-radius: 9px;
     font-size: 10.5px;
     font-weight: 650;
   }
   .ghost { border: 1px solid color-mix(in srgb, var(--border) 80%, transparent); color: var(--muted); }
-  .primary { background: var(--accent); color: var(--bg); }
+  .primary {
+    background: var(--accent);
+    color: var(--bg);
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+  .primary:hover:not(:disabled) { filter: brightness(1.08); }
   .primary:disabled,
   .ghost:disabled { opacity: 0.55; }
   @media (max-width: 640px) { .form-grid { grid-template-columns: minmax(0, 1fr); } }
