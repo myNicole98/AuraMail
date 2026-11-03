@@ -263,6 +263,15 @@ pub fn delete(
             }
         }
     }
+    let calendar_accounts = {
+        let conn = db.conn.lock().unwrap();
+        let mut stmt = conn.prepare("select id from calendar_accounts where space_id = ?1")?;
+        let rows = stmt.query_map(params![id], |row| row.get::<_, i64>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for calendar_account_id in calendar_accounts {
+        let _ = secrets.delete(&crate::secrets::calendar_account_key(calendar_account_id));
+    }
     delete_scope(db, id)?;
     list(db)
 }
@@ -342,6 +351,32 @@ mod tests {
         let moved = accounts::list_for_space(&db, personal.id).unwrap();
         assert_eq!(moved[0].id, account.id);
         assert!(by_id(&db, work.id).is_err());
+    }
+
+    #[test]
+    fn deleting_a_space_removes_calendar_credentials() {
+        let db = Database::open_memory().unwrap();
+        let secrets = MemoryStore::default();
+        let personal = ensure_default(&db).unwrap();
+        let work = create(&db, "Work").unwrap();
+        let account_id = {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "insert into calendar_accounts
+                    (display_name, base_url, username, space_id, position, kind, created_at)
+                 values ('Me', 'https://dav.example.com', 'me@example.com', ?1, 0, 'caldav', 0)",
+                params![work.id],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        };
+        let key = crate::secrets::calendar_account_key(account_id);
+        secrets.set(&key, "calendar-secret").unwrap();
+
+        delete(&db, &secrets, work.id, SpaceDeleteAction::DeleteAccounts).unwrap();
+
+        assert!(secrets.get(&key).is_err());
+        assert!(by_id(&db, personal.id).is_ok());
     }
 
     #[test]
