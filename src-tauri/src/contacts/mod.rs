@@ -178,6 +178,133 @@ fn parse_recipient(value: &str) -> Option<(String, String)> {
     email.contains('@').then(|| (email, String::new()))
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactAccountInput {
+    #[serde(default)]
+    pub display_name: String,
+    pub base_url: String,
+    pub username: String,
+    pub password: String,
+    pub space_id: i64,
+}
+
+pub fn reorder_accounts(
+    db: &Database,
+    space_id: i64,
+    ids: &[i64],
+) -> AppResult<Vec<ContactAccount>> {
+    let current = list_accounts(db, space_id)?;
+    let current_ids = current
+        .iter()
+        .map(|account| account.id)
+        .collect::<std::collections::HashSet<_>>();
+    let requested_ids = ids.iter().copied().collect::<std::collections::HashSet<_>>();
+    if current_ids != requested_ids || current_ids.len() != ids.len() {
+        return Err(AppError::Message(
+            "contact account order must include every account in the space exactly once".into(),
+        ));
+    }
+    let mut conn = db.conn.lock().unwrap();
+    let tx = conn.transaction()?;
+    for (position, id) in ids.iter().enumerate() {
+        tx.execute(
+            "update contact_accounts set position = ?1 where id = ?2 and space_id = ?3 and kind = 'carddav'",
+            params![position as i64, id, space_id],
+        )?;
+    }
+    tx.commit()?;
+    drop(conn);
+    list_accounts(db, space_id)
+}
+
+pub fn move_account_to_space(
+    db: &Database,
+    id: i64,
+    space_id: i64,
+) -> AppResult<ContactAccount> {
+    crate::spaces::by_id(db, space_id)?;
+    let conn = db.conn.lock().unwrap();
+    let current: Option<(i64, String)> = conn
+        .query_row(
+            "select space_id, kind from contact_accounts where id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let (current_space, kind) =
+        current.ok_or_else(|| AppError::Message("contact account not found".into()))?;
+    if current_space == space_id {
+        drop(conn);
+        return account_by_id(db, id);
+    }
+    if kind == "local" {
+        return Err(AppError::Message(
+            "the local address book cannot be moved".into(),
+        ));
+    }
+    let position: i64 = conn.query_row(
+        "select coalesce(max(position) + 1, 0) from contact_accounts
+         where space_id = ?1 and kind = 'carddav'",
+        params![space_id],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "update contact_accounts set space_id = ?1, position = ?2 where id = ?3",
+        params![space_id, position, id],
+    )?;
+    drop(conn);
+    account_by_id(db, id)
+}
+
+fn account_by_id(db: &Database, id: i64) -> AppResult<ContactAccount> {
+    db.read()
+        .query_row(
+            "select id, display_name, base_url, username, space_id, position, created_at
+             from contact_accounts where id = ?1",
+            params![id],
+            |row| {
+                Ok(ContactAccount {
+                    id: row.get(0)?,
+                    display_name: row.get(1)?,
+                    base_url: row.get(2)?,
+                    username: row.get(3)?,
+                    space_id: row.get(4)?,
+                    position: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Message("contact account not found".into()))
+}
+
+pub fn remove_account(
+    db: &Database,
+    secrets: &dyn crate::secrets::SecretStore,
+    id: i64,
+) -> AppResult<()> {
+    let account = account_by_id(db, id)?;
+    let kind: String = db
+        .read()
+        .query_row(
+            "select kind from contact_accounts where id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+    if kind == "local" {
+        return Err(AppError::Message(
+            "the local address book cannot be removed".into(),
+        ));
+    }
+    secrets.delete(&crate::secrets::contact_account_key(account.id))?;
+    db.conn
+        .lock()
+        .unwrap()
+        .execute("delete from contact_accounts where id = ?1", params![id])?;
+    Ok(())
+}
+
 fn own_addresses(db: &Database) -> AppResult<HashSet<String>> {
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn.prepare("select lower(email), lower(username) from accounts")?;
@@ -675,6 +802,70 @@ mod tests {
         assert!(list_records(&db, space.id, None, None, None)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn carddav_accounts_reorder_without_the_hidden_local_row() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+        let (first, second) = {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "insert into contact_accounts
+                    (display_name, base_url, username, space_id, position, kind, created_at)
+                 values ('Work', 'https://dav.example.com', 'me', ?1, 0, 'carddav', 0)",
+                params![space.id],
+            )
+            .unwrap();
+            let first = conn.last_insert_rowid();
+            conn.execute(
+                "insert into contact_accounts
+                    (display_name, base_url, username, space_id, position, kind, created_at)
+                 values ('Home', 'https://home.example.com', 'me', ?1, 1, 'carddav', 0)",
+                params![space.id],
+            )
+            .unwrap();
+            (first, conn.last_insert_rowid())
+        };
+
+        let ordered = reorder_accounts(&db, space.id, &[second, first]).unwrap();
+        assert_eq!(
+            ordered.iter().map(|account| account.id).collect::<Vec<_>>(),
+            vec![second, first]
+        );
+        assert!(list_accounts(&db, space.id)
+            .unwrap()
+            .iter()
+            .all(|account| account.display_name != "Local"));
+    }
+
+    #[test]
+    fn local_address_book_cannot_be_removed_or_moved() {
+        let db = Database::open_memory().unwrap();
+        let first = crate::spaces::ensure_default(&db).unwrap();
+        let second = crate::spaces::create(&db, "Work").unwrap();
+        ensure_local_space(&db, first.id).unwrap();
+        ensure_local_space(&db, second.id).unwrap();
+        let local_id: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "select id from contact_accounts where space_id = ?1 and kind = 'local'",
+                params![first.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert!(remove_account(&db, &crate::secrets::MemoryStore::default(), local_id)
+            .unwrap_err()
+            .to_string()
+            .contains("local"));
+        assert!(move_account_to_space(&db, local_id, second.id)
+            .unwrap_err()
+            .to_string()
+            .contains("local"));
     }
 
     #[test]
