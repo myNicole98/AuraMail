@@ -306,10 +306,7 @@ async fn fetch_image(client: &reqwest::Client, url: &str) -> Option<(String, Vec
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        image_mime, remove_inline_attachments, scoped_key, set_preferences,
-        trusted_senders, PROFILE_PICTURES_KEY,
-    };
+    use super::{image_mime, remove_inline_attachments, set_preferences, trusted_senders};
     use crate::db::Database;
     use crate::mail::parse::ParsedAttachment;
 

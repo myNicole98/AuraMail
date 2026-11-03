@@ -242,7 +242,7 @@ pub fn apply_folder_headers(
     uid_validity: u32,
     highest_uid: u32,
 ) -> AppResult<Vec<i64>> {
-    apply_folder_headers_inner(
+    Ok(apply_folder_headers_inner(
         db,
         account_id,
         folder_id,
@@ -250,17 +250,21 @@ pub fn apply_folder_headers(
         uid_validity,
         highest_uid,
         true,
-    )
+    )?
+    .0)
 }
 
 /// Insert one streamed batch of headers without advancing the folder cursor.
 /// The caller advances the cursor once the complete sync has finished.
+/// Returns `(all inserted ids, genuinely new ids)`. The first list drives the
+/// UI reload; the second excludes moves and copies that already existed
+/// elsewhere in the account, so they cannot trigger a new-mail sound.
 pub fn apply_folder_headers_batch(
     db: &Database,
     account_id: i64,
     folder_id: i64,
     headers: &[MessageHeader],
-) -> AppResult<Vec<i64>> {
+) -> AppResult<(Vec<i64>, Vec<i64>)> {
     apply_folder_headers_inner(db, account_id, folder_id, headers, 0, 0, false)
 }
 
@@ -272,12 +276,13 @@ fn apply_folder_headers_inner(
     uid_validity: u32,
     highest_uid: u32,
     advance_cursor: bool,
-) -> AppResult<Vec<i64>> {
+) -> AppResult<(Vec<i64>, Vec<i64>)> {
     let mut conn = db.conn.lock().unwrap();
     let tx = conn.transaction()?;
     let mut inserted = Vec::new();
+    let mut new_messages = Vec::new();
     for header in headers {
-        if let Some(id) = write_message(
+        if let Some((id, is_new)) = write_message(
             &tx,
             account_id,
             folder_id,
@@ -287,13 +292,31 @@ fn apply_folder_headers_inner(
             header.is_starred,
         )? {
             inserted.push(id);
+            if is_new {
+                new_messages.push(id);
+            }
         }
     }
     if advance_cursor {
         write_cursor(&tx, folder_id, uid_validity, highest_uid)?;
     }
     tx.commit()?;
-    Ok(inserted)
+    Ok((inserted, new_messages))
+}
+pub fn unread_message_ids(db: &Database, ids: &[i64]) -> AppResult<Vec<i64>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let conn = db.read();
+    let mut statement =
+        conn.prepare_cached("select exists(select 1 from messages where id = ?1 and is_seen = 0)")?;
+    let mut unread = Vec::new();
+    for id in ids {
+        if statement.query_row(params![id], |row| row.get::<_, bool>(0))? {
+            unread.push(*id);
+        }
+    }
+    Ok(unread)
 }
 
 pub fn clear_folder_messages(db: &Database, folder_id: i64) -> AppResult<()> {
@@ -330,7 +353,7 @@ pub fn replace_folder_messages(
     )?;
     let mut inserted = Vec::new();
     for header in headers {
-        if let Some(id) = write_message(
+        if let Some((id, _)) = write_message(
             &tx,
             account_id,
             folder_id,
@@ -355,7 +378,7 @@ fn write_message(
     headers: &ParsedHeaders,
     is_seen: bool,
     is_starred: bool,
-) -> AppResult<Option<i64>> {
+) -> AppResult<Option<(i64, bool)>> {
     let exists: bool = conn
         .prepare_cached("select exists(select 1 from messages where folder_id = ?1 and uid = ?2)")?
         .query_row(params![folder_id, uid], |row| row.get(0))?;
@@ -431,6 +454,33 @@ fn write_message(
         return Ok(None);
     }
 
+    // A message that already exists elsewhere in this account is a move or a
+    // copy, not new mail. Insert the destination row normally, but do not
+    // report it as new, so it cannot trigger the new-mail sound or a second
+    // classification pass.
+    let known_message: bool = if exists {
+        true
+    } else {
+        conn.prepare_cached(
+            "select exists(select 1 from messages
+             where account_id = ?1 and (
+               (?2 is not null and message_id = ?2)
+               or (?2 is null and message_id is null
+                   and from_addr = ?3 and subject = ?4 and date = ?5)
+             ))",
+        )?
+        .query_row(
+            params![
+                account_id,
+                headers.message_id,
+                headers.from_addr,
+                headers.subject,
+                headers.date
+            ],
+            |row| row.get(0),
+        )?
+    };
+
     conn.prepare_cached(
         "insert into messages (account_id, folder_id, uid, message_id, references_header, thread_key, from_addr, from_name, to_addrs, cc_addrs, subject, date, snippet, is_seen, is_starred, has_attachments, body_cached) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 0) on conflict(folder_id, uid) do update set account_id = excluded.account_id, message_id = excluded.message_id, references_header = excluded.references_header, thread_key = excluded.thread_key, from_addr = excluded.from_addr, from_name = excluded.from_name, to_addrs = excluded.to_addrs, cc_addrs = excluded.cc_addrs, subject = excluded.subject, date = excluded.date, snippet = excluded.snippet, is_seen = excluded.is_seen, is_starred = excluded.is_starred, has_attachments = excluded.has_attachments",
     )?
@@ -452,7 +502,11 @@ fn write_message(
         is_starred as i64,
         headers.has_attachments as i64,
     ])?;
-    Ok((!exists).then(|| conn.last_insert_rowid()))
+    let inserted_id = conn.last_insert_rowid();
+    if exists {
+        return Ok(None);
+    }
+    Ok(Some((inserted_id, !known_message)))
 }
 
 fn write_cursor(
@@ -2253,6 +2307,96 @@ mod tests {
         assert!(messages[0].is_seen);
         assert!(messages[0].is_starred);
         assert!(messages[0].body_cached);
+    }
+
+    #[test]
+    fn unread_filter_skips_messages_that_arrived_read() {
+        let db = Database::open_memory().unwrap();
+        let account = seed_account(&db, "me@example.com");
+        let inbox = seed_folder(&db, account, "INBOX", "inbox");
+        seed_message(&db, inbox, 1, "ada@example.com", "Unread", "body", 100);
+        seed_message(&db, inbox, 2, "bob@example.com", "Read", "body", 200);
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "update messages set is_seen = 1 where folder_id = ?1 and uid = 2",
+                params![inbox],
+            )
+            .unwrap();
+        }
+        let messages = list_messages(
+            &db,
+            &MessageQuery {
+                folder_id: Some(inbox),
+                ..MessageQuery::default()
+            },
+        )
+        .unwrap();
+        let unread_id = messages
+            .iter()
+            .find(|message| message.subject == "Unread")
+            .unwrap()
+            .id;
+        let ids = messages.into_iter().map(|message| message.id).collect::<Vec<_>>();
+        let unread = unread_message_ids(&db, &ids).unwrap();
+        assert_eq!(unread, vec![unread_id]);
+    }
+
+    #[test]
+    fn moves_into_the_inbox_are_not_reported_as_new_mail() {
+        let db = Database::open_memory().unwrap();
+        let account = seed_account(&db, "me@example.com");
+        let inbox = seed_folder(&db, account, "INBOX", "inbox");
+        let archive = seed_folder(&db, account, "Archive", "archive");
+        let archived = MessageHeader {
+            uid: 7,
+            headers: ParsedHeaders {
+                message_id: Some("<moved@example.com>".into()),
+                from_addr: "ada@example.com".into(),
+                subject: "Moved".into(),
+                date: 200,
+                ..ParsedHeaders::default()
+            },
+            is_seen: false,
+            is_starred: false,
+        };
+        apply_folder_headers(&db, account, archive, &[archived], 0, 7).unwrap();
+
+        let moved = MessageHeader {
+            uid: 9,
+            headers: ParsedHeaders {
+                message_id: Some("<moved@example.com>".into()),
+                from_addr: "ada@example.com".into(),
+                subject: "Moved".into(),
+                date: 200,
+                ..ParsedHeaders::default()
+            },
+            is_seen: false,
+            is_starred: false,
+        };
+        let (moved_rows, moved_new) =
+            apply_folder_headers_inner(&db, account, inbox, &[moved], 0, 9, false)
+                .unwrap();
+        assert_eq!(moved_rows.len(), 1);
+        assert!(moved_new.is_empty());
+
+        let fresh = MessageHeader {
+            uid: 10,
+            headers: ParsedHeaders {
+                message_id: Some("<fresh@example.com>".into()),
+                from_addr: "bob@example.com".into(),
+                subject: "Fresh".into(),
+                date: 300,
+                ..ParsedHeaders::default()
+            },
+            is_seen: false,
+            is_starred: false,
+        };
+        let (fresh_rows, fresh_new) =
+            apply_folder_headers_inner(&db, account, inbox, &[fresh], 0, 10, false)
+                .unwrap();
+        assert_eq!(fresh_rows.len(), 1);
+        assert_eq!(fresh_new.len(), 1);
     }
 
     #[test]

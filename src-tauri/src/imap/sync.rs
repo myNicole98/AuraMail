@@ -600,8 +600,9 @@ fn store_header_batch(
     account_id: i64,
     folder_id: i64,
     headers: &[mail::MessageHeader],
-) -> AppResult<Vec<i64>> {
-    let inserted = mail::apply_folder_headers_batch(db, account_id, folder_id, headers)?;
+) -> AppResult<(Vec<i64>, Vec<i64>)> {
+    let (inserted, new_messages) =
+        mail::apply_folder_headers_batch(db, account_id, folder_id, headers)?;
     if !inserted.is_empty() {
         app.emit(
             "sync://new",
@@ -614,7 +615,7 @@ fn store_header_batch(
         )
         .ok();
     }
-    Ok(inserted)
+    Ok((inserted, new_messages))
 }
 
 fn sync_folder(
@@ -665,6 +666,8 @@ fn sync_folder(
     }
 
     let mut inserted = Vec::new();
+    let mut new_messages = Vec::new();
+    let mut notify_messages = Vec::new();
     match action {
         SyncAction::Noop => {}
         SyncAction::Reset => {
@@ -681,13 +684,16 @@ fn sync_folder(
             client::fetch_headers_batched(session, &folder.path, from_uid, state.latest_uid, |fetched| {
                 highest = highest.max(fetched.iter().map(|header| header.uid).max().unwrap_or(0));
                 let headers = build_headers(&fetched);
-                inserted.extend(store_header_batch(
+                let (ids, new) = store_header_batch(
                     app,
                     db,
                     account.id,
                     folder.id,
                     &headers,
-                )?);
+                )?;
+                inserted.extend(ids);
+                new_messages.extend(new.iter().copied());
+                notify_messages.extend(new);
                 // Keep progress if a long catch-up is interrupted mid-way.
                 mail::set_folder_cursor(db, folder.id, state.uid_validity, highest)?;
                 Ok(())
@@ -708,13 +714,15 @@ fn sync_folder(
             budget,
             |fetched, next_seq| {
                 let headers = build_headers(&fetched);
-                inserted.extend(store_header_batch(
+                let (ids, new) = store_header_batch(
                     app,
                     db,
                     account.id,
                     folder.id,
                     &headers,
-                )?);
+                )?;
+                inserted.extend(ids);
+                new_messages.extend(new);
                 mail::set_folder_backfill_seq(db, folder.id, next_seq)?;
                 Ok(())
             },
@@ -747,14 +755,15 @@ fn sync_folder(
     if !inserted.is_empty() || changed > 0 {
         crate::desktop::refresh_tray_unread(app, db);
     }
+    let unread_notifications = mail::unread_message_ids(db, &notify_messages)?;
     if folder.role == "inbox"
-        && !inserted.is_empty()
+        && !unread_notifications.is_empty()
         && matches!(action, SyncAction::Incremental { .. })
     {
-        crate::desktop::notify_new_mail(app, db, account, &inserted);
+        crate::desktop::notify_new_mail(app, db, account, &unread_notifications);
         crate::desktop::play_new_mail_if_enabled(db, account.space_id);
     }
-    let auto_classify = auto_classify_ids(action, &inserted);
+    let auto_classify = auto_classify_ids(action, &new_messages);
     Ok(SyncOutcome {
         inserted,
         auto_classify,
