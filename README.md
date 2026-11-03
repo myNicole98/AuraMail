@@ -1,13 +1,13 @@
 <h3 align="center">
-  <img src="resources/logo/aura_mail_logo.svg" height="300" /><br>
+  <img src="resources/logo/aura-mail-logo.svg" height="300" /><br>
   <img src="assets/screenshots/main.png" />
 </h3>
 
-###### no ai was used to write this readme
+###### human made readme :)
 
 ## About
 
-AuraMail is an email client built to be fast, modern, customizable and with powerful but unintrusive AI tools.
+AuraMail is a cross platform email client built to be fast, modern, customizable and with powerful but unintrusive AI tools.
 
 The purpose of this project is to borrow UX elements and features from other clients, add my own ideas and combine them in a unified and cohesive experience.
 
@@ -24,32 +24,13 @@ AuraMail boasts an ever growing list of accessibility settings meant to facilita
 - High Contrast mode
 - Color blindness filters
 - Motion sickness mitigation
-
-More features coming soon
+- Dyslexic friendly text spacing
 
 ## Highly customizable
 
 AuraMail brings to the table a high level of customization, from default neutrals to famous color palettes, with more to come. UI elements can also be customized to fit your style.
 
 And yes, there's matugen support too. You can find the template in ~/.config/auramail/theme.json
-
-Samples:
-<h3 align="center">
-  <img src="assets/screenshots/main_rosepine.png" /><br>
-  <sub> Rosepine - Rounded Glass </sub> 
-  
-  <br>
-  <img src="assets/screenshots/main_dracula.png" /><br>
-  <sub> Dracula - Rounded Solid </sub> 
-
-  <br>
-  <img src="assets/screenshots/main_nord.png" /><br>
-  <sub> Nord - Straight Solid </sub> 
-
-  <br>
-  <img src="assets/screenshots/main_light.png" /><br>
-  <sub> Light - Rounded Solid </sub> 
-</h3>
 
 ## AuraAI
 
