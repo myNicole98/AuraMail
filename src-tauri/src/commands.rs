@@ -1501,6 +1501,7 @@ pub async fn update_account(
                 &db,
                 id,
                 &input.display_name,
+                &input.identity,
                 &input.color,
                 &input.signature,
                 &input.signature_fields,
@@ -1513,6 +1514,7 @@ pub async fn update_account(
                 &db,
                 id,
                 &input.display_name,
+                &input.identity,
                 &input.color,
                 &input.signature,
                 &input.signature_fields,
@@ -3433,6 +3435,7 @@ mod tests {
                 self.secrets.as_ref(),
                 AccountInput {
                     display_name: "Manual".into(),
+            identity: String::new(),
                     email: email.into(),
                     username: email.into(),
                     password: "p@ss".into(),

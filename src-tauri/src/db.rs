@@ -1160,6 +1160,54 @@ impl Database {
             }
             conn.pragma_update(None, "user_version", 38)?;
         }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 39 {
+            let has_identity: i64 = conn.query_row(
+                "select count(*) from pragma_table_info('accounts') where name = 'identity'",
+                [],
+                |row| row.get(0),
+            )?;
+            if has_identity == 0 {
+                conn.execute(
+                    "alter table accounts add column identity text not null default ''",
+                    [],
+                )?;
+            }
+            let has_kind: i64 = conn.query_row(
+                "select count(*) from pragma_table_info('calendar_accounts') where name = 'kind'",
+                [],
+                |row| row.get(0),
+            )?;
+            if has_kind == 0 {
+                conn.execute(
+                    "alter table calendar_accounts add column kind text not null default 'caldav'",
+                    [],
+                )?;
+            }
+            conn.execute_batch(
+                "insert into calendar_accounts (display_name, base_url, username, space_id, position, kind, created_at)
+                 select 'Local', '', '', s.id, 1000000, 'local', strftime('%s','now')
+                 from spaces s
+                 where not exists (
+                   select 1 from calendar_accounts ca where ca.space_id = s.id and ca.kind = 'local'
+                 );
+                 insert into calendars (calendar_account_id, href, name, color, supported_components, read_only, unsubscribed)
+                 select ca.id, 'local', 'Local', null, '[\"VEVENT\"]', 0, 0
+                 from calendar_accounts ca
+                 where ca.kind = 'local'
+                   and not exists (select 1 from calendars c where c.calendar_account_id = ca.id and c.href = 'local');",
+            )?;
+            conn.pragma_update(None, "user_version", 39)?;
+        }
+        // The unreleased local calendar was first named "Personal"; keep
+        // databases that already ran version 39 consistent with the shipped
+        // name.
+        conn.execute(
+            "update calendars set name = 'Local'
+             where href = 'local' and name = 'Personal'
+               and calendar_account_id in (select id from calendar_accounts where kind = 'local')",
+            [],
+        )?;
         conn.execute_batch(
             "create index if not exists idx_messages_folder_date on messages(folder_id, date desc);
              create index if not exists idx_messages_account_date on messages(account_id, date desc);
@@ -1229,6 +1277,29 @@ pub fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{calendar, spaces};
+
+    #[test]
+    fn migration_39_backfills_local_calendars_for_existing_spaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auramail.db");
+        {
+            let db = Database::open(&path).unwrap();
+            assert!(!spaces::list(&db).unwrap().is_empty());
+            db.conn
+                .lock()
+                .unwrap()
+                .execute_batch(
+                    "delete from calendars; delete from calendar_accounts; pragma user_version = 38;",
+                )
+                .unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        let spaces = spaces::list(&db).unwrap();
+        let calendars = calendar::list_calendars(&db, spaces[0].id).unwrap();
+        assert_eq!(calendars.len(), 1);
+        assert_eq!(calendars[0].name, "Local");
+    }
 
     #[test]
     fn migrates_all_tables_and_seeds_tabs() {
@@ -1276,7 +1347,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 38);
+        assert_eq!(version, 39);
         let tabs: i64 = conn
             .query_row("select count(*) from tabs", [], |row| row.get(0))
             .unwrap();
@@ -1432,7 +1503,7 @@ mod tests {
             .unwrap();
         assert_eq!(bodies, 0);
         assert_eq!(cached, 0);
-        assert_eq!(version, 38);
+        assert_eq!(version, 39);
     }
 
     #[test]
@@ -1459,7 +1530,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table, 1);
-        assert_eq!(version, 38);
+        assert_eq!(version, 39);
     }
 
     #[test]
@@ -1486,7 +1557,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(cached, 0);
-        assert_eq!(version, 38);
+        assert_eq!(version, 39);
     }
 
     #[test]
@@ -1529,7 +1600,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 38);
+        assert_eq!(version, 39);
     }
 
     #[test]
@@ -1610,7 +1681,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!((auth_type, provider, version), (1, 1, 38));
+        assert_eq!((auth_type, provider, version), (1, 1, 39));
     }
 
     #[test]

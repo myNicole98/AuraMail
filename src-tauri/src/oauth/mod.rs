@@ -113,6 +113,7 @@ mod tests {
         Account {
             id: 1,
             display_name: "Me".into(),
+            identity: String::new(),
             email: "me@example.com".into(),
             username: "me@example.com".into(),
             imap_host: "imap.example.com".into(),

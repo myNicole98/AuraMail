@@ -41,6 +41,7 @@
 
   const SAVED_PASSWORD_MASK = "••••••••••••";
   let displayName = $state(untrack(() => account.display_name));
+  let identity = $state(untrack(() => account.identity));
   let color = $state(untrack(() => canonicalAccountColor(account.color)));
   let customOpen = $state(untrack(() => isAccountHexColor(account.color)));
   let colorInput = $state<HTMLInputElement | null>(null);
@@ -83,6 +84,7 @@
   function input(passwordValue: string): AccountInput {
     return {
       display_name: displayName.trim(),
+      identity: identity.trim(),
       email: account.email,
       username: username.trim(),
       password: passwordValue,
@@ -138,6 +140,7 @@
       );
       if (moved && !proton) await api.moveAccount(account.id, spaceId);
       displayName = saved.display_name;
+      identity = saved.identity;
       color = saved.color;
       spaceId = saved.space_id;
       if (/^#[0-9a-f]{6}$/i.test(saved.color)) customColor = saved.color;
@@ -269,7 +272,11 @@
       />
       {#if errors.display_name}<small class="field-error">{errors.display_name}</small>{/if}
     </label>
-    <div class="field color-field">
+    <label class="field">
+      <span>Identity name</span>
+      <input bind:value={identity} autocomplete="name" />
+    </label>
+    <div class="field color-field wide">
       <span>Color</span>
       <div class="color-options" role="group" aria-label="Color">
         {#each accountColorTokens as token (token)}
@@ -551,6 +558,9 @@
   }
   .grid.two {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .field.wide {
+    grid-column: 1 / -1;
   }
   .grid.two.tight {
     grid-template-columns: minmax(0, 1fr) 100px;

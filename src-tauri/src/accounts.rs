@@ -85,6 +85,8 @@ pub struct AccountInput {
     pub signature_fields: SignatureFields,
     #[serde(default = "default_true")]
     pub signature_on_new: bool,
+    #[serde(default)]
+    pub identity: String,
     pub space_id: i64,
 }
 
@@ -273,6 +275,7 @@ fn parse_auth_type(value: &str) -> AccountAuth {
 pub struct Account {
     pub id: i64,
     pub display_name: String,
+    pub identity: String,
     pub email: String,
     pub username: String,
     pub imap_host: String,
@@ -355,6 +358,7 @@ pub fn create(db: &Database, secrets: &dyn SecretStore, input: AccountInput) -> 
 
     let color = account_color(&input.color);
     let display_name = display_name_or_email(&input.display_name, &input.email);
+    let identity = input.identity.trim().to_string();
     let signature_fields = serde_json::to_string(&input.signature_fields)?;
     let space_id = input.space_id;
     spaces::by_id(db, space_id)?;
@@ -366,7 +370,7 @@ pub fn create(db: &Database, secrets: &dyn SecretStore, input: AccountInput) -> 
             |row| row.get(0),
         )?;
         let inserted = conn.execute(
-            "insert into accounts (display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, color, signature, signature_fields, signature_on_new, auth_type, oauth_provider, space_id, position, created_at) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            "insert into accounts (display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, color, signature, signature_fields, signature_on_new, auth_type, oauth_provider, space_id, position, created_at, identity) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             rusqlite::params![
                 display_name.clone(),
                 input.email,
@@ -387,6 +391,7 @@ pub fn create(db: &Database, secrets: &dyn SecretStore, input: AccountInput) -> 
                 space_id,
                 position,
                 created_at,
+                identity.clone(),
             ],
         );
         if let Err(err) = inserted {
@@ -412,6 +417,7 @@ pub fn create(db: &Database, secrets: &dyn SecretStore, input: AccountInput) -> 
     Ok(Account {
         id,
         display_name,
+        identity: identity.clone(),
         email: input.email,
         username: input.username,
         imap_host: input.imap_host,
@@ -460,7 +466,7 @@ pub fn create_oauth(
             |row| row.get(0),
         )?;
         let inserted = conn.execute(
-            "insert into accounts (display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, color, signature, signature_fields, signature_on_new, auth_type, oauth_provider, space_id, position, created_at) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            "insert into accounts (display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, color, signature, signature_fields, signature_on_new, auth_type, oauth_provider, space_id, position, created_at, identity) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             rusqlite::params![
                 display_name.clone(),
                 input.email,
@@ -481,6 +487,7 @@ pub fn create_oauth(
                 space_id,
                 position,
                 created_at,
+                "",
             ],
         );
         if let Err(err) = inserted {
@@ -506,6 +513,7 @@ pub fn create_oauth(
     Ok(Account {
         id,
         display_name,
+        identity: String::new(),
         email: input.email,
         username: input.username,
         imap_host: input.imap_host,
@@ -552,7 +560,7 @@ pub fn create_proton(
             |row| row.get(0),
         )?;
         let inserted = conn.execute(
-            "insert into accounts (display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, color, signature, signature_fields, signature_on_new, auth_type, oauth_provider, space_id, position, created_at) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            "insert into accounts (display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, color, signature, signature_fields, signature_on_new, auth_type, oauth_provider, space_id, position, created_at, identity) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             rusqlite::params![
                 display_name.clone(),
                 input.email,
@@ -573,6 +581,7 @@ pub fn create_proton(
                 space_id,
                 position,
                 created_at,
+                "",
             ],
         );
         if let Err(err) = inserted {
@@ -598,6 +607,7 @@ pub fn create_proton(
     Ok(Account {
         id,
         display_name,
+        identity: String::new(),
         email: input.email,
         username: input.username,
         imap_host: input.imap_host,
@@ -634,7 +644,7 @@ pub fn update(
     let display_name = display_name_or_email(&input.display_name, &input.email);
     let signature_fields = serde_json::to_string(&input.signature_fields)?;
     let changed = db.conn.lock().unwrap().execute(
-        "update accounts set display_name = ?1, email = ?2, username = ?3, imap_host = ?4, imap_port = ?5, imap_security = ?6, smtp_host = ?7, smtp_port = ?8, smtp_security = ?9, color = ?10, signature = ?11, signature_fields = ?12, signature_on_new = ?13 where id = ?14",
+        "update accounts set display_name = ?1, email = ?2, username = ?3, imap_host = ?4, imap_port = ?5, imap_security = ?6, smtp_host = ?7, smtp_port = ?8, smtp_security = ?9, color = ?10, signature = ?11, signature_fields = ?12, signature_on_new = ?13, identity = ?14 where id = ?15",
         rusqlite::params![
             display_name.clone(),
             input.email,
@@ -649,6 +659,7 @@ pub fn update(
             input.signature,
             signature_fields,
             input.signature_on_new,
+            input.identity.trim().to_string(),
             id,
         ],
     )?;
@@ -688,6 +699,7 @@ pub fn update_profile(
     db: &Database,
     id: i64,
     display_name: &str,
+    identity: &str,
     color: &str,
     signature: &str,
     signature_fields: &SignatureFields,
@@ -710,8 +722,8 @@ pub fn update_profile(
     let color = account_color(color);
     let signature_fields = serde_json::to_string(signature_fields)?;
     let changed = db.conn.lock().unwrap().execute(
-        "update accounts set display_name = ?1, color = ?2, signature = ?3, signature_fields = ?4, signature_on_new = ?5 where id = ?6",
-        rusqlite::params![display_name, color.clone(), signature, signature_fields, signature_on_new, id],
+        "update accounts set display_name = ?1, color = ?2, signature = ?3, signature_fields = ?4, signature_on_new = ?5, identity = ?6 where id = ?7",
+        rusqlite::params![display_name, color.clone(), signature, signature_fields, signature_on_new, identity.trim().to_string(), id],
     )?;
     if changed == 0 {
         return Err(AppError::Message("account not found".into()));
@@ -728,6 +740,7 @@ pub fn update_proton_profile(
     db: &Database,
     id: i64,
     display_name: &str,
+    identity: &str,
     color: &str,
     signature: &str,
     signature_fields: &SignatureFields,
@@ -739,6 +752,7 @@ pub fn update_proton_profile(
         db,
         id,
         display_name,
+        identity,
         color,
         signature,
         signature_fields,
@@ -1199,7 +1213,7 @@ pub fn move_to_space(db: &Database, id: i64, space_id: i64) -> AppResult<Account
 pub fn list(db: &Database) -> AppResult<Vec<Account>> {
     let conn = db.read();
     let mut stmt = conn.prepare(
-        "select id, display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, color, signature, signature_fields, signature_on_new, sync_interval_secs, created_at, auth_type, oauth_provider, space_id, position from accounts order by space_id, position, id",
+        "select id, display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, color, signature, signature_fields, signature_on_new, sync_interval_secs, created_at, auth_type, oauth_provider, space_id, position, identity from accounts order by space_id, position, id",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(Account {
@@ -1223,6 +1237,7 @@ pub fn list(db: &Database) -> AppResult<Vec<Account>> {
             oauth_provider: row.get(17)?,
             space_id: row.get(18)?,
             position: row.get(19)?,
+            identity: row.get(20)?,
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -1298,6 +1313,7 @@ mod tests {
             signature: "— {name}".into(),
             signature_fields: SignatureFields::default(),
             signature_on_new: true,
+            identity: String::new(),
             space_id,
         }
     }
@@ -1338,6 +1354,52 @@ mod tests {
             signature_fields: SignatureFields::default(),
             space_id,
         }
+    }
+
+    #[test]
+    fn account_identity_round_trips_and_defaults_to_empty() {
+        let db = Database::open_memory().unwrap();
+        let version: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("pragma user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 39);
+        let has_identity: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "select count(*) from pragma_table_info('accounts') where name = 'identity'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_identity, 1);
+
+        let account = accounts::create(
+            &db,
+            &MemoryStore::default(),
+            AccountInput {
+                identity: "Nicole Frega".into(),
+                ..input_in_space(1)
+            },
+        )
+        .unwrap();
+        assert_eq!(account.identity, "Nicole Frega");
+
+        let updated = accounts::update(
+            &db,
+            &MemoryStore::default(),
+            account.id,
+            AccountInput {
+                identity: "N. Frega".into(),
+                ..input_in_space(1)
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.identity, "N. Frega");
     }
 
     #[test]
@@ -1799,6 +1861,7 @@ mod tests {
             &db,
             account.id,
             "Renamed",
+            "Nicole Frega",
             "success",
             "— new signature",
             &fields,

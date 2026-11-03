@@ -1243,7 +1243,7 @@
         <p class="sidebar-hint">No calendars connected.</p>
       {:else}
         <div class="calendar-list">
-          {#each calendars as calendar (calendar.id)}
+          {#each calendars as calendar, index (calendar.id)}
             <button
               class="calendar-row"
               class:hidden={hiddenCalendars.has(calendar.id)}
@@ -1263,6 +1263,9 @@
                 <Eye size={13} />
               {/if}
             </button>
+            {#if calendar.local && index < calendars.length - 1 && !calendars[index + 1].local}
+              <div class="calendar-divider" role="separator"></div>
+            {/if}
           {/each}
         </div>
       {/if}
@@ -2179,6 +2182,12 @@
 
   .calendar-row:hover {
     background: var(--bg-hover);
+  }
+
+  .calendar-divider {
+    height: 1px;
+    margin: 6px 4px;
+    background: var(--border);
   }
 
   .calendar-row.hidden {

@@ -84,10 +84,10 @@ struct StoredAttachment {
 
 #[allow(dead_code)]
 pub fn build_message(input: &ComposeInput, from: &str) -> AppResult<Vec<u8>> {
-    Ok(build(input, from)?.formatted())
+    Ok(build(input, None, from)?.formatted())
 }
 
-pub fn build(input: &ComposeInput, from: &str) -> AppResult<Message> {
+pub fn build(input: &ComposeInput, from_name: Option<&str>, from_addr: &str) -> AppResult<Message> {
     validate_attachments(input)?;
     if input
         .subject
@@ -96,7 +96,11 @@ pub fn build(input: &ComposeInput, from: &str) -> AppResult<Message> {
     {
         return Err(AppError::Message("subject is invalid".into()));
     }
-    let from = mailbox(from, "sender")?;
+    let from = mailbox(from_addr, "sender")?;
+    let from = match from_name.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(name) => Mailbox::new(Some(name.to_string()), from.email),
+        None => from,
+    };
     let in_reply_to = thread_header(input.in_reply_to.as_deref(), "In-Reply-To")?;
     let references = thread_header(input.references.as_deref(), "References")?;
 
@@ -502,6 +506,36 @@ mod tests {
             mime_type: mime_type.into(),
             data: BASE64.encode(bytes),
         }
+    }
+
+    #[test]
+    fn from_header_uses_the_identity_display_name() {
+        let raw = build(&valid_input(), Some("Nicole Frega"), "me@example.com")
+            .unwrap()
+            .formatted();
+        let text = String::from_utf8_lossy(&raw);
+        assert!(text.contains("From: \"Nicole Frega\" <me@example.com>"));
+    }
+
+    #[test]
+    fn empty_identity_keeps_a_bare_from_address() {
+        let raw = build(&valid_input(), Some("  "), "me@example.com")
+            .unwrap()
+            .formatted();
+        let text = String::from_utf8_lossy(&raw);
+        assert!(text.contains("From: me@example.com"));
+    }
+
+    #[test]
+    fn identity_with_special_characters_is_quoted_safely() {
+        let raw = build(&valid_input(), Some("Frega, Nicole \"Niki\""), "me@example.com")
+            .unwrap()
+            .formatted();
+        let text = String::from_utf8_lossy(&raw);
+        assert!(text.contains(
+            "From: =?utf-8?b?RnJlZ2EsIE5pY29sZSAiTmlraSI=?= <me@example.com>"
+        ));
+        assert!(text.contains("Subject: Hello"));
     }
 
     #[test]

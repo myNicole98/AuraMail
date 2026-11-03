@@ -23,6 +23,7 @@ pub struct CalendarAccount {
     pub username: String,
     pub space_id: i64,
     pub position: i64,
+    pub kind: String,
     pub created_at: i64,
 }
 
@@ -48,6 +49,7 @@ pub struct CalendarSummary {
     pub sync_token: Option<String>,
     pub last_synced_at: Option<i64>,
     pub read_only: bool,
+    pub local: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -149,7 +151,7 @@ struct ParsedEvent {
 fn calendar_account_by_id(db: &Database, id: i64) -> AppResult<CalendarAccount> {
     db.read()
         .query_row(
-            "select id, display_name, base_url, username, space_id, position, created_at
+            "select id, display_name, base_url, username, space_id, position, kind, created_at
              from calendar_accounts where id = ?1",
             params![id],
             |row| {
@@ -160,7 +162,8 @@ fn calendar_account_by_id(db: &Database, id: i64) -> AppResult<CalendarAccount> 
                     username: row.get(3)?,
                     space_id: row.get(4)?,
                     position: row.get(5)?,
-                    created_at: row.get(6)?,
+                    kind: row.get(6)?,
+                    created_at: row.get(7)?,
                 })
             },
         )
@@ -171,8 +174,8 @@ fn calendar_account_by_id(db: &Database, id: i64) -> AppResult<CalendarAccount> 
 pub fn list_accounts(db: &Database, space_id: i64) -> AppResult<Vec<CalendarAccount>> {
     let conn = db.read();
     let mut stmt = conn.prepare(
-        "select id, display_name, base_url, username, space_id, position, created_at
-         from calendar_accounts where space_id = ?1
+        "select id, display_name, base_url, username, space_id, position, kind, created_at
+         from calendar_accounts where space_id = ?1 and kind = 'caldav'
          order by position, id",
     )?;
     let rows = stmt.query_map(params![space_id], |row| {
@@ -183,7 +186,8 @@ pub fn list_accounts(db: &Database, space_id: i64) -> AppResult<Vec<CalendarAcco
             username: row.get(3)?,
             space_id: row.get(4)?,
             position: row.get(5)?,
-            created_at: row.get(6)?,
+            kind: row.get(6)?,
+            created_at: row.get(7)?,
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -740,6 +744,7 @@ pub async fn add_account(
         username: username.to_string(),
         space_id: input.space_id,
         position,
+        kind: "caldav".into(),
         created_at,
     };
     if let Err(error) = save_calendars(db, id, &remote) {
@@ -788,6 +793,13 @@ pub async fn sync_account(
     account_id: i64,
 ) -> AppResult<CalendarSyncResult> {
     let account = calendar_account_by_id(db, account_id)?;
+    if account.kind == "local" {
+        return Ok(CalendarSyncResult {
+            calendars: 0,
+            events: 0,
+            errors: Vec::new(),
+        });
+    }
     let password = calendar_password(secrets, account_id)?;
     let client = client_for(&account, &password)?;
     let mut result = CalendarSyncResult {
@@ -868,6 +880,7 @@ fn row_to_calendar(row: &rusqlite::Row<'_>) -> rusqlite::Result<CalendarSummary>
         sync_token: row.get(5)?,
         last_synced_at: row.get(6)?,
         read_only: row.get::<_, i64>(7)? != 0,
+        local: row.get::<_, String>(8)? == "local",
     })
 }
 
@@ -875,11 +888,12 @@ pub fn list_calendars(db: &Database, space_id: i64) -> AppResult<Vec<CalendarSum
     let conn = db.read();
     let mut stmt = conn.prepare(
         "select c.id, c.calendar_account_id, c.href, c.name,
-                c.color, c.sync_token, c.last_synced_at, c.read_only
+                c.color, c.sync_token, c.last_synced_at, c.read_only, ca.kind
          from calendars c
          join calendar_accounts ca on ca.id = c.calendar_account_id
          where ca.space_id = ?1 and c.unsubscribed = 0
-         order by c.name collate nocase, c.id",
+         order by case when ca.kind = 'local' then 0 else 1 end,
+                  c.name collate nocase, c.id",
     )?;
     let rows = stmt.query_map(params![space_id], row_to_calendar)?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -1163,7 +1177,12 @@ END:VCALENDAR
             }],
         )
         .unwrap();
-        list_calendars(db, space_id).unwrap()[0].id
+        list_calendars(db, space_id)
+            .unwrap()
+            .into_iter()
+            .find(|calendar| calendar.name == "Work")
+            .unwrap()
+            .id
     }
 
     #[test]
@@ -1304,7 +1323,10 @@ END:VCALENDAR
 
         unsubscribe_calendar(&db, calendar_id).unwrap();
 
-        assert!(list_calendars(&db, space_id).unwrap().is_empty());
+        assert!(list_calendars(&db, space_id)
+            .unwrap()
+            .iter()
+            .all(|calendar| calendar.name != "Work"));
         assert!(list_events(&db, space_id, 0, i64::MAX, 50)
             .unwrap()
             .is_empty());
@@ -1466,8 +1488,11 @@ END:VCALENDAR</C:calendar-data>
         .await
         .expect("add calendar account");
         let calendars = list_calendars(&db, space_id).expect("list calendars");
-        assert_eq!(calendars.len(), 1);
-        assert_eq!(calendars[0].name, "Work");
+        let work_id = calendars
+            .iter()
+            .find(|calendar| calendar.name == "Work")
+            .expect("work calendar")
+            .id;
 
         let result = sync_account(&db, &secrets, account.id)
             .await
@@ -1491,7 +1516,7 @@ END:VCALENDAR</C:calendar-data>
         let created = create_event(
             &db,
             &secrets,
-            calendars[0].id,
+            work_id,
             CalendarEventInput {
                 summary: "Planning".into(),
                 description: String::new(),

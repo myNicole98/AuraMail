@@ -850,6 +850,7 @@ impl ProtonBridge {
                         self.db.as_ref(),
                         account_id,
                         event.display_name.trim(),
+                        &account.identity,
                         &account.color,
                         &account.signature,
                         &account.signature_fields,

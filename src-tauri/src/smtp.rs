@@ -146,7 +146,7 @@ pub fn send(
     credential: &MailCredential,
     input: &ComposeInput,
 ) -> AppResult<()> {
-    let message = compose::build(input, &account.email)?;
+    let message = compose::build(input, Some(&account.identity), &account.email)?;
     let transport = account_transport(account, credential, SEND_TIMEOUT)?;
     transport.send(&message).map_err(safe_smtp_error)?;
     Ok(())
@@ -195,6 +195,7 @@ mod tests {
         Account {
             id: 1,
             display_name: "Me".into(),
+            identity: String::new(),
             email: "me@example.com".into(),
             username: "me@example.com".into(),
             imap_host: "imap.example.com".into(),

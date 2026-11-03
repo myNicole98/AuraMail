@@ -80,6 +80,7 @@ export type SpaceWorkflow = {
 export type Account = {
   id: number;
   display_name: string;
+  identity: string;
   email: string;
   username: string;
   imap_host: string;
@@ -127,6 +128,7 @@ export type CalendarSummary = {
   syncToken: string | null;
   lastSyncedAt: number | null;
   readOnly: boolean;
+  local: boolean;
 };
 
 export type CalendarEvent = {
@@ -178,6 +180,7 @@ export type AccountDiscovery = {
 
 export type AccountInput = {
   display_name: string;
+  identity?: string;
   email: string;
   username: string;
   password: string;

@@ -277,6 +277,7 @@ mod tests {
     fn input_in_space(space_id: i64) -> AccountInput {
         AccountInput {
             display_name: "Test".into(),
+            identity: String::new(),
             email: "me@example.com".into(),
             username: "me@example.com".into(),
             password: "p@ss".into(),
