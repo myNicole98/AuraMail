@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import iconUrl from "../../../resources/logo/aura_mail_icon_only.svg";
   import {
     ArrowLeft,
     BrainCircuit,
@@ -516,7 +517,7 @@
         <img
           class="empty-logo"
           class:loading={showLoading}
-          src="/aura_mail_icon_only.svg"
+          src={iconUrl}
           alt="AuraMail"
         />
         {#if showLoading}<p>Loading message…</p>{/if}

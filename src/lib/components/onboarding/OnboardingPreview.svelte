@@ -1,4 +1,5 @@
 <script lang="ts">
+  import iconUrl from "../../../../resources/logo/aura_mail_icon_only.svg";
   import { onMount } from "svelte";
   import {
     Archive,
@@ -84,7 +85,7 @@
 
 <div class="preview" aria-hidden="true">
   <header>
-    <img class="logo" src="/aura_mail_mark.svg" alt="" />
+    <img class="logo" src={iconUrl} alt="" />
     <span class="brand">AuraMail</span>
     <span class="label">{label}</span>
   </header>

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import iconUrl from "../../../resources/logo/aura_mail_icon_only.svg";
+
   let {
     leaving = false,
     reducedMotion = false
@@ -18,7 +20,7 @@
     <span class="ring ring-middle"></span>
     <span class="ring ring-inner"></span>
     <span class="ring ring-core"></span>
-    <span class="mark"><img src="/aura_mail_mark.svg" alt="" /></span>
+    <span class="mark"><img src={iconUrl} alt="" /></span>
   </div>
   <strong>AuraMail</strong>
   <span class="tagline">Preparing your inbox…</span>
