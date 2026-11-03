@@ -260,6 +260,283 @@ pub fn list_contacts(
     Ok(ranked.into_iter().map(|(contact, _)| contact).collect())
 }
 
+fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContactRecord> {
+    Ok(ContactRecord {
+        id: row.get(0)?,
+        address_book_id: row.get(1)?,
+        address_book_name: row.get(2)?,
+        display_name: row.get(3)?,
+        emails: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
+        phones: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
+        organization: row.get(6)?,
+        title: row.get(7)?,
+        notes: row.get(8)?,
+        photo: row.get(9)?,
+        read_only: row.get::<_, i64>(10)? != 0,
+    })
+}
+
+const RECORD_SELECT: &str = "select c.id, c.address_book_id, b.name, c.display_name,
+        c.emails, c.phones, c.organization, c.title, c.notes, c.photo, b.read_only
+     from contacts c
+     join address_books b on b.id = c.address_book_id
+     join contact_accounts ca on ca.id = b.contact_account_id
+     where ca.space_id = ?1";
+
+pub fn list_records(
+    db: &Database,
+    space_id: i64,
+    address_book_id: Option<i64>,
+    query: Option<&str>,
+    limit: Option<usize>,
+) -> AppResult<Vec<ContactRecord>> {
+    ensure_local_space(db, space_id)?;
+    let needle = query.unwrap_or("").trim().to_ascii_lowercase();
+    let limit = limit.unwrap_or(500).clamp(1, 5000);
+    let conn = db.read();
+    let mut sql = RECORD_SELECT.to_string();
+    if address_book_id.is_some() {
+        sql.push_str(" and c.address_book_id = ?2");
+    }
+    if !needle.is_empty() {
+        sql.push_str(if address_book_id.is_some() {
+            " and (lower(c.display_name) like ?3 or lower(c.emails) like ?3)"
+        } else {
+            " and (lower(c.display_name) like ?2 or lower(c.emails) like ?2)"
+        });
+    }
+    sql.push_str(" order by c.display_name collate nocase, c.id limit ");
+    sql.push_str(&limit.to_string());
+    let pattern = format!("%{needle}%");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = match (address_book_id, needle.is_empty()) {
+        (Some(book), false) => stmt.query_map(params![space_id, book, pattern], row_to_record)?,
+        (Some(book), true) => stmt.query_map(params![space_id, book], row_to_record)?,
+        (None, false) => stmt.query_map(params![space_id, pattern], row_to_record)?,
+        (None, true) => stmt.query_map(params![space_id], row_to_record)?,
+    };
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn get_record(db: &Database, id: i64) -> AppResult<ContactRecord> {
+    db.read()
+        .query_row(
+            "select c.id, c.address_book_id, b.name, c.display_name,
+                    c.emails, c.phones, c.organization, c.title, c.notes, c.photo, b.read_only
+             from contacts c
+             join address_books b on b.id = c.address_book_id
+             where c.id = ?1",
+            params![id],
+            row_to_record,
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Message("contact not found".into()))
+}
+
+pub fn record_for_email(
+    db: &Database,
+    space_id: i64,
+    email: &str,
+) -> AppResult<Option<ContactRecord>> {
+    let email = email.trim().to_ascii_lowercase();
+    if email.is_empty() {
+        return Ok(None);
+    }
+    let records = list_records(db, space_id, None, None, Some(5000))?;
+    Ok(records.into_iter().find(|record| {
+        record
+            .emails
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(&email))
+    }))
+}
+
+fn validate(input: &ContactInput) -> AppResult<()> {
+    if input.display_name.trim().is_empty() && input.emails.iter().all(|email| email.trim().is_empty()) {
+        return Err(AppError::Message("a contact needs a name or an email".into()));
+    }
+    for email in input.emails.iter().filter(|email| !email.trim().is_empty()) {
+        if !email.trim().contains('@') {
+            return Err(AppError::Message(format!("invalid email address: {email}")));
+        }
+    }
+    Ok(())
+}
+
+pub fn create_local(db: &Database, book_id: i64, input: ContactInput) -> AppResult<ContactRecord> {
+    validate(&input)?;
+    let uid = format!("{}-{}", db::now(), rand::random::<u64>());
+    let vcard = vcard::build(&uid, &input);
+    let emails = serde_json::to_string(
+        &input
+            .emails
+            .iter()
+            .map(|email| email.trim().to_string())
+            .filter(|email| !email.is_empty())
+            .collect::<Vec<_>>(),
+    )?;
+    let phones = serde_json::to_string(
+        &input
+            .phones
+            .iter()
+            .map(|phone| phone.trim().to_string())
+            .filter(|phone| !phone.is_empty())
+            .collect::<Vec<_>>(),
+    )?;
+    let conn = db.conn.lock().unwrap();
+    conn.execute(
+        "insert into contacts
+            (address_book_id, href, etag, uid, display_name, emails, phones,
+             organization, title, notes, photo, vcard, updated_at)
+         values (?1, ?2, null, ?3, ?4, ?5, ?6, ?7, ?8, ?9, null, ?10, ?11)",
+        params![
+            book_id,
+            format!("{uid}.vcf"),
+            uid,
+            input.display_name.trim(),
+            emails,
+            phones,
+            input.organization.trim(),
+            input.title.trim(),
+            input.notes.trim(),
+            vcard,
+            db::now(),
+        ],
+    )?;
+    let id = conn.last_insert_rowid();
+    drop(conn);
+    get_record(db, id)
+}
+
+pub fn update_local(db: &Database, id: i64, input: ContactInput) -> AppResult<ContactRecord> {
+    validate(&input)?;
+    let existing = get_record(db, id)?;
+    if existing.read_only {
+        return Err(AppError::Message("this address book is read-only".into()));
+    }
+    let uid: String = db
+        .read()
+        .query_row("select uid from contacts where id = ?1", params![id], |row| row.get(0))
+        .optional()?
+        .ok_or_else(|| AppError::Message("contact not found".into()))?;
+    let vcard = vcard::build(&uid, &input);
+    let emails = serde_json::to_string(
+        &input
+            .emails
+            .iter()
+            .map(|email| email.trim().to_string())
+            .filter(|email| !email.is_empty())
+            .collect::<Vec<_>>(),
+    )?;
+    let phones = serde_json::to_string(
+        &input
+            .phones
+            .iter()
+            .map(|phone| phone.trim().to_string())
+            .filter(|phone| !phone.is_empty())
+            .collect::<Vec<_>>(),
+    )?;
+    db.conn.lock().unwrap().execute(
+        "update contacts set display_name = ?1, emails = ?2, phones = ?3,
+            organization = ?4, title = ?5, notes = ?6, vcard = ?7, updated_at = ?8
+         where id = ?9",
+        params![
+            input.display_name.trim(),
+            emails,
+            phones,
+            input.organization.trim(),
+            input.title.trim(),
+            input.notes.trim(),
+            vcard,
+            db::now(),
+            id,
+        ],
+    )?;
+    get_record(db, id)
+}
+
+pub fn delete_local(db: &Database, id: i64) -> AppResult<()> {
+    let existing = get_record(db, id)?;
+    if existing.read_only {
+        return Err(AppError::Message("this address book is read-only".into()));
+    }
+    db.conn
+        .lock()
+        .unwrap()
+        .execute("delete from contacts where id = ?1", params![id])?;
+    Ok(())
+}
+
+fn book_kind(db: &Database, book_id: i64) -> AppResult<String> {
+    db.read()
+        .query_row(
+            "select ca.kind from address_books b
+             join contact_accounts ca on ca.id = b.contact_account_id
+             where b.id = ?1",
+            params![book_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Message("address book not found".into()))
+}
+
+fn contact_kind(db: &Database, contact_id: i64) -> AppResult<String> {
+    db.read()
+        .query_row(
+            "select ca.kind from contacts c
+             join address_books b on b.id = c.address_book_id
+             join contact_accounts ca on ca.id = b.contact_account_id
+             where c.id = ?1",
+            params![contact_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Message("contact not found".into()))
+}
+
+pub async fn create_contact(
+    db: &Database,
+    _secrets: &dyn crate::secrets::SecretStore,
+    input: ContactInput,
+) -> AppResult<ContactRecord> {
+    let book = input
+        .address_book_id
+        .ok_or_else(|| AppError::Message("address book is required".into()))?;
+    if book_kind(db, book)? != "local" {
+        return Err(AppError::Message(
+            "CardDAV contact writing is not available yet".into(),
+        ));
+    }
+    create_local(db, book, input)
+}
+
+pub async fn update_contact(
+    db: &Database,
+    _secrets: &dyn crate::secrets::SecretStore,
+    id: i64,
+    input: ContactInput,
+) -> AppResult<ContactRecord> {
+    if contact_kind(db, id)? != "local" {
+        return Err(AppError::Message(
+            "CardDAV contact writing is not available yet".into(),
+        ));
+    }
+    update_local(db, id, input)
+}
+
+pub async fn delete_contact(
+    db: &Database,
+    _secrets: &dyn crate::secrets::SecretStore,
+    id: i64,
+) -> AppResult<()> {
+    if contact_kind(db, id)? != "local" {
+        return Err(AppError::Message(
+            "CardDAV contact writing is not available yet".into(),
+        ));
+    }
+    delete_local(db, id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,6 +553,58 @@ mod tests {
                (1, 1, 4, 'me@example.com', 'Me', '[\"ada@example.com\"]', '[]', 'Four', 50);",
         )
         .unwrap();
+    }
+
+    #[test]
+    fn local_contacts_round_trip_with_multiple_emails_and_phones() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+        let book = local_book_id(&db, space.id).unwrap();
+
+        let created = create_local(
+            &db,
+            book,
+            ContactInput {
+                display_name: "Ada Lovelace".into(),
+                emails: vec!["ada@example.com".into(), "ada@work.example".into()],
+                phones: vec!["+44 1".into()],
+                organization: "Analytical".into(),
+                title: "Engineer".into(),
+                notes: "First programmer".into(),
+                address_book_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(created.emails.len(), 2);
+
+        let listed = list_records(&db, space.id, Some(book), Some("ada"), None).unwrap();
+        assert_eq!(listed.len(), 1);
+
+        let updated = update_local(
+            &db,
+            created.id,
+            ContactInput {
+                display_name: "Ada King".into(),
+                emails: vec!["ada@example.com".into()],
+                phones: vec![],
+                organization: String::new(),
+                title: String::new(),
+                notes: String::new(),
+                address_book_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.display_name, "Ada King");
+        assert_eq!(updated.emails, vec!["ada@example.com"]);
+
+        assert!(record_for_email(&db, space.id, "ADA@EXAMPLE.COM")
+            .unwrap()
+            .is_some());
+        delete_local(&db, created.id).unwrap();
+        assert!(list_records(&db, space.id, None, None, None)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
