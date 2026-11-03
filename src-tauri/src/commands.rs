@@ -388,7 +388,9 @@ pub fn create_space(
     name: String,
     icon: Option<String>,
 ) -> AppResult<Space> {
-    spaces::create_with_icon(&state.db, &name, icon.as_deref())
+    let space = spaces::create_with_icon(&state.db, &name, icon.as_deref())?;
+    calendar::ensure_local_space(&state.db, space.id)?;
+    Ok(space)
 }
 
 #[tauri::command]

@@ -171,6 +171,29 @@ fn calendar_account_by_id(db: &Database, id: i64) -> AppResult<CalendarAccount> 
         .ok_or_else(|| AppError::Message("calendar account not found".into()))
 }
 
+/// Ensure the built-in local calendar exists for a space. Safe to call
+/// repeatedly and from read paths; it is the runtime counterpart of the
+/// version-39 backfill.
+pub fn ensure_local_space(db: &Database, space_id: i64) -> AppResult<()> {
+    crate::spaces::by_id(db, space_id)?;
+    let conn = db.conn.lock().unwrap();
+    conn.execute(
+        "insert into calendar_accounts (display_name, base_url, username, space_id, position, kind, created_at)
+         select 'Local', '', '', ?1, 1000000, 'local', ?2
+         where not exists (select 1 from calendar_accounts where space_id = ?1 and kind = 'local')",
+        params![space_id, db::now()],
+    )?;
+    conn.execute(
+        "insert into calendars (calendar_account_id, href, name, color, supported_components, read_only, unsubscribed)
+         select ca.id, 'local', 'Local', null, '[\"VEVENT\"]', 0, 0
+         from calendar_accounts ca
+         where ca.space_id = ?1 and ca.kind = 'local'
+           and not exists (select 1 from calendars c where c.calendar_account_id = ca.id and c.href = 'local')",
+        params![space_id],
+    )?;
+    Ok(())
+}
+
 pub fn list_accounts(db: &Database, space_id: i64) -> AppResult<Vec<CalendarAccount>> {
     let conn = db.read();
     let mut stmt = conn.prepare(
@@ -885,6 +908,7 @@ fn row_to_calendar(row: &rusqlite::Row<'_>) -> rusqlite::Result<CalendarSummary>
 }
 
 pub fn list_calendars(db: &Database, space_id: i64) -> AppResult<Vec<CalendarSummary>> {
+    ensure_local_space(db, space_id)?;
     let conn = db.read();
     let mut stmt = conn.prepare(
         "select c.id, c.calendar_account_id, c.href, c.name,
@@ -1183,6 +1207,39 @@ END:VCALENDAR
             .find(|calendar| calendar.name == "Work")
             .unwrap()
             .id
+    }
+
+    #[test]
+    fn every_space_gets_one_local_calendar() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+
+        let accounts = list_accounts(&db, space.id).unwrap();
+        assert!(
+            accounts.is_empty(),
+            "local account must stay hidden from settings"
+        );
+        let calendars = list_calendars(&db, space.id).unwrap();
+        assert_eq!(calendars.len(), 1);
+        assert_eq!(calendars[0].name, "Local");
+        assert!(calendars[0].local);
+    }
+
+    #[test]
+    fn local_calendars_are_isolated_per_space() {
+        let db = Database::open_memory().unwrap();
+        let first = crate::spaces::ensure_default(&db).unwrap();
+        let second = crate::spaces::create(&db, "Work").unwrap();
+        ensure_local_space(&db, first.id).unwrap();
+        ensure_local_space(&db, second.id).unwrap();
+
+        let first_calendars = list_calendars(&db, first.id).unwrap();
+        let second_calendars = list_calendars(&db, second.id).unwrap();
+        assert_eq!(first_calendars.len(), 1);
+        assert_eq!(second_calendars.len(), 1);
+        assert_ne!(first_calendars[0].id, second_calendars[0].id);
     }
 
     #[test]
