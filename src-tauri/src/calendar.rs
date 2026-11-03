@@ -582,12 +582,76 @@ fn build_event_ics(input: &CalendarEventInput, uid: &str) -> AppResult<String> {
     Ok(lines.join("\r\n") + "\r\n")
 }
 
+fn calendar_kind(db: &Database, calendar_id: i64) -> AppResult<String> {
+    db.read()
+        .query_row(
+            "select ca.kind from calendars c
+             join calendar_accounts ca on ca.id = c.calendar_account_id
+             where c.id = ?1",
+            params![calendar_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Message("calendar not found".into()))
+}
+
+fn local_event_target(db: &Database, event_id: i64) -> AppResult<Option<(i64, String)>> {
+    Ok(db
+        .read()
+        .query_row(
+            "select e.calendar_id, e.uid from calendar_events e
+             join calendars c on c.id = e.calendar_id
+             join calendar_accounts ca on ca.id = c.calendar_account_id
+             where e.id = ?1 and ca.kind = 'local'",
+            params![event_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?)
+}
+
+fn event_end(input: &CalendarEventInput) -> i64 {
+    input.ends_at.unwrap_or(if input.all_day {
+        input.starts_at + 86_400
+    } else {
+        input.starts_at + 3_600
+    })
+}
+
 pub async fn create_event(
     db: &Database,
     secrets: &dyn SecretStore,
     calendar_id: i64,
     input: CalendarEventInput,
 ) -> AppResult<CalendarSyncResult> {
+    if calendar_kind(db, calendar_id)? == "local" {
+        let uid = format!("{}-{}@auramail", db::now(), rand::random::<u64>());
+        let ical = build_event_ics(&input, &uid)?;
+        db.conn.lock().unwrap().execute(
+            "insert into calendar_events
+                (calendar_id, href, etag, uid, summary, description, location,
+                 starts_at, ends_at, all_day, ical, recurrence, updated_at)
+             values (?1, ?2, null, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                calendar_id,
+                format!("local/{uid}.ics"),
+                uid,
+                input.summary.trim(),
+                input.description.trim(),
+                input.location.trim(),
+                input.starts_at,
+                event_end(&input),
+                input.all_day,
+                ical,
+                recurrence_rule(&input.recurrence)?.unwrap_or_default(),
+                db::now(),
+            ],
+        )?;
+        return Ok(CalendarSyncResult {
+            calendars: 0,
+            events: 1,
+            errors: Vec::new(),
+        });
+    }
     let target = calendar_write_target(db, calendar_id)?;
     if target.read_only {
         return Err(AppError::Message("this calendar is read-only".into()));
@@ -616,6 +680,38 @@ pub async fn update_event(
     event_id: i64,
     input: CalendarEventInput,
 ) -> AppResult<CalendarSyncResult> {
+    if let Some((calendar_id, uid)) = local_event_target(db, event_id)? {
+        if calendar_kind(db, calendar_id)? != "local" {
+            return Err(AppError::Message("calendar not found".into()));
+        }
+        let ical = build_event_ics(&input, &uid)?;
+        let changed = db.conn.lock().unwrap().execute(
+            "update calendar_events set summary = ?1, description = ?2,
+                location = ?3, starts_at = ?4, ends_at = ?5, all_day = ?6,
+                ical = ?7, recurrence = ?8, updated_at = ?9
+             where id = ?10",
+            params![
+                input.summary.trim(),
+                input.description.trim(),
+                input.location.trim(),
+                input.starts_at,
+                event_end(&input),
+                input.all_day,
+                ical,
+                recurrence_rule(&input.recurrence)?.unwrap_or_default(),
+                db::now(),
+                event_id,
+            ],
+        )?;
+        if changed == 0 {
+            return Err(AppError::Message("event not found".into()));
+        }
+        return Ok(CalendarSyncResult {
+            calendars: 0,
+            events: 1,
+            errors: Vec::new(),
+        });
+    }
     let target = event_write_target(db, event_id)?;
     if target.read_only {
         return Err(AppError::Message("this calendar is read-only".into()));
@@ -655,6 +751,24 @@ pub async fn delete_event(
     secrets: &dyn SecretStore,
     event_id: i64,
 ) -> AppResult<CalendarSyncResult> {
+    if let Some((calendar_id, _)) = local_event_target(db, event_id)? {
+        if calendar_kind(db, calendar_id)? != "local" {
+            return Err(AppError::Message("calendar not found".into()));
+        }
+        let changed = db
+            .conn
+            .lock()
+            .unwrap()
+            .execute("delete from calendar_events where id = ?1", params![event_id])?;
+        if changed == 0 {
+            return Err(AppError::Message("event not found".into()));
+        }
+        return Ok(CalendarSyncResult {
+            calendars: 0,
+            events: 1,
+            errors: Vec::new(),
+        });
+    }
     let target = event_write_target(db, event_id)?;
     if target.read_only {
         return Err(AppError::Message("this calendar is read-only".into()));
@@ -1207,6 +1321,59 @@ END:VCALENDAR
             .find(|calendar| calendar.name == "Work")
             .unwrap()
             .id
+    }
+
+    fn event_input(summary: &str, starts_at: i64, ends_at: i64) -> CalendarEventInput {
+        CalendarEventInput {
+            summary: summary.into(),
+            description: String::new(),
+            location: String::new(),
+            starts_at,
+            ends_at: Some(ends_at),
+            all_day: false,
+            recurrence: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn local_calendar_events_are_created_updated_and_deleted() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+        let calendar = list_calendars(&db, space.id).unwrap().remove(0);
+        let secrets = MemoryStore::default();
+
+        let created = create_event(
+            &db,
+            &secrets,
+            calendar.id,
+            event_input("Dentist", 1_000, 1_600),
+        )
+        .await
+        .unwrap();
+        assert_eq!(created.events, 1);
+
+        let events = list_events(&db, space.id, 0, 10_000, 10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].summary, "Dentist");
+        assert_eq!(events[0].calendar_name, "Local");
+
+        update_event(
+            &db,
+            &secrets,
+            events[0].id,
+            event_input("Dentist moved", 2_000, 2_600),
+        )
+        .await
+        .unwrap();
+        let events = list_events(&db, space.id, 0, 10_000, 10).unwrap();
+        assert_eq!(events[0].summary, "Dentist moved");
+        assert_eq!(events[0].starts_at, 2_000);
+
+        delete_event(&db, &secrets, events[0].id).await.unwrap();
+        assert!(list_events(&db, space.id, 0, 10_000, 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
