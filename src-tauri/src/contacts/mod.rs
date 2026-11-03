@@ -523,6 +523,21 @@ pub fn list_records(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn record_by_href(db: &Database, book_id: i64, href: &str) -> AppResult<ContactRecord> {
+    db.read()
+        .query_row(
+            "select c.id, c.address_book_id, b.name, c.display_name,
+                    c.emails, c.phones, c.organization, c.title, c.notes, c.photo, b.read_only
+             from contacts c
+             join address_books b on b.id = c.address_book_id
+             where c.address_book_id = ?1 and c.href = ?2",
+            params![book_id, href],
+            row_to_record,
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Message("contact not found".into()))
+}
+
 pub fn get_record(db: &Database, id: i64) -> AppResult<ContactRecord> {
     db.read()
         .query_row(
@@ -556,7 +571,7 @@ pub fn record_for_email(
     }))
 }
 
-fn validate(input: &ContactInput) -> AppResult<()> {
+pub(crate) fn validate(input: &ContactInput) -> AppResult<()> {
     if input.display_name.trim().is_empty() && input.emails.iter().all(|email| email.trim().is_empty()) {
         return Err(AppError::Message("a contact needs a name or an email".into()));
     }
@@ -707,12 +722,10 @@ pub async fn create_contact(
     let book = input
         .address_book_id
         .ok_or_else(|| AppError::Message("address book is required".into()))?;
-    if book_kind(db, book)? != "local" {
-        return Err(AppError::Message(
-            "CardDAV contact writing is not available yet".into(),
-        ));
+    if book_kind(db, book)? == "local" {
+        return create_local(db, book, input);
     }
-    create_local(db, book, input)
+    carddav::create(db, _secrets, book, input).await
 }
 
 pub async fn update_contact(
@@ -721,12 +734,10 @@ pub async fn update_contact(
     id: i64,
     input: ContactInput,
 ) -> AppResult<ContactRecord> {
-    if contact_kind(db, id)? != "local" {
-        return Err(AppError::Message(
-            "CardDAV contact writing is not available yet".into(),
-        ));
+    if contact_kind(db, id)? == "local" {
+        return update_local(db, id, input);
     }
-    update_local(db, id, input)
+    carddav::update(db, _secrets, id, input).await
 }
 
 pub async fn delete_contact(
@@ -734,12 +745,10 @@ pub async fn delete_contact(
     _secrets: &dyn crate::secrets::SecretStore,
     id: i64,
 ) -> AppResult<()> {
-    if contact_kind(db, id)? != "local" {
-        return Err(AppError::Message(
-            "CardDAV contact writing is not available yet".into(),
-        ));
+    if contact_kind(db, id)? == "local" {
+        return delete_local(db, id);
     }
-    delete_local(db, id)
+    carddav::delete(db, _secrets, id).await
 }
 
 #[cfg(test)]

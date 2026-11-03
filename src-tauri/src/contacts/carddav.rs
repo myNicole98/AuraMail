@@ -1,7 +1,8 @@
 use std::sync::Once;
 use std::time::Duration;
 
-use fast_dav_rs::CardDavClient;
+use bytes::Bytes;
+use fast_dav_rs::{etag_from_headers, CardDavClient};
 use rusqlite::{params, OptionalExtension};
 
 use crate::contacts::{ContactAccount, ContactAccountInput};
@@ -225,6 +226,204 @@ pub fn save_books(db: &Database, account_id: i64, books: &[RemoteBook]) -> AppRe
         )?;
     }
     tx.commit()?;
+    Ok(())
+}
+
+pub struct WriteTarget {
+    pub href: String,
+    pub etag: Option<String>,
+    pub book_id: i64,
+    pub read_only: bool,
+    pub account_id: i64,
+    pub base_url: String,
+    pub username: String,
+    pub uid: String,
+}
+
+fn write_error(status: u16) -> AppError {
+    AppError::Message(match status {
+        401 => "The address book server rejected the credentials.".into(),
+        403 => "This address book is read-only on the server.".into(),
+        404 => "Contact not found on the server.".into(),
+        412 => "This contact changed on the server. Review it and try again.".into(),
+        other => format!("The contact server rejected the change ({other})."),
+    })
+}
+
+pub fn mark_read_only(db: &Database, book_id: i64) -> AppResult<()> {
+    db.conn.lock().unwrap().execute(
+        "update address_books set read_only = 1 where id = ?1",
+        params![book_id],
+    )?;
+    Ok(())
+}
+
+fn member_path(book_href: &str, file: &str) -> String {
+    if book_href.ends_with('/') {
+        format!("{book_href}{file}")
+    } else {
+        format!("{book_href}/{file}")
+    }
+}
+
+fn book_target(db: &Database, book_id: i64) -> AppResult<WriteTarget> {
+    db.read()
+        .query_row(
+            "select b.href, b.read_only, ca.id, ca.base_url, ca.username
+             from address_books b
+             join contact_accounts ca on ca.id = b.contact_account_id
+             where b.id = ?1 and ca.kind = 'carddav'",
+            params![book_id],
+            |row| {
+                Ok(WriteTarget {
+                    href: row.get(0)?,
+                    etag: None,
+                    book_id,
+                    read_only: row.get::<_, i64>(1)? != 0,
+                    account_id: row.get(2)?,
+                    base_url: row.get(3)?,
+                    username: row.get(4)?,
+                    uid: String::new(),
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Message("address book not found".into()))
+}
+
+fn contact_target(db: &Database, contact_id: i64) -> AppResult<WriteTarget> {
+    db.read()
+        .query_row(
+            "select c.href, c.etag, c.uid, c.address_book_id, b.read_only,
+                    ca.id, ca.base_url, ca.username
+             from contacts c
+             join address_books b on b.id = c.address_book_id
+             join contact_accounts ca on ca.id = b.contact_account_id
+             where c.id = ?1 and ca.kind = 'carddav'",
+            params![contact_id],
+            |row| {
+                Ok(WriteTarget {
+                    href: row.get(0)?,
+                    etag: row.get(1)?,
+                    uid: row.get(2)?,
+                    book_id: row.get(3)?,
+                    read_only: row.get::<_, i64>(4)? != 0,
+                    account_id: row.get(5)?,
+                    base_url: row.get(6)?,
+                    username: row.get(7)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Message("contact not found".into()))
+}
+
+fn client_for_target(
+    secrets: &dyn SecretStore,
+    target: &WriteTarget,
+) -> AppResult<CardDavClient> {
+    let password = secrets.get(&contact_account_key(target.account_id))?;
+    client_for_base(&target.base_url, &target.username, &password)
+}
+
+pub async fn create(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    book_id: i64,
+    input: crate::contacts::ContactInput,
+) -> AppResult<crate::contacts::ContactRecord> {
+    crate::contacts::validate(&input)?;
+    let target = book_target(db, book_id)?;
+    if target.read_only {
+        return Err(AppError::Message("this address book is read-only".into()));
+    }
+    let uid = format!("{}-{}", db::now(), rand::random::<u64>());
+    let vcard = crate::contacts::vcard::build(&uid, &input);
+    let path = member_path(&target.href, &format!("{uid}.vcf"));
+    let client = client_for_target(secrets, &target)?;
+    let response = client
+        .put_if_none_match(&path, Bytes::from(vcard.clone()))
+        .await
+        .map_err(dav_error)?;
+    if !response.status().is_success() {
+        return Err(write_error(response.status().as_u16()));
+    }
+    let etag = etag_from_headers(response.headers());
+    upsert_card(db, book_id, &path, etag.as_deref(), &vcard)?;
+    let _ = sync_account(db, secrets, target.account_id).await;
+    crate::contacts::record_by_href(db, book_id, &path)
+}
+
+pub async fn update(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    contact_id: i64,
+    input: crate::contacts::ContactInput,
+) -> AppResult<crate::contacts::ContactRecord> {
+    crate::contacts::validate(&input)?;
+    let target = contact_target(db, contact_id)?;
+    if target.read_only {
+        return Err(AppError::Message("this address book is read-only".into()));
+    }
+    let etag = target
+        .etag
+        .clone()
+        .ok_or_else(|| AppError::Message("contact has no ETag".into()))?;
+    let vcard = crate::contacts::vcard::build(&target.uid, &input);
+    let client = client_for_target(secrets, &target)?;
+    let response = client
+        .put_if_match(&target.href, Bytes::from(vcard.clone()), &etag)
+        .await
+        .map_err(dav_error)?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        if status == 412 || status == 403 {
+            let _ = sync_account(db, secrets, target.account_id).await;
+        }
+        if status == 403 {
+            let _ = mark_read_only(db, target.book_id);
+        }
+        return Err(write_error(status));
+    }
+    let new_etag = etag_from_headers(response.headers()).or(Some(etag));
+    upsert_card(db, target.book_id, &target.href, new_etag.as_deref(), &vcard)?;
+    let _ = sync_account(db, secrets, target.account_id).await;
+    crate::contacts::get_record(db, contact_id)
+}
+
+pub async fn delete(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    contact_id: i64,
+) -> AppResult<()> {
+    let target = contact_target(db, contact_id)?;
+    if target.read_only {
+        return Err(AppError::Message("this address book is read-only".into()));
+    }
+    let etag = target
+        .etag
+        .clone()
+        .ok_or_else(|| AppError::Message("contact has no ETag".into()))?;
+    let client = client_for_target(secrets, &target)?;
+    let response = client
+        .delete_if_match(&target.href, &etag)
+        .await
+        .map_err(dav_error)?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        if status == 412 || status == 403 {
+            let _ = sync_account(db, secrets, target.account_id).await;
+        }
+        if status == 403 {
+            let _ = mark_read_only(db, target.book_id);
+        }
+        return Err(write_error(status));
+    }
+    db.conn.lock().unwrap().execute(
+        "delete from contacts where id = ?1",
+        params![contact_id],
+    )?;
+    let _ = sync_account(db, secrets, target.account_id).await;
     Ok(())
 }
 
@@ -473,6 +672,61 @@ mod tests {
         )
         .unwrap();
         (account, conn.last_insert_rowid())
+    }
+
+    #[test]
+    fn write_errors_explain_conflicts_and_read_only_books() {
+        assert!(write_error(412)
+            .to_string()
+            .contains("changed on the server"));
+        assert!(write_error(403).to_string().contains("read-only"));
+        assert!(write_error(500).to_string().contains("rejected"));
+    }
+
+    #[test]
+    fn marking_a_book_read_only_persists() {
+        let db = Database::open_memory().unwrap();
+        let (account, book) = seed_carddav_account(&db);
+        mark_read_only(&db, book).unwrap();
+        let space_id: i64 = {
+            let conn = db.read();
+            conn.query_row(
+                "select space_id from contact_accounts where id = ?1",
+                params![account],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        let books = crate::contacts::list_address_books(&db, space_id).unwrap();
+        assert!(books
+            .iter()
+            .find(|candidate| candidate.id == book)
+            .unwrap()
+            .read_only);
+    }
+
+    #[tokio::test]
+    async fn local_contacts_dispatch_without_a_network_client() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        crate::contacts::ensure_local_space(&db, space.id).unwrap();
+        let book = crate::contacts::local_book_id(&db, space.id).unwrap();
+        let record = crate::contacts::create_contact(
+            &db,
+            &crate::secrets::MemoryStore::default(),
+            crate::contacts::ContactInput {
+                display_name: "Ada".into(),
+                emails: vec!["ada@example.com".into()],
+                phones: vec![],
+                organization: String::new(),
+                title: String::new(),
+                notes: String::new(),
+                address_book_id: Some(book),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(record.display_name, "Ada");
     }
 
     #[test]
