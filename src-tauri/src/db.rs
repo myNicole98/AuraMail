@@ -1199,6 +1199,65 @@ impl Database {
             )?;
             conn.pragma_update(None, "user_version", 39)?;
         }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 40 {
+            conn.execute_batch(
+                "create table if not exists contact_accounts (
+                    id integer primary key autoincrement,
+                    display_name text not null,
+                    base_url text not null,
+                    username text not null,
+                    space_id integer not null references spaces(id) on delete cascade,
+                    position integer not null default 0,
+                    kind text not null default 'carddav',
+                    created_at integer not null
+                 );
+                 create table if not exists address_books (
+                    id integer primary key autoincrement,
+                    contact_account_id integer not null references contact_accounts(id) on delete cascade,
+                    href text not null,
+                    name text not null,
+                    color text,
+                    sync_token text,
+                    last_synced_at integer,
+                    read_only integer not null default 0,
+                    unique(contact_account_id, href)
+                 );
+                 create table if not exists contacts (
+                    id integer primary key autoincrement,
+                    address_book_id integer not null references address_books(id) on delete cascade,
+                    href text not null,
+                    etag text,
+                    uid text not null default '',
+                    display_name text not null default '',
+                    emails text not null default '[]',
+                    phones text not null default '[]',
+                    organization text not null default '',
+                    title text not null default '',
+                    notes text not null default '',
+                    photo text,
+                    vcard text not null,
+                    updated_at integer not null,
+                    unique(address_book_id, href)
+                 );
+                 create index if not exists idx_contacts_name on contacts(display_name);
+                 create index if not exists idx_address_books_account on address_books(contact_account_id);
+                 insert into contact_accounts (display_name, base_url, username, space_id, position, kind, created_at)
+                 select 'Local', '', '', s.id, 1000000, 'local', strftime('%s','now')
+                 from spaces s
+                 where not exists (
+                   select 1 from contact_accounts ca where ca.space_id = s.id and ca.kind = 'local'
+                 );
+                 insert into address_books (contact_account_id, href, name)
+                 select ca.id, 'local', 'Personal'
+                 from contact_accounts ca
+                 where ca.kind = 'local'
+                   and not exists (
+                     select 1 from address_books b where b.contact_account_id = ca.id and b.href = 'local'
+                   );",
+            )?;
+            conn.pragma_update(None, "user_version", 40)?;
+        }
         // The unreleased local calendar was first named "Personal"; repair
         // databases that already ran version 39 exactly once.
         let renamed: i64 = conn.query_row(
@@ -1357,7 +1416,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
         let tabs: i64 = conn
             .query_row("select count(*) from tabs", [], |row| row.get(0))
             .unwrap();
@@ -1513,7 +1572,7 @@ mod tests {
             .unwrap();
         assert_eq!(bodies, 0);
         assert_eq!(cached, 0);
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
     }
 
     #[test]
@@ -1540,7 +1599,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table, 1);
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
     }
 
     #[test]
@@ -1567,7 +1626,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(cached, 0);
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
     }
 
     #[test]
@@ -1610,7 +1669,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
     }
 
     #[test]
@@ -1691,7 +1750,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!((auth_type, provider, version), (1, 1, 39));
+        assert_eq!((auth_type, provider, version), (1, 1, 40));
     }
 
     #[test]

@@ -1,9 +1,139 @@
+pub mod carddav;
+pub mod vcard;
+
 use std::collections::{HashMap, HashSet};
 
+use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 
-use crate::db::Database;
-use crate::error::AppResult;
+use crate::db::{self, Database};
+use crate::error::{AppError, AppResult};
+
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactRecord {
+    pub id: i64,
+    pub address_book_id: i64,
+    pub address_book_name: String,
+    pub display_name: String,
+    pub emails: Vec<String>,
+    pub phones: Vec<String>,
+    pub organization: String,
+    pub title: String,
+    pub notes: String,
+    pub photo: Option<String>,
+    pub read_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactAccount {
+    pub id: i64,
+    pub display_name: String,
+    pub base_url: String,
+    pub username: String,
+    pub space_id: i64,
+    pub position: i64,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactAddressBook {
+    pub id: i64,
+    pub contact_account_id: i64,
+    pub href: String,
+    pub name: String,
+    pub color: Option<String>,
+    pub read_only: bool,
+}
+
+/// Ensure the built-in local address book exists for a space. Idempotent and
+/// also used as the runtime counterpart of the version-40 backfill.
+pub fn ensure_local_space(db: &Database, space_id: i64) -> AppResult<()> {
+    crate::spaces::by_id(db, space_id)?;
+    let conn = db.conn.lock().unwrap();
+    conn.execute(
+        "insert into contact_accounts
+            (display_name, base_url, username, space_id, position, kind, created_at)
+         select 'Local', '', '', ?1, 1000000, 'local', ?2
+         where not exists (
+           select 1 from contact_accounts where space_id = ?1 and kind = 'local'
+         )",
+        params![space_id, db::now()],
+    )?;
+    conn.execute(
+        "insert into address_books (contact_account_id, href, name)
+         select ca.id, 'local', 'Personal'
+         from contact_accounts ca
+         where ca.space_id = ?1 and ca.kind = 'local'
+           and not exists (
+             select 1 from address_books b
+             where b.contact_account_id = ca.id and b.href = 'local'
+           )",
+        params![space_id],
+    )?;
+    Ok(())
+}
+
+pub fn local_book_id(db: &Database, space_id: i64) -> AppResult<i64> {
+    db.read()
+        .query_row(
+            "select b.id from address_books b
+             join contact_accounts ca on ca.id = b.contact_account_id
+             where ca.space_id = ?1 and ca.kind = 'local' and b.href = 'local'",
+            params![space_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Message("local address book not found".into()))
+}
+
+pub fn list_accounts(db: &Database, space_id: i64) -> AppResult<Vec<ContactAccount>> {
+    let conn = db.read();
+    let mut stmt = conn.prepare(
+        "select id, display_name, base_url, username, space_id, position, created_at
+         from contact_accounts
+         where space_id = ?1 and kind = 'carddav'
+         order by position, id",
+    )?;
+    let rows = stmt.query_map(params![space_id], |row| {
+        Ok(ContactAccount {
+            id: row.get(0)?,
+            display_name: row.get(1)?,
+            base_url: row.get(2)?,
+            username: row.get(3)?,
+            space_id: row.get(4)?,
+            position: row.get(5)?,
+            created_at: row.get(6)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn list_address_books(db: &Database, space_id: i64) -> AppResult<Vec<ContactAddressBook>> {
+    let conn = db.read();
+    let mut stmt = conn.prepare(
+        "select b.id, b.contact_account_id, b.href, b.name, b.color, b.read_only
+         from address_books b
+         join contact_accounts ca on ca.id = b.contact_account_id
+         where ca.space_id = ?1
+         order by case when ca.kind = 'carddav' then 0 else 1 end,
+                  ca.position, b.name collate nocase, b.id",
+    )?;
+    let rows = stmt.query_map(params![space_id], |row| {
+        Ok(ContactAddressBook {
+            id: row.get(0)?,
+            contact_account_id: row.get(1)?,
+            href: row.get(2)?,
+            name: row.get(3)?,
+            color: row.get(4)?,
+            read_only: row.get::<_, i64>(5)? != 0,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Contact {
@@ -127,6 +257,20 @@ mod tests {
                (1, 1, 4, 'me@example.com', 'Me', '[\"ada@example.com\"]', '[]', 'Four', 50);",
         )
         .unwrap();
+    }
+
+    #[test]
+    fn every_space_gets_one_local_address_book() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+
+        assert!(list_accounts(&db, space.id).unwrap().is_empty());
+        let books = list_address_books(&db, space.id).unwrap();
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].name, "Personal");
+        assert_eq!(books[0].id, local_book_id(&db, space.id).unwrap());
     }
 
     #[test]

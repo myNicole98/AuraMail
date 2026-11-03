@@ -390,6 +390,7 @@ pub fn create_space(
 ) -> AppResult<Space> {
     let space = spaces::create_with_icon(&state.db, &name, icon.as_deref())?;
     calendar::ensure_local_space(&state.db, space.id)?;
+    contacts::ensure_local_space(&state.db, space.id)?;
     Ok(space)
 }
 
