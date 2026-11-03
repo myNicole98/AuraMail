@@ -28,6 +28,14 @@ pub struct ContactRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ContactSyncResult {
+    pub books: usize,
+    pub contacts: usize,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContactAccount {
     pub id: i64,
     pub display_name: String,
