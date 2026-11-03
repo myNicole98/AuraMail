@@ -114,6 +114,7 @@
     try {
       const input: AccountInput = {
         display_name: form.display_name.trim(),
+        identity: "",
         email: form.username.trim(),
         username: form.username.trim(),
         password: form.password,

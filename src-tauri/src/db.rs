@@ -1199,15 +1199,25 @@ impl Database {
             )?;
             conn.pragma_update(None, "user_version", 39)?;
         }
-        // The unreleased local calendar was first named "Personal"; keep
-        // databases that already ran version 39 consistent with the shipped
-        // name.
-        conn.execute(
-            "update calendars set name = 'Local'
-             where href = 'local' and name = 'Personal'
-               and calendar_account_id in (select id from calendar_accounts where kind = 'local')",
+        // The unreleased local calendar was first named "Personal"; repair
+        // databases that already ran version 39 exactly once.
+        let renamed: i64 = conn.query_row(
+            "select count(*) from settings where key = 'local-calendar-named'",
             [],
+            |row| row.get(0),
         )?;
+        if renamed == 0 {
+            conn.execute(
+                "update calendars set name = 'Local'
+                 where href = 'local' and name = 'Personal'
+                   and calendar_account_id in (select id from calendar_accounts where kind = 'local')",
+                [],
+            )?;
+            conn.execute(
+                "insert into settings (key, value) values ('local-calendar-named', '1')",
+                [],
+            )?;
+        }
         conn.execute_batch(
             "create index if not exists idx_messages_folder_date on messages(folder_id, date desc);
              create index if not exists idx_messages_account_date on messages(account_id, date desc);

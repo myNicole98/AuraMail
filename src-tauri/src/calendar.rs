@@ -252,21 +252,27 @@ pub fn move_account_to_space(
 ) -> AppResult<CalendarAccount> {
     crate::spaces::by_id(db, space_id)?;
     let conn = db.conn.lock().unwrap();
-    let current_space: Option<i64> = conn
+    let current: Option<(i64, String)> = conn
         .query_row(
-            "select space_id from calendar_accounts where id = ?1",
+            "select space_id, kind from calendar_accounts where id = ?1",
             params![id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    let current_space =
-        current_space.ok_or_else(|| AppError::Message("calendar account not found".into()))?;
+    let (current_space, kind) =
+        current.ok_or_else(|| AppError::Message("calendar account not found".into()))?;
     if current_space == space_id {
         drop(conn);
         return calendar_account_by_id(db, id);
     }
+    if kind == "local" {
+        return Err(AppError::Message(
+            "the local calendar cannot be moved".into(),
+        ));
+    }
     let position: i64 = conn.query_row(
-        "select coalesce(max(position) + 1, 0) from calendar_accounts where space_id = ?1",
+        "select coalesce(max(position) + 1, 0) from calendar_accounts
+         where space_id = ?1 and kind = 'caldav'",
         params![space_id],
         |row| row.get(0),
     )?;
@@ -623,6 +629,10 @@ pub async fn create_event(
     calendar_id: i64,
     input: CalendarEventInput,
 ) -> AppResult<CalendarSyncResult> {
+    let target = calendar_write_target(db, calendar_id)?;
+    if target.read_only {
+        return Err(AppError::Message("this calendar is read-only".into()));
+    }
     if calendar_kind(db, calendar_id)? == "local" {
         let uid = format!("{}-{}@auramail", db::now(), rand::random::<u64>());
         let ical = build_event_ics(&input, &uid)?;
@@ -652,10 +662,6 @@ pub async fn create_event(
             errors: Vec::new(),
         });
     }
-    let target = calendar_write_target(db, calendar_id)?;
-    if target.read_only {
-        return Err(AppError::Message("this calendar is read-only".into()));
-    }
     let account = calendar_account_by_id(db, target.calendar_account_id)?;
     let password = calendar_password(secrets, account.id)?;
     let client = client_for(&account, &password)?;
@@ -680,6 +686,10 @@ pub async fn update_event(
     event_id: i64,
     input: CalendarEventInput,
 ) -> AppResult<CalendarSyncResult> {
+    let target = event_write_target(db, event_id)?;
+    if target.read_only {
+        return Err(AppError::Message("this calendar is read-only".into()));
+    }
     if let Some((calendar_id, uid)) = local_event_target(db, event_id)? {
         if calendar_kind(db, calendar_id)? != "local" {
             return Err(AppError::Message("calendar not found".into()));
@@ -711,10 +721,6 @@ pub async fn update_event(
             events: 1,
             errors: Vec::new(),
         });
-    }
-    let target = event_write_target(db, event_id)?;
-    if target.read_only {
-        return Err(AppError::Message("this calendar is read-only".into()));
     }
     let etag = target
         .etag
@@ -751,6 +757,10 @@ pub async fn delete_event(
     secrets: &dyn SecretStore,
     event_id: i64,
 ) -> AppResult<CalendarSyncResult> {
+    let target = event_write_target(db, event_id)?;
+    if target.read_only {
+        return Err(AppError::Message("this calendar is read-only".into()));
+    }
     if let Some((calendar_id, _)) = local_event_target(db, event_id)? {
         if calendar_kind(db, calendar_id)? != "local" {
             return Err(AppError::Message("calendar not found".into()));
@@ -768,10 +778,6 @@ pub async fn delete_event(
             events: 1,
             errors: Vec::new(),
         });
-    }
-    let target = event_write_target(db, event_id)?;
-    if target.read_only {
-        return Err(AppError::Message("this calendar is read-only".into()));
     }
     let etag = target
         .etag
@@ -846,7 +852,8 @@ pub async fn add_account(
     let (id, position) = {
         let conn = db.conn.lock().unwrap();
         let position: i64 = conn.query_row(
-            "select coalesce(max(position) + 1, 0) from calendar_accounts where space_id = ?1",
+            "select coalesce(max(position) + 1, 0) from calendar_accounts
+             where space_id = ?1 and kind = 'caldav'",
             params![input.space_id],
             |row| row.get(0),
         )?;
@@ -929,7 +936,12 @@ pub fn unsubscribe_calendar(db: &Database, calendar_id: i64) -> AppResult<()> {
 }
 
 pub fn remove_account(db: &Database, secrets: &dyn SecretStore, account_id: i64) -> AppResult<()> {
-    calendar_account_by_id(db, account_id)?;
+    let account = calendar_account_by_id(db, account_id)?;
+    if account.kind == "local" {
+        return Err(AppError::Message(
+            "the local calendar cannot be removed".into(),
+        ));
+    }
     secrets.delete(&calendar_account_key(account_id))?;
     db.conn.lock().unwrap().execute(
         "delete from calendar_accounts where id = ?1",
@@ -1347,6 +1359,67 @@ END:VCALENDAR
             all_day: false,
             recurrence: String::new(),
         }
+    }
+
+    #[test]
+    fn local_calendar_account_cannot_be_removed() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+        let account_id: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "select id from calendar_accounts where space_id = ?1 and kind = 'local'",
+                params![space.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let error = remove_account(&db, &MemoryStore::default(), account_id)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("local"), "{error}");
+        assert_eq!(list_calendars(&db, space.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn local_calendar_account_cannot_be_moved() {
+        let db = Database::open_memory().unwrap();
+        let first = crate::spaces::ensure_default(&db).unwrap();
+        let second = crate::spaces::create(&db, "Work").unwrap();
+        ensure_local_space(&db, first.id).unwrap();
+        ensure_local_space(&db, second.id).unwrap();
+        let account_id: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "select id from calendar_accounts where space_id = ?1 and kind = 'local'",
+                params![first.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let error = move_account_to_space(&db, account_id, second.id)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("local"), "{error}");
+        assert_eq!(list_calendars(&db, first.id).unwrap().len(), 1);
+        assert_eq!(list_calendars(&db, second.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn local_calendars_sort_before_caldav_calendars() {
+        let db = Database::open_memory().unwrap();
+        let (space_id, account_id) = seed_account(&db);
+        seed_calendar(&db, space_id, account_id);
+        ensure_local_space(&db, space_id).unwrap();
+
+        let calendars = list_calendars(&db, space_id).unwrap();
+        assert_eq!(calendars[0].name, "Local");
+        assert!(calendars.iter().any(|calendar| calendar.name == "Work"));
     }
 
     #[test]

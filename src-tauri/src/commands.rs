@@ -3437,7 +3437,7 @@ mod tests {
                 self.secrets.as_ref(),
                 AccountInput {
                     display_name: "Manual".into(),
-            identity: String::new(),
+                    identity: String::new(),
                     email: email.into(),
                     username: email.into(),
                     password: "p@ss".into(),

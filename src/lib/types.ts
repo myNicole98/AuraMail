@@ -180,7 +180,7 @@ export type AccountDiscovery = {
 
 export type AccountInput = {
   display_name: string;
-  identity?: string;
+  identity: string;
   email: string;
   username: string;
   password: string;

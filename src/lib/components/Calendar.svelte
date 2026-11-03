@@ -852,6 +852,8 @@
   function openCalendarMenu(event: MouseEvent, calendar: CalendarSummary): void {
     event.preventDefault();
     event.stopPropagation();
+    // The only action is unsubscribing, which local calendars do not allow.
+    if (calendar.local) return;
     calendarMenu = {
       x: Math.min(event.clientX, window.innerWidth - 190),
       y: Math.min(event.clientY, window.innerHeight - 54),

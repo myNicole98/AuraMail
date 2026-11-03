@@ -518,6 +518,17 @@ mod tests {
     }
 
     #[test]
+    fn non_ascii_identity_is_encoded_safely() {
+        let raw = build(&valid_input(), Some("Nicole Fréga"), "me@example.com")
+            .unwrap()
+            .formatted();
+        let text = String::from_utf8_lossy(&raw);
+        assert!(text.contains("From: =?utf-8?b?"));
+        assert!(text.contains("<me@example.com>"));
+        assert!(text.contains("Subject: Hello"));
+    }
+
+    #[test]
     fn empty_identity_keeps_a_bare_from_address() {
         let raw = build(&valid_input(), Some("  "), "me@example.com")
             .unwrap()

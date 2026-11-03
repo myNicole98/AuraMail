@@ -127,6 +127,7 @@
     try {
       const input: AccountInput = {
         display_name: accountForm.display_name.trim(),
+        identity: account.identity,
         email: account.email,
         username: account.username,
         password: "",
@@ -287,6 +288,7 @@
     try {
       const input: AccountInput = {
         display_name: accountForm.display_name.trim(),
+        identity: "",
         email: accountForm.username.trim(),
         username: accountForm.username.trim(),
         password:

@@ -305,6 +305,7 @@
   ): AccountInput {
     return {
       display_name: account.display_name,
+      identity: account.identity,
       email: account.email,
       username: account.username,
       password: "",
