@@ -555,6 +555,63 @@ export type Contact = {
   email: string;
 };
 
+export type ContactRecord = {
+  id: number;
+  addressBookId: number;
+  addressBookName: string;
+  displayName: string;
+  emails: string[];
+  phones: string[];
+  organization: string;
+  title: string;
+  notes: string;
+  photo: string | null;
+  readOnly: boolean;
+};
+
+export type ContactAccount = {
+  id: number;
+  displayName: string;
+  baseUrl: string;
+  username: string;
+  spaceId: number;
+  position: number;
+  createdAt: number;
+};
+
+export type ContactAccountInput = {
+  displayName: string;
+  baseUrl: string;
+  username: string;
+  password: string;
+  spaceId: number;
+};
+
+export type ContactAddressBook = {
+  id: number;
+  contactAccountId: number;
+  href: string;
+  name: string;
+  color: string | null;
+  readOnly: boolean;
+};
+
+export type ContactInput = {
+  displayName: string;
+  emails: string[];
+  phones: string[];
+  organization: string;
+  title: string;
+  notes: string;
+  addressBookId?: number | null;
+};
+
+export type ContactSyncResult = {
+  books: number;
+  contacts: number;
+  errors: string[];
+};
+
 export type AiComposeRequest = {
   mode: "fix" | "generate";
   instruction: string;

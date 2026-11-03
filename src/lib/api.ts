@@ -28,6 +28,12 @@ import type {
   ClassificationOutcome,
   ComposeInput,
   Contact,
+  ContactAccount,
+  ContactAccountInput,
+  ContactAddressBook,
+  ContactInput,
+  ContactRecord,
+  ContactSyncResult,
   DesktopPreferences,
   DiscoveredProvider,
   Draft,
@@ -160,6 +166,40 @@ export const api = {
     invoke<AiDraft>("ai_compose", { request, spaceId }),
   listContacts: (spaceId: number, query?: string, limit?: number) =>
     invoke<Contact[]>("list_contacts", { spaceId, query, limit }),
+  listContactAccounts: (spaceId: number) =>
+    invoke<ContactAccount[]>("list_contact_accounts", { spaceId }),
+  addContactAccount: (input: ContactAccountInput) =>
+    invoke<ContactAccount>("add_contact_account", { input }),
+  removeContactAccount: (id: number) =>
+    invoke<void>("remove_contact_account", { id }),
+  reorderContactAccounts: (spaceId: number, ids: number[]) =>
+    invoke<ContactAccount[]>("reorder_contact_accounts", { spaceId, ids }),
+  moveContactAccount: (id: number, spaceId: number) =>
+    invoke<ContactAccount>("move_contact_account", { id, spaceId }),
+  syncContacts: (accountId: number) =>
+    invoke<ContactSyncResult>("sync_contacts", { accountId }),
+  listAddressBooks: (spaceId: number) =>
+    invoke<ContactAddressBook[]>("list_address_books", { spaceId }),
+  listContactRecords: (
+    spaceId: number,
+    addressBookId?: number | null,
+    query?: string,
+    limit?: number
+  ) =>
+    invoke<ContactRecord[]>("list_contact_records", {
+      spaceId,
+      addressBookId: addressBookId ?? null,
+      query,
+      limit
+    }),
+  getContact: (id: number) => invoke<ContactRecord>("get_contact", { id }),
+  createContact: (input: ContactInput) =>
+    invoke<ContactRecord>("create_contact", { input }),
+  updateContact: (id: number, input: ContactInput) =>
+    invoke<ContactRecord>("update_contact", { id, input }),
+  deleteContact: (id: number) => invoke<void>("delete_contact", { id }),
+  contactForEmail: (spaceId: number, email: string) =>
+    invoke<ContactRecord | null>("contact_for_email", { spaceId, email }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
   downloadUpdate: (input: {
@@ -169,11 +209,17 @@ export const api = {
     checksum: string;
   }) => invoke<string>("download_update", input),
   installUpdate: (staged: string) => invoke<void>("install_update", { staged }),
-  openComposeWindow: (mode: string, messageId?: number | null, draftId?: number | null) =>
+  openComposeWindow: (
+    mode: string,
+    messageId?: number | null,
+    draftId?: number | null,
+    to?: string | null
+  ) =>
     invoke<void>("open_compose_window", {
       mode,
       messageId: messageId ?? null,
-      draftId: draftId ?? null
+      draftId: draftId ?? null,
+      to: to ?? null
     }),
   syncAccount: (accountId: number) => invoke<void>("sync_account", { accountId }),
   listFolders: (accountId?: number, spaceId = currentSpaceId()) =>

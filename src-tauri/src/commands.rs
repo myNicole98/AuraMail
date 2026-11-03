@@ -19,7 +19,10 @@ use crate::ai::{
 use crate::ai::semantic::SemanticStatus;
 use crate::ai::voice::AiVoiceProfile;
 use crate::compose::{self, ComposeInput, Draft, DraftSummary};
-use crate::contacts::{self, Contact};
+use crate::contacts::{
+    self, Contact, ContactAccount, ContactAccountInput, ContactAddressBook, ContactInput,
+    ContactRecord, ContactSyncResult,
+};
 use crate::db::{now, Database};
 use crate::error::{AppError, AppResult};
 use crate::imap::client::{self, validate_imap};
@@ -1321,11 +1324,141 @@ pub async fn list_contacts(
 }
 
 #[tauri::command]
+pub fn list_contact_accounts(
+    state: State<'_, AppState>,
+    space_id: i64,
+) -> AppResult<Vec<ContactAccount>> {
+    contacts::list_accounts(&state.db, space_id)
+}
+
+#[tauri::command]
+pub async fn add_contact_account(
+    state: State<'_, AppState>,
+    input: ContactAccountInput,
+) -> AppResult<ContactAccount> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    contacts::carddav::add_account(&db, secrets.as_ref(), input).await
+}
+
+#[tauri::command]
+pub fn remove_contact_account(state: State<'_, AppState>, id: i64) -> AppResult<()> {
+    contacts::remove_account(&state.db, state.secrets.as_ref(), id)
+}
+
+#[tauri::command]
+pub fn reorder_contact_accounts(
+    state: State<'_, AppState>,
+    space_id: i64,
+    ids: Vec<i64>,
+) -> AppResult<Vec<ContactAccount>> {
+    contacts::reorder_accounts(&state.db, space_id, &ids)
+}
+
+#[tauri::command]
+pub fn move_contact_account(
+    state: State<'_, AppState>,
+    id: i64,
+    space_id: i64,
+) -> AppResult<ContactAccount> {
+    contacts::move_account_to_space(&state.db, id, space_id)
+}
+
+#[tauri::command]
+pub async fn sync_contacts(
+    state: State<'_, AppState>,
+    account_id: i64,
+) -> AppResult<ContactSyncResult> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    contacts::carddav::sync_account(&db, secrets.as_ref(), account_id).await
+}
+
+#[tauri::command]
+pub fn list_address_books(
+    state: State<'_, AppState>,
+    space_id: i64,
+) -> AppResult<Vec<ContactAddressBook>> {
+    contacts::list_address_books(&state.db, space_id)
+}
+
+#[tauri::command]
+pub async fn list_contact_records(
+    state: State<'_, AppState>,
+    space_id: i64,
+    address_book_id: Option<i64>,
+    query: Option<String>,
+    limit: Option<usize>,
+) -> AppResult<Vec<ContactRecord>> {
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || {
+        contacts::list_records(&db, space_id, address_book_id, query.as_deref(), limit)
+    })
+    .await
+    .map_err(|_| blocking_error())?
+}
+
+#[tauri::command]
+pub fn get_contact(state: State<'_, AppState>, id: i64) -> AppResult<ContactRecord> {
+    contacts::get_record(&state.db, id)
+}
+
+#[tauri::command]
+pub async fn create_contact(
+    state: State<'_, AppState>,
+    input: ContactInput,
+) -> AppResult<ContactRecord> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    contacts::create_contact(&db, secrets.as_ref(), input).await
+}
+
+#[tauri::command]
+pub async fn update_contact(
+    state: State<'_, AppState>,
+    id: i64,
+    input: ContactInput,
+) -> AppResult<ContactRecord> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    contacts::update_contact(&db, secrets.as_ref(), id, input).await
+}
+
+#[tauri::command]
+pub async fn delete_contact(state: State<'_, AppState>, id: i64) -> AppResult<()> {
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    contacts::delete_contact(&db, secrets.as_ref(), id).await
+}
+
+#[tauri::command]
+pub fn contact_for_email(
+    state: State<'_, AppState>,
+    space_id: i64,
+    email: String,
+) -> AppResult<Option<ContactRecord>> {
+    contacts::record_for_email(&state.db, space_id, &email)
+}
+
+fn query_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+#[tauri::command]
 pub async fn open_compose_window(
     app: AppHandle,
     mode: String,
     message_id: Option<i64>,
     draft_id: Option<i64>,
+    to: Option<String>,
 ) -> AppResult<()> {
     let mode = match mode.trim() {
         "new" | "reply" | "reply-all" | "forward" => mode.trim(),
@@ -1342,6 +1475,9 @@ pub async fn open_compose_window(
     }
     if let Some(draft_id) = draft_id {
         query.push_str(&format!("&draftId={draft_id}"));
+    }
+    if let Some(to) = to.filter(|value| !value.trim().is_empty()) {
+        query.push_str(&format!("&to={}", query_escape(&to)));
     }
     WebviewWindowBuilder::new(
         &app,
@@ -3271,6 +3407,15 @@ mod tests {
         assert!(validate_move_target(&current, &folder(2, 2, "archive")).is_err());
         assert!(validate_move_target(&current, &folder(2, 1, "drafts")).is_err());
         assert!(validate_move_target(&current, &folder(2, 1, "all")).is_err());
+    }
+
+    #[test]
+    fn escapes_compose_prefill_addresses() {
+        assert_eq!(super::query_escape("ada@example.com"), "ada%40example.com");
+        assert_eq!(
+            super::query_escape("Ada Lovelace <ada@example.com>"),
+            "Ada%20Lovelace%20%3Cada%40example.com%3E"
+        );
     }
 
     #[test]
