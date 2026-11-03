@@ -77,6 +77,12 @@
     canvas.style.display = "block";
     if (!exportImage) root.style.removeProperty("--glass-backdrop-image");
 
+    // While the splash is up the backdrop only needs to glow behind it. A
+    // cheap CSS gradient keeps the entrance animation from competing with the
+    // full-window per-pixel dither (which runs on the main thread). The real
+    // canvas is drawn once the splash hands over.
+    if (force && !exportImage) return;
+
     const probe = document.createElement("span");
     probe.style.cssText =
       "position:fixed;left:-10000px;top:-10000px;visibility:hidden;pointer-events:none";
@@ -238,5 +244,45 @@
   :global(html:not([data-theme-glass="true"]) .glow-backdrop:not(.forced)),
   :global(html[data-high-contrast="true"] .glow-backdrop) {
     display: none !important;
+  }
+  /* Splash-only stand-in for the dithered canvas: same accent glow, no
+     per-pixel work on the first frames. */
+  .glow-backdrop.forced {
+    background:
+      radial-gradient(
+        58% 54% at 16% 14%,
+        color-mix(in srgb, var(--accent) 30%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        50% 58% at 22% 88%,
+        color-mix(in srgb, var(--accent) 18%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        44% 42% at 58% 56%,
+        color-mix(in srgb, var(--info) 10%, transparent),
+        transparent 70%
+      ),
+      var(--bg);
+  }
+  :global(html[data-theme-dark="false"]) .glow-backdrop.forced {
+    background:
+      radial-gradient(
+        58% 54% at 16% 14%,
+        color-mix(in srgb, var(--accent) 9%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        50% 58% at 22% 88%,
+        color-mix(in srgb, var(--accent) 6%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        44% 42% at 58% 56%,
+        color-mix(in srgb, var(--info) 5%, transparent),
+        transparent 70%
+      ),
+      var(--bg);
   }
 </style>

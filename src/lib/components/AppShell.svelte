@@ -515,7 +515,9 @@
 />
 
 
-<GlowBackdrop force={!splashDone} exportImage={onboardingDue} />
+{#if splashDone}
+  <GlowBackdrop force={onboardingDue} exportImage={onboardingDue} />
+{/if}
 {#if !app.booted || !splashDone}
   <div
     class="boot-layer"

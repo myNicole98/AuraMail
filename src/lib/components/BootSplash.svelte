@@ -1,6 +1,4 @@
 <script lang="ts">
-  import iconUrl from "../../../resources/logo/aura_mail_icon_only.svg";
-
   let {
     leaving = false,
     reducedMotion = false
@@ -15,12 +13,18 @@
   aria-label="Starting AuraMail"
 >
   <div class="aura" aria-hidden="true">
-    <span class="aura-glow"></span>
-    <span class="ring ring-outer"></span>
-    <span class="ring ring-middle"></span>
-    <span class="ring ring-inner"></span>
-    <span class="ring ring-core"></span>
-    <span class="mark"><img src={iconUrl} alt="" /></span>
+    <span class="ring ring-1"></span>
+    <span class="ring ring-2"></span>
+    <span class="ring ring-3"></span>
+    <span class="ring ring-4"></span>
+    <svg class="envelope" viewBox="0 0 280 280" aria-hidden="true">
+      <g transform="translate(10 0)">
+        <polyline points="110,130 130,146 150,130" />
+        <path
+          d="M116 126 L144 126 C147.866 126 151 129.134 151 133 L151 149 C151 152.866 147.866 156 144 156 L116 156 C112.134 156 109 152.866 109 149 L109 133 C109 129.134 112.134 126 116 126 Z"
+        />
+      </g>
+    </svg>
   </div>
   <strong>AuraMail</strong>
   <span class="tagline">Preparing your inbox…</span>
@@ -40,7 +44,6 @@
     width: 100%;
     height: 100vh;
     height: 100dvh;
-    background: color-mix(in srgb, var(--bg) 20%, transparent);
     color: var(--text);
     pointer-events: none;
     opacity: 1;
@@ -51,7 +54,7 @@
   }
   .boot-splash.leaving .aura,
   .boot-splash.leaving .ring,
-  .boot-splash.leaving .mark,
+  .boot-splash.leaving .envelope,
   .boot-splash.leaving strong,
   .boot-splash.leaving .tagline,
   .boot-splash.leaving .progress,
@@ -62,89 +65,79 @@
     position: relative;
     display: grid;
     place-items: center;
-    width: min(62vmin, 480px);
+    width: min(48vmin, 340px);
     aspect-ratio: 1;
-    margin-bottom: clamp(14px, 2.4vmin, 26px);
-    animation: splash-aura-in 1.3s cubic-bezier(0.16, 0.84, 0.24, 1) both;
+    margin-bottom: clamp(16px, 2.8vmin, 28px);
+    animation: splash-aura-in 900ms cubic-bezier(0.22, 0.8, 0.2, 1) both;
   }
-  .aura-glow {
-    position: absolute;
-    width: 54%;
-    aspect-ratio: 1;
-    border-radius: 50%;
-    background: radial-gradient(
-      circle,
-      color-mix(in srgb, var(--accent) 24%, transparent) 0%,
-      color-mix(in srgb, var(--info) 10%, transparent) 38%,
-      transparent 72%
-    );
-    filter: blur(10px);
-    opacity: 0.9;
-  }
+  /* The four rings are the logo's circles (r 96 / 76 / 58 / 40 in a 280 box),
+     rendered as separate layers so the breath stays on the compositor while
+     the app is still booting. */
   .ring {
     position: absolute;
     inset: 0;
-    box-sizing: border-box;
     margin: auto;
     border-radius: 50%;
-    opacity: 0.55;
-    transform: scale(1);
+    background: var(--accent);
     will-change: transform, opacity;
+    animation-name: ring-breathe, ring-enter;
+    animation-duration: 3s, 700ms;
+    animation-timing-function: ease-in-out, cubic-bezier(0.16, 0.84, 0.24, 1);
+    animation-iteration-count: infinite, 1;
+    animation-fill-mode: none, backwards;
   }
-  .ring-outer {
+  .ring-1 {
+    width: 68.571%;
+    height: 68.571%;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    --ring-in-delay: 360ms;
+    --ring-breath-delay: 1660ms;
+  }
+  .ring-2 {
+    width: 54.286%;
+    height: 54.286%;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    --ring-in-delay: 240ms;
+    --ring-breath-delay: 1480ms;
+  }
+  .ring-3 {
+    width: 41.429%;
+    height: 41.429%;
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+    --ring-in-delay: 120ms;
+    --ring-breath-delay: 1300ms;
+  }
+  .ring-4 {
+    width: 28.571%;
+    height: 28.571%;
+    background: color-mix(in srgb, var(--accent) 74%, transparent);
+    --ring-in-delay: 0ms;
+    --ring-breath-delay: 1120ms;
+  }
+  .ring {
+    animation-delay: var(--ring-breath-delay), var(--ring-in-delay);
+  }
+  .envelope {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
-    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
-    box-shadow:
-      0 0 64px color-mix(in srgb, var(--accent) 11%, transparent),
-      inset 0 0 54px color-mix(in srgb, var(--accent) 7%, transparent);
-    animation: ring-breathe 6.4s -1.6s ease-in-out infinite;
+    color: var(--text-strong);
+    will-change: opacity;
+    animation-name: envelope-breathe, envelope-enter;
+    animation-duration: 3s, 700ms;
+    animation-timing-function: ease-in-out, cubic-bezier(0.16, 0.84, 0.24, 1);
+    animation-iteration-count: infinite, 1;
+    animation-fill-mode: none, backwards;
+    animation-delay: 1120ms, 0ms;
   }
-  .ring-middle {
-    width: 79%;
-    height: 79%;
-    border: 1px solid color-mix(in srgb, var(--info) 26%, transparent);
-    box-shadow:
-      0 0 48px color-mix(in srgb, var(--info) 10%, transparent),
-      inset 0 0 42px color-mix(in srgb, var(--info) 6%, transparent);
-    animation: ring-breathe 5.6s -0.8s ease-in-out infinite;
-  }
-  .ring-inner {
-    width: 60%;
-    height: 60%;
-    border: 1px solid color-mix(in srgb, var(--accent-alt) 28%, transparent);
-    box-shadow:
-      0 0 38px color-mix(in srgb, var(--accent-alt) 10%, transparent),
-      inset 0 0 32px color-mix(in srgb, var(--accent-alt) 6%, transparent);
-    animation: ring-breathe 6.8s -2.7s ease-in-out infinite;
-  }
-  .ring-core {
-    width: 42%;
-    height: 42%;
-    border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
-    background: radial-gradient(
-      circle,
-      color-mix(in srgb, var(--accent) 12%, transparent) 0%,
-      transparent 68%
-    );
-    box-shadow: 0 0 34px color-mix(in srgb, var(--accent) 12%, transparent);
-    animation: ring-breathe 5.2s -3.4s ease-in-out infinite;
-  }
-  .mark {
-    position: relative;
-    z-index: 1;
-    display: grid;
-    place-items: center;
-    width: clamp(148px, 28vmin, 210px);
-    height: clamp(148px, 28vmin, 210px);
-    animation: splash-mark 1.6s cubic-bezier(0.16, 0.84, 0.24, 1) both;
-  }
-  img {
-    width: clamp(104px, 20vmin, 150px);
-    height: auto;
-    filter: drop-shadow(
-      0 14px 34px color-mix(in srgb, var(--accent) 28%, transparent)
-    );
+  .envelope polyline,
+  .envelope path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 3.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
   strong {
     position: relative;
@@ -184,7 +177,7 @@
   .boot-splash.reduced-motion,
   .boot-splash.reduced-motion .aura,
   .boot-splash.reduced-motion .ring,
-  .boot-splash.reduced-motion .mark,
+  .boot-splash.reduced-motion .envelope,
   .boot-splash.reduced-motion strong,
   .boot-splash.reduced-motion .tagline,
   .boot-splash.reduced-motion .progress,
@@ -196,7 +189,7 @@
     .boot-splash,
     .aura,
     .ring,
-    .mark,
+    .envelope,
     strong,
     .tagline,
     .progress,
@@ -206,18 +199,24 @@
     }
   }
   @keyframes splash-aura-in {
-    0% { opacity: 0; transform: scale(0.9); }
+    0% { opacity: 0; transform: scale(0.98); }
     100% { opacity: 1; transform: scale(1); }
   }
-  @keyframes splash-mark {
-    0% { opacity: 0; transform: translateY(14px) scale(0.84); }
-    55% { opacity: 1; }
-    100% { opacity: 1; transform: translateY(0) scale(1); }
+  @keyframes ring-enter {
+    0% { opacity: 0; transform: scale(0.82); }
+    100% { opacity: 1; transform: scale(1); }
   }
   @keyframes ring-breathe {
-    0%, 100% { opacity: 0.42; transform: scale(0.985); }
-    46% { opacity: 0.86; transform: scale(1.035); }
-    72% { opacity: 0.58; transform: scale(1.008); }
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.55; transform: scale(1.05); }
+  }
+  @keyframes envelope-enter {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  @keyframes envelope-breathe {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
   }
   @keyframes splash-copy {
     0% { opacity: 0; transform: translateY(8px); }
