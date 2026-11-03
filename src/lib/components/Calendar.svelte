@@ -1894,14 +1894,16 @@
       style:left={`${calendarMenu.x}px`}
       style:top={`${calendarMenu.y}px`}
     >
-      <button
-        type="button"
-        role="menuitem"
-        onclick={() => void unsubscribeCalendar(calendarMenu!.calendar)}
-      >
-        <Trash2 size={14} />
-        Unsubscribe from calendar
-      </button>
+      {#if !calendarMenu.calendar.local}
+        <button
+          type="button"
+          role="menuitem"
+          onclick={() => void unsubscribeCalendar(calendarMenu!.calendar)}
+        >
+          <Trash2 size={14} />
+          Unsubscribe from calendar
+        </button>
+      {/if}
     </div>
   {/if}
 

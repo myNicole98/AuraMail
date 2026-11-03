@@ -899,6 +899,20 @@ pub async fn add_account(
 pub fn unsubscribe_calendar(db: &Database, calendar_id: i64) -> AppResult<()> {
     let mut conn = db.conn.lock().unwrap();
     let tx = conn.transaction()?;
+    let kind: Option<String> = tx
+        .query_row(
+            "select ca.kind from calendars c
+             join calendar_accounts ca on ca.id = c.calendar_account_id
+             where c.id = ?1",
+            params![calendar_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if kind.as_deref() == Some("local") {
+        return Err(AppError::Message(
+            "the local calendar cannot be removed".into(),
+        ));
+    }
     let changed = tx.execute(
         "update calendars set unsubscribed = 1, sync_token = null where id = ?1",
         params![calendar_id],
@@ -1333,6 +1347,43 @@ END:VCALENDAR
             all_day: false,
             recurrence: String::new(),
         }
+    }
+
+    #[test]
+    fn local_calendar_sync_is_a_silent_noop() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+        let account_id: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "select id from calendar_accounts where space_id = ?1 and kind = 'local'",
+                params![space.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(sync_account(&db, &MemoryStore::default(), account_id))
+            .unwrap();
+        assert_eq!(result.calendars, 0);
+        assert_eq!(result.events, 0);
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn local_calendar_cannot_be_unsubscribed() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+        let calendar = list_calendars(&db, space.id).unwrap().remove(0);
+
+        let error = unsubscribe_calendar(&db, calendar.id).unwrap_err().to_string();
+        assert!(error.contains("local"), "{error}");
+        assert_eq!(list_calendars(&db, space.id).unwrap().len(), 1);
     }
 
     #[tokio::test]
