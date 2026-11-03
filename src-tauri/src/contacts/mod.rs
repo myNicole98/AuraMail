@@ -4,7 +4,7 @@ pub mod vcard;
 use std::collections::{HashMap, HashSet};
 
 use rusqlite::{params, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::db::{self, Database};
 use crate::error::{AppError, AppResult};
@@ -36,6 +36,25 @@ pub struct ContactAccount {
     pub space_id: i64,
     pub position: i64,
     pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactInput {
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub emails: Vec<String>,
+    #[serde(default)]
+    pub phones: Vec<String>,
+    #[serde(default)]
+    pub organization: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub address_book_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
