@@ -719,7 +719,11 @@
     const request = ++contactRequest;
     contactTimer = setTimeout(() => {
       void api
-        .listContacts(query, 8)
+        .listContacts(
+          accounts.find((candidate) => candidate.id === accountId)?.space_id ?? 0,
+          query,
+          8
+        )
         .then((result) => {
           if (request === contactRequest) suggestions = result;
         })

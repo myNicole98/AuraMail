@@ -178,31 +178,33 @@ fn parse_recipient(value: &str) -> Option<(String, String)> {
     email.contains('@').then(|| (email, String::new()))
 }
 
-pub fn list_contacts(
-    db: &Database,
-    query: Option<&str>,
-    limit: Option<usize>,
-) -> AppResult<Vec<Contact>> {
-    let own: HashSet<String> = {
-        let conn = db.conn.lock().unwrap();
-        let mut stmt = conn.prepare("select lower(email), lower(username) from accounts")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        let mut values = HashSet::new();
-        for row in rows {
-            let (email, username) = row?;
-            values.insert(email);
-            values.insert(username);
-        }
-        values
-    };
+fn own_addresses(db: &Database) -> AppResult<HashSet<String>> {
+    let conn = db.conn.lock().unwrap();
+    let mut stmt = conn.prepare("select lower(email), lower(username) from accounts")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut values = HashSet::new();
+    for row in rows {
+        let (email, username) = row?;
+        values.insert(email);
+        values.insert(username);
+    }
+    Ok(values)
+}
 
+fn history_suggestions(db: &Database, space_id: i64) -> AppResult<Vec<Contact>> {
+    let own = own_addresses(db)?;
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn.prepare(
-        "select from_addr, from_name, to_addrs, cc_addrs from messages order by date desc limit 2000",
+        "select m.from_addr, m.from_name, m.to_addrs, m.cc_addrs
+         from messages m
+         join accounts acc on acc.id = m.account_id
+         where acc.space_id = ?1
+         order by m.date desc
+         limit 2000",
     )?;
-    let rows = stmt.query_map([], |row| {
+    let rows = stmt.query_map(params![space_id], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
@@ -239,25 +241,93 @@ pub fn list_contacts(
             add(&value, "");
         }
     }
+    drop(stmt);
+    drop(conn);
 
-    let needle = query.unwrap_or("").trim().to_ascii_lowercase();
     let mut ranked: Vec<(Contact, usize)> = contacts
         .into_iter()
-        .filter(|(email, (name, _))| {
-            needle.is_empty()
-                || email.contains(&needle)
-                || name.to_ascii_lowercase().contains(&needle)
-        })
         .map(|(email, (name, count))| (Contact { name, email }, count))
         .collect();
-
     ranked.sort_by(|(left, left_count), (right, right_count)| {
         right_count
             .cmp(left_count)
             .then_with(|| left.email.cmp(&right.email))
     });
-    ranked.truncate(limit.unwrap_or(8).min(50));
     Ok(ranked.into_iter().map(|(contact, _)| contact).collect())
+}
+
+pub fn suggestions(
+    db: &Database,
+    space_id: i64,
+    query: Option<&str>,
+    limit: Option<usize>,
+) -> AppResult<Vec<Contact>> {
+    let needle = query.unwrap_or("").trim().to_ascii_lowercase();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut stored: Vec<Contact> = Vec::new();
+    {
+        let conn = db.read();
+        let mut stmt = conn.prepare(
+            "select c.display_name, c.emails
+             from contacts c
+             join address_books b on b.id = c.address_book_id
+             join contact_accounts ca on ca.id = b.contact_account_id
+             where ca.space_id = ?1
+             order by case when ca.kind = 'carddav' then 0 else 1 end,
+                      c.display_name collate nocase, c.id",
+        )?;
+        let rows = stmt.query_map(params![space_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (name, emails) = row?;
+            let emails: Vec<String> = serde_json::from_str(&emails).unwrap_or_default();
+            for email in emails {
+                let key = email.trim().to_ascii_lowercase();
+                if key.is_empty() || !seen.insert(key.clone()) {
+                    continue;
+                }
+                if needle.is_empty()
+                    || key.contains(&needle)
+                    || name.to_ascii_lowercase().contains(&needle)
+                {
+                    stored.push(Contact { name: name.clone(), email });
+                }
+            }
+        }
+    }
+    stored.sort_by(|left, right| {
+        let left_start = left.name.to_ascii_lowercase().starts_with(&needle) as i32
+            * -1
+            + left.email.to_ascii_lowercase().starts_with(&needle) as i32 * -1;
+        let right_start = right.name.to_ascii_lowercase().starts_with(&needle) as i32
+            * -1
+            + right.email.to_ascii_lowercase().starts_with(&needle) as i32 * -1;
+        left_start
+            .cmp(&right_start)
+            .then_with(|| {
+                left.name
+                    .to_ascii_lowercase()
+                    .cmp(&right.name.to_ascii_lowercase())
+            })
+            .then_with(|| left.email.cmp(&right.email))
+    });
+
+    let mut result = stored;
+    for contact in history_suggestions(db, space_id)? {
+        let key = contact.email.to_ascii_lowercase();
+        if !seen.insert(key) {
+            continue;
+        }
+        if needle.is_empty()
+            || contact.email.to_ascii_lowercase().contains(&needle)
+            || contact.name.to_ascii_lowercase().contains(&needle)
+        {
+            result.push(contact);
+        }
+    }
+    result.truncate(limit.unwrap_or(8).min(50));
+    Ok(result)
 }
 
 fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContactRecord> {
@@ -544,7 +614,7 @@ mod tests {
     fn seed(db: &Database) {
         let conn = db.conn.lock().unwrap();
         conn.execute_batch(
-            "insert into accounts (id, display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, created_at) values (1, 'Me', 'me@example.com', 'me@example.com', 'imap', 993, 'tls', 'smtp', 465, 'tls', 120, 0);
+            "insert into accounts (id, display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, space_id, created_at) values (1, 'Me', 'me@example.com', 'me@example.com', 'imap', 993, 'tls', 'smtp', 465, 'tls', 120, (select id from spaces order by id limit 1), 0);
              insert into folders (id, account_id, path, name, role) values (1, 1, 'INBOX', 'Inbox', 'inbox');
              insert into messages (account_id, folder_id, uid, from_addr, from_name, to_addrs, cc_addrs, subject, date) values
                (1, 1, 1, 'ada@example.com', 'Ada Lovelace', '[\"me@example.com\"]', '[]', 'One', 300),
@@ -622,10 +692,70 @@ mod tests {
     }
 
     #[test]
+    fn suggestions_put_stored_contacts_first_and_dedupe_by_email() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+        let book = local_book_id(&db, space.id).unwrap();
+        create_local(
+            &db,
+            book,
+            ContactInput {
+                display_name: "Ada Lovelace".into(),
+                emails: vec!["ada@example.com".into(), "ada@work.example".into()],
+                phones: vec![],
+                organization: String::new(),
+                title: String::new(),
+                notes: String::new(),
+                address_book_id: None,
+            },
+        )
+        .unwrap();
+        // Mail history contains the same address plus a sender from another space.
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(
+                "insert into accounts (id, display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, space_id, created_at) values (1, 'Me', 'me@example.com', 'me@example.com', 'imap', 993, 'tls', 'smtp', 465, 'tls', 120, 1, 0);
+                 insert into folders (id, account_id, path, name, role) values (1, 1, 'INBOX', 'Inbox', 'inbox');
+                 insert into messages (account_id, folder_id, uid, from_addr, from_name, to_addrs, cc_addrs, subject, date) values
+                   (1, 1, 1, 'ada@example.com', 'Ada L', '[]', '[]', 'One', 300);",
+            )
+            .unwrap();
+        }
+        let other = crate::spaces::create(&db, "Work").unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(&format!(
+                "insert into accounts (id, display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, space_id, created_at) values (2, 'Work', 'work@example.com', 'work@example.com', 'imap', 993, 'tls', 'smtp', 465, 'tls', 120, {}, 0);
+                 insert into folders (id, account_id, path, name, role) values (2, 2, 'INBOX', 'Inbox', 'inbox');
+                 insert into messages (account_id, folder_id, uid, from_addr, from_name, to_addrs, cc_addrs, subject, date) values
+                   (2, 2, 2, 'other-space@example.com', 'Other', '[]', '[]', 'Two', 200);",
+                other.id
+            ))
+            .unwrap();
+        }
+
+        let result = suggestions(&db, space.id, Some("ada"), Some(8)).unwrap();
+        assert_eq!(result[0].name, "Ada Lovelace");
+        assert!(result.iter().any(|contact| contact.email == "ada@work.example"));
+        assert_eq!(
+            result
+                .iter()
+                .filter(|contact| contact.email == "ada@example.com")
+                .count(),
+            1
+        );
+        assert!(result
+            .iter()
+            .all(|contact| contact.email != "other-space@example.com"));
+    }
+
+    #[test]
     fn ranks_people_by_frequency_and_excludes_own_addresses() {
         let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
         seed(&db);
-        let contacts = list_contacts(&db, None, Some(10)).unwrap();
+        let contacts = suggestions(&db, space.id, None, Some(10)).unwrap();
         let emails: Vec<&str> = contacts
             .iter()
             .map(|contact| contact.email.as_str())
@@ -639,16 +769,17 @@ mod tests {
     #[test]
     fn filters_by_name_or_email_and_honors_limit() {
         let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
         seed(&db);
         assert_eq!(
-            list_contacts(&db, Some("lovelace"), None)
+            suggestions(&db, space.id, Some("lovelace"), None)
                 .unwrap()
                 .first()
                 .map(|contact| contact.email.as_str()),
             Some("ada@example.com")
         );
         assert_eq!(
-            list_contacts(&db, Some("example.com"), Some(1))
+            suggestions(&db, space.id, Some("example.com"), Some(1))
                 .unwrap()
                 .len(),
             1

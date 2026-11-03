@@ -1308,12 +1308,13 @@ pub async fn ai_compose(
 #[tauri::command]
 pub async fn list_contacts(
     state: State<'_, AppState>,
+    space_id: i64,
     query: Option<String>,
     limit: Option<usize>,
 ) -> AppResult<Vec<Contact>> {
     let db = Arc::clone(&state.db);
     tauri::async_runtime::spawn_blocking(move || {
-        contacts::list_contacts(&db, query.as_deref(), limit)
+        contacts::suggestions(&db, space_id, query.as_deref(), limit)
     })
     .await
     .map_err(|_| blocking_error())?

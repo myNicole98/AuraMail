@@ -158,8 +158,8 @@ export const api = {
     invoke<AiChatResponse>("ai_chat", { request, spaceId }),
   aiCompose: (request: AiComposeRequest, spaceId = currentSpaceId()) =>
     invoke<AiDraft>("ai_compose", { request, spaceId }),
-  listContacts: (query?: string, limit?: number) =>
-    invoke<Contact[]>("list_contacts", { query, limit }),
+  listContacts: (spaceId: number, query?: string, limit?: number) =>
+    invoke<Contact[]>("list_contacts", { spaceId, query, limit }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
   downloadUpdate: (input: {
