@@ -26,6 +26,8 @@
   import ThemedSelect from "../ThemedSelect.svelte";
   import MessageRowPreview from "./MessageRowPreview.svelte";
   import ThemeStylePreview from "../ThemeStylePreview.svelte";
+  import SettingsRow from "./SettingsRow.svelte";
+  import SettingsSection from "./SettingsSection.svelte";
   import ToggleSwitch from "../ToggleSwitch.svelte";
   import type { Base16 } from "../../theme/base16";
   import {
@@ -413,8 +415,7 @@
   {#if appearanceNotice}<p class="notice" role="status"><Check size={14} />{appearanceNotice}</p>{/if}
   {#if appearanceError}<p class="alert" role="alert"><CircleAlert size={14} />{appearanceError}</p>{/if}
 
-  <div class="settings-label">Layout</div>
-  <section class="settings-panel appearance-panel">
+  <SettingsSection title="Layout">
     <div class="layout-options" role="group" aria-label="Layout">
       {#each layoutChoices as choice (choice.value)}
         <button
@@ -433,11 +434,10 @@
         </button>
       {/each}
     </div>
-  </section>
+  </SettingsSection>
 
-  <div class="settings-label">Interface</div>
-  <div class="settings-bento">
-    <section class="settings-panel appearance-panel mail-panel">
+  <SettingsSection title="Interface">
+    <div class="interface-block">
       <div class="settings-row">
         <strong>Use email dark mode</strong>
         <ToggleSwitch
@@ -446,9 +446,8 @@
           onchange={(value) => void setDarkEmail(value)}
         />
       </div>
-      <div class="settings-row tabs-row">
-        <strong>Classification tabs</strong>
-        <div class="tabs-options" role="group" aria-label="Classification tabs">
+      <h4>Classification tabs</h4>
+      <div class="tabs-options" role="group" aria-label="Classification tabs">
           <button
             type="button"
             class="tabs-option"
@@ -475,11 +474,10 @@
             </span>
             <span class="tabs-option-label">Icon only</span>
           </button>
-        </div>
       </div>
-    </section>
+    </div>
 
-    <section class="settings-panel appearance-panel">
+    <div class="interface-block">
       <h4>Message list</h4>
       <div class="preview-options" role="group" aria-label="Message list">
         {#each previewChoices as choice (choice.value)}
@@ -511,11 +509,10 @@
           </button>
         {/each}
       </div>
-    </section>
-  </div>
+    </div>
+  </SettingsSection>
 
-  <div class="settings-label">Style</div>
-  <section class="settings-panel appearance-panel style-panel">
+  <SettingsSection title="Style">
     <div class="style-axis">
       <div class="style-axis-head">
         <strong>Background</strong>
@@ -555,10 +552,9 @@
         {/each}
       </div>
     </div>
-  </section>
+  </SettingsSection>
 
-  <div class="settings-label">Sender avatars</div>
-  <section class="settings-panel appearance-panel">
+  <SettingsSection title="Sender avatars">
     <div class="preview-options" role="group" aria-label="Sender avatars">
       {#each [{ value: false, label: "No avatar" }, { value: true, label: "Avatar" }] as option (option.label)}
         <button
@@ -575,10 +571,9 @@
         </button>
       {/each}
     </div>
-  </section>
+  </SettingsSection>
 
-  <div class="settings-label">Theme</div>
-  <section class="settings-panel appearance-panel">
+  <SettingsSection title="Theme">
     <div class="theme-options" role="group" aria-label="Theme">
       {#each themeCards as card (card.id)}
         <button
@@ -650,8 +645,7 @@
         </div>
       </div>
     {/if}
-
-  </section>
+  </SettingsSection>
 
 </div>
 
@@ -667,14 +661,26 @@
   .edit-space-row :global(.themed-select) {
     width: 170px;
   }
-  .appearance-panel {
-    padding-bottom: 14px;
+  .interface-block {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 0 14px;
+  }
+  .interface-block h4 {
+    margin: 0;
+    color: var(--text);
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .interface-block .settings-row {
+    padding: 6px 0;
   }
   .layout-options {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
-    margin-top: 10px;
+    padding-top: 4px;
   }
   .layout-option,
   .preview-option,
@@ -780,9 +786,8 @@
   }
   .tabs-options {
     display: flex;
-    flex: 1;
     gap: 7px;
-    justify-content: flex-end;
+    justify-content: flex-start;
   }
   .tabs-option {
     display: flex;

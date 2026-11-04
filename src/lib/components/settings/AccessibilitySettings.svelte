@@ -9,6 +9,8 @@
   } from "../../settings";
   import { appearance } from "../../stores/appearance.svelte";
   import ToggleSwitch from "../ToggleSwitch.svelte";
+  import SettingsRow from "./SettingsRow.svelte";
+  import SettingsSection from "./SettingsSection.svelte";
   import ThemedSelect from "../ThemedSelect.svelte";
   import { COLOR_VISION_MODES, type ColorVisionMode } from "../../theme/colorVision";
 
@@ -86,8 +88,7 @@
 </script>
 
 <div class="settings-inner">
-  <div class="settings-label">Display</div>
-  <section class="settings-panel accessibility-panel">
+  <SettingsSection title="Display">
     <div class="ui-scale-head">
       <h4>UI size</h4>
       <label class="ui-scale-value">
@@ -150,36 +151,31 @@
         {/each}
       </div>
     </div>
-  </section>
+  </SettingsSection>
 
-  <div class="settings-label">Comfort</div>
-  <section class="settings-panel accessibility-panel">
-    <div class="settings-row">
-      <strong>Disable animations</strong>
+  <SettingsSection title="Comfort">
+    <SettingsRow label="Disable animations">
       <ToggleSwitch
         checked={appearance.reduceMotion}
         label="Disable animations"
         onchange={setReduceMotion}
       />
-    </div>
-    <div class="settings-row">
-      <strong>High contrast</strong>
+    </SettingsRow>
+    <SettingsRow label="High contrast">
       <ToggleSwitch
         checked={appearance.highContrast}
         label="High contrast"
         onchange={setHighContrast}
       />
-    </div>
-    <div class="settings-row">
-      <strong>Text spacing</strong>
+    </SettingsRow>
+    <SettingsRow label="Text spacing">
       <ToggleSwitch
         checked={appearance.textSpacing}
         label="Text spacing"
         onchange={setTextSpacing}
       />
-    </div>
-    <div class="settings-row">
-      <strong>Color vision</strong>
+    </SettingsRow>
+    <SettingsRow label="Color vision">
       <ThemedSelect
         value={appearance.colorVision}
         options={COLOR_VISION_MODES.map((mode) => ({
@@ -189,14 +185,11 @@
         ariaLabel="Color vision"
         onchange={(value) => setColorVision(value as ColorVisionMode)}
       />
-    </div>
-  </section>
+    </SettingsRow>
+  </SettingsSection>
 </div>
 
 <style>
-  .accessibility-panel {
-    padding: 15px 16px 8px;
-  }
   .ui-scale-head {
     display: flex;
     align-items: center;
@@ -206,8 +199,8 @@
   .ui-scale-head h4 {
     margin: 0;
     color: var(--text);
-    font-size: 11.5px;
-    font-weight: 620;
+    font-size: 12.5px;
+    font-weight: 500;
   }
   .ui-scale-value {
     display: flex;
