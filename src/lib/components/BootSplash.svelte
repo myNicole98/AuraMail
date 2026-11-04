@@ -1,8 +1,13 @@
 <script lang="ts">
+  import { loadPreferences } from "../settings";
+
   let {
     leaving = false,
     reducedMotion = false
   }: { leaving?: boolean; reducedMotion?: boolean } = $props();
+
+  const themeChoice = loadPreferences().theme_choice;
+  const defaultTheme = ["system", "light", "dark"].includes(themeChoice);
 </script>
 
 <div
@@ -12,6 +17,44 @@
   role="status"
   aria-label="Starting AuraMail"
 >
+  {#if defaultTheme}
+    <svg
+      class="splash-logo"
+      viewBox="0 0 280 280"
+      role="presentation"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="splash-logo-1" x1="34" y1="140" x2="226" y2="140" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#ccabe2" />
+          <stop offset="1" stop-color="#2e3192" />
+        </linearGradient>
+        <linearGradient id="splash-logo-2" x1="54" y1="140" x2="206" y2="140" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#d4abe2" />
+          <stop offset="1" stop-color="#2e3192" />
+        </linearGradient>
+        <linearGradient id="splash-logo-3" x1="72" y1="140" x2="188" y2="140" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#92abe2" />
+          <stop offset="1" stop-color="#2e3192" />
+        </linearGradient>
+        <linearGradient id="splash-logo-4" x1="90" y1="140" x2="170" y2="140" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#87abe2" />
+          <stop offset="1" stop-color="#2e3192" />
+        </linearGradient>
+      </defs>
+      <g transform="translate(10 0)">
+        <circle cx="130" cy="140" r="96" fill="url(#splash-logo-1)" fill-opacity="0.3" />
+        <circle cx="130" cy="140" r="76" fill="url(#splash-logo-2)" fill-opacity="0.4" />
+        <circle cx="130" cy="140" r="58" fill="url(#splash-logo-3)" fill-opacity="0.5" />
+        <circle cx="130" cy="140" r="40" fill="url(#splash-logo-4)" fill-opacity="0.7" />
+        <polyline class="logo-envelope" points="110,130 130,146 150,130" />
+        <path
+          class="logo-envelope"
+          d="M116 126 L144 126 C147.866 126 151 129.134 151 133 L151 149 C151 152.866 147.866 156 144 156 L116 156 C112.134 156 109 152.866 109 149 L109 133 C109 129.134 112.134 126 116 126 Z"
+        />
+      </g>
+    </svg>
+  {:else}
   <div class="aura" aria-hidden="true">
     <span class="ring ring-1"></span>
     <span class="ring ring-2"></span>
@@ -26,6 +69,7 @@
       </g>
     </svg>
   </div>
+  {/if}
   <strong>AuraMail</strong>
   <span class="tagline">Preparing your inbox…</span>
   <span class="progress" aria-hidden="true"><i></i></span>
@@ -60,6 +104,48 @@
   .boot-splash.leaving .progress,
   .boot-splash.leaving .progress i {
     animation-play-state: paused;
+  }
+  .splash-logo {
+    width: min(48vmin, 340px);
+    height: auto;
+    margin-bottom: clamp(16px, 2.8vmin, 28px);
+    animation:
+      splash-logo-in 700ms cubic-bezier(0.22, 0.8, 0.2, 1) both,
+      splash-logo-breathe 3s ease-in-out 700ms infinite;
+  }
+  @keyframes splash-logo-breathe {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.78;
+      transform: scale(0.97);
+    }
+  }
+  .boot-splash.leaving .splash-logo {
+    animation-play-state: paused;
+  }
+  .logo-envelope {
+    fill: none;
+    stroke: var(--text-strong);
+    stroke-width: 3.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  @keyframes splash-logo-in {
+    from {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  .boot-splash.reduced-motion .splash-logo {
+    animation: none;
   }
   .aura {
     position: relative;
