@@ -20,6 +20,9 @@
     SpaceGeneral
   } from "../../types";
   import ToggleSwitch from "../ToggleSwitch.svelte";
+  import SegmentedControl from "./SegmentedControl.svelte";
+  import SettingsRow from "./SettingsRow.svelte";
+  import SettingsSection from "./SettingsSection.svelte";
   import ThemedSelect from "../ThemedSelect.svelte";
   import { errorMessage } from "./errors";
 
@@ -229,54 +232,49 @@
     />
   </div>
 
-  {#if preferenceError}<p class="alert" role="alert"><CircleAlert size={14} />{preferenceError}</p>{/if}
+  {#if preferenceError}
+    <p class="alert" role="alert"><CircleAlert size={14} />{preferenceError}</p>
+  {/if}
 
-  <div class="settings-label">Notifications</div>
-  <section class="settings-panel">
-    <div class="settings-row">
-      <strong>System notifications</strong>
+  <SettingsSection title="Notifications">
+    <SettingsRow label="System notifications">
       <ToggleSwitch
         checked={desktopPreferences.notifications}
         label="System notifications"
         onchange={(value) => void updateDesktop({ notifications: value })}
       />
-    </div>
-    <div class="settings-row">
-      <strong>New mail sound</strong>
+    </SettingsRow>
+    <SettingsRow label="New mail sound">
       <ToggleSwitch
         checked={desktopPreferences.newMailSound}
         label="New mail sound"
         onchange={(value) => void updateDesktop({ newMailSound: value })}
       />
-    </div>
-    <div class="settings-row">
-      <strong>Sent mail sound</strong>
+    </SettingsRow>
+    <SettingsRow label="Sent mail sound">
       <ToggleSwitch
         checked={desktopPreferences.sentMailSound}
         label="Sent mail sound"
         onchange={(value) => void updateDesktop({ sentMailSound: value })}
       />
-    </div>
-  </section>
+    </SettingsRow>
+  </SettingsSection>
 
-  <div class="settings-label">System tray</div>
-  <section class="settings-panel">
-    <div class="settings-row">
-      <strong>Close window</strong>
-      <ThemedSelect
+  <SettingsSection title="System tray">
+    <SettingsRow label="Close window">
+      <SegmentedControl
         value={desktopPreferences.closeAction}
         options={[
           { value: "tray", label: "Hide to tray" },
-          { value: "quit", label: "Quit AuraMail" }
+          { value: "quit", label: "Quit" }
         ]}
         ariaLabel="Close window behavior"
         onchange={(value) =>
           void updateDesktop({ closeAction: value as DesktopCloseAction })}
       />
-    </div>
-    <div class="settings-row">
-      <strong>Minimize window</strong>
-      <ThemedSelect
+    </SettingsRow>
+    <SettingsRow label="Minimize window">
+      <SegmentedControl
         value={desktopPreferences.minimizeAction}
         options={[
           { value: "taskbar", label: "Keep in taskbar" },
@@ -284,31 +282,26 @@
         ]}
         ariaLabel="Minimize window behavior"
         onchange={(value) =>
-          void updateDesktop({
-            minimizeAction: value as DesktopMinimizeAction
-          })}
+          void updateDesktop({ minimizeAction: value as DesktopMinimizeAction })}
       />
-    </div>
-  </section>
+    </SettingsRow>
+  </SettingsSection>
 
-  <div class="settings-label">Reading</div>
-  <section class="settings-panel">
-    <div class="settings-row">
-      <strong>Clock</strong>
-      <ThemedSelect
+  <SettingsSection title="Reading">
+    <SettingsRow label="Clock">
+      <SegmentedControl
         value={preferences.time_format}
         options={[
-          { value: "system", label: "System default" },
-          { value: "12h", label: "12-hour" },
-          { value: "24h", label: "24-hour" }
+          { value: "system", label: "System" },
+          { value: "12h", label: "12h" },
+          { value: "24h", label: "24h" }
         ]}
         ariaLabel="Clock"
         onchange={(value) => setClockFormat(value as TimeFormat)}
       />
-    </div>
-    <div class="settings-row">
-      <strong>Conversation order</strong>
-      <ThemedSelect
+    </SettingsRow>
+    <SettingsRow label="Conversation order">
+      <SegmentedControl
         value={preferences.message_order}
         options={[
           { value: "newest", label: "Newest first" },
@@ -317,9 +310,8 @@
         ariaLabel="Conversation order"
         onchange={setMessageOrder}
       />
-    </div>
-    <div class="settings-row">
-      <strong>Mark as read</strong>
+    </SettingsRow>
+    <SettingsRow label="Mark as read">
       <ThemedSelect
         value={String(preferences.mark_read_delay)}
         options={[
@@ -333,118 +325,123 @@
         ariaLabel="Mark as read"
         onchange={setMarkReadDelay}
       />
-    </div>
-  </section>
+    </SettingsRow>
+  </SettingsSection>
 
-  <div class="settings-label">Attachments</div>
-  <section class="settings-panel">
-    <div class="settings-row">
-      <strong>Show image thumbnails</strong>
+  <SettingsSection title="Attachments">
+    <SettingsRow label="Show image thumbnails">
       <ToggleSwitch
         checked={preferences.attachment_thumbnails}
         label="Show image thumbnails"
         onchange={setAttachmentThumbnails}
       />
-    </div>
-    <div class="settings-row">
-      <strong>Open folder after saving</strong>
+    </SettingsRow>
+    <SettingsRow label="Open folder after saving">
       <ToggleSwitch
         checked={preferences.reveal_download}
         label="Open folder after saving"
         onchange={setRevealDownload}
       />
-    </div>
-  </section>
+    </SettingsRow>
+  </SettingsSection>
 
-  <div class="settings-label">Privacy</div>
-  <div class="settings-bento">
-    <section class="settings-panel">
-      <div class="settings-row">
-        <strong>Always load remote images</strong>
-        <ToggleSwitch
-          checked={preferences.always_load_images}
-          label="Always load remote images"
-          onchange={setAlwaysLoadImages}
-        />
-      </div>
-      <div class="settings-row">
-        <strong>Sender profile pictures</strong>
-        <ToggleSwitch
-          checked={preferences.profile_pictures}
-          label="Sender profile pictures"
-          onchange={setProfilePictures}
-        />
-      </div>
-      <div class="settings-nested" class:disabled={!preferences.profile_pictures}>
-        <div class="settings-row">
-          <strong>BIMI logos</strong>
-          <ToggleSwitch
-            checked={preferences.bimi_logos}
-            label="BIMI logos"
-            small
-            disabled={!preferences.profile_pictures}
-            onchange={setBimiLogos}
+  <SettingsSection title="Privacy">
+    <SettingsRow label="Always load remote images">
+      <ToggleSwitch
+        checked={preferences.always_load_images}
+        label="Always load remote images"
+        onchange={setAlwaysLoadImages}
+      />
+    </SettingsRow>
+    <SettingsRow label="Sender profile pictures">
+      <ToggleSwitch
+        checked={preferences.profile_pictures}
+        label="Sender profile pictures"
+        onchange={setProfilePictures}
+      />
+    </SettingsRow>
+    <SettingsRow label="BIMI logos" indent>
+      <ToggleSwitch
+        checked={preferences.bimi_logos}
+        label="BIMI logos"
+        small
+        disabled={!preferences.profile_pictures}
+        onchange={setBimiLogos}
+      />
+    </SettingsRow>
+    <SettingsRow label="Gravatar pictures" indent>
+      <ToggleSwitch
+        checked={preferences.gravatar_pictures}
+        label="Gravatar pictures"
+        small
+        disabled={!preferences.profile_pictures}
+        onchange={setGravatarPictures}
+      />
+    </SettingsRow>
+    <SettingsRow label="Trusted senders">
+      <div class="trusted-control">
+        <div class="trusted-entry">
+          <input
+            bind:value={trustedInput}
+            placeholder="newsletter@example.com"
+            aria-label="Trusted sender email"
+            onkeydown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addTrustedSender();
+              }
+            }}
           />
+          <button class="ghost" type="button" onclick={addTrustedSender}>
+            <Plus size={14} /> Add
+          </button>
         </div>
-        <div class="settings-row">
-          <strong>Gravatar pictures</strong>
-          <ToggleSwitch
-            checked={preferences.gravatar_pictures}
-            label="Gravatar pictures"
-            small
-            disabled={!preferences.profile_pictures}
-            onchange={setGravatarPictures}
-          />
-        </div>
+        {#if preferences.trusted_senders.length > 0}
+          <ul class="trusted-list" aria-label="Trusted senders">
+            {#each preferences.trusted_senders as sender (sender)}
+              <li>
+                <span>{sender}</span>
+                <button
+                  class="icon-btn"
+                  type="button"
+                  aria-label={`Remove ${sender} from trusted senders`}
+                  onclick={() => removeTrustedSender(sender)}
+                >
+                  <X size={14} />
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </div>
-    </section>
-
-    <section class="settings-panel">
-      <div class="trusted-title">Trusted senders</div>
-      <div class="inline-field trusted-entry">
-        <input
-          bind:value={trustedInput}
-          placeholder="newsletter@example.com"
-          aria-label="Trusted sender email"
-          onkeydown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              addTrustedSender();
-            }
-          }}
-        />
-        <button class="ghost" type="button" onclick={addTrustedSender}>
-          <Plus size={14} />
-          Add
-        </button>
-      </div>
-      {#if preferences.trusted_senders.length > 0}
-        <ul class="trusted-list" aria-label="Trusted senders">
-          {#each preferences.trusted_senders as sender (sender)}
-            <li>
-              <span>{sender}</span>
-              <button
-                class="icon-btn"
-                type="button"
-                aria-label={`Remove ${sender} from trusted senders`}
-                onclick={() => removeTrustedSender(sender)}
-              >
-                <X size={14} />
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
-  </div>
+    </SettingsRow>
+  </SettingsSection>
 </div>
 
 <style>
-  .trusted-title {
-    margin-bottom: 8px;
-    color: var(--text);
-    font-size: 11.5px;
-    font-weight: 620;
+  .edit-space-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    color: var(--muted);
+    font-size: 10.5px;
+  }
+  .edit-space-row :global(.themed-select) {
+    width: 170px;
+  }
+  .trusted-control {
+    display: flex;
+    min-width: 260px;
+    max-width: 420px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .trusted-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .trusted-entry input {
     width: 100%;
@@ -485,18 +482,6 @@
   .icon-btn:hover {
     color: var(--text);
     background: var(--bg-hover);
-  }
-  .edit-space-row {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 12px;
-    color: var(--muted);
-    font-size: 10.5px;
-  }
-  .edit-space-row :global(.themed-select) {
-    width: 170px;
   }
   :global(.settings-row .themed-select) {
     width: 180px;

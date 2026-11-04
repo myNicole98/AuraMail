@@ -25,16 +25,37 @@
 
 <style>
   .settings-section {
+    position: relative;
     display: grid;
     grid-template-columns: 220px minmax(0, 1fr);
     gap: 32px;
     padding: 26px 0;
-    border-top: 1px solid var(--border);
+  }
+
+  .settings-section::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--accent) 38%, transparent) 18%,
+      color-mix(in srgb, var(--accent) 62%, transparent) 50%,
+      color-mix(in srgb, var(--accent) 38%, transparent) 82%,
+      transparent 100%
+    );
+    pointer-events: none;
   }
 
   .settings-section:first-child {
     padding-top: 0;
-    border-top: 0;
+  }
+
+  .settings-section:first-child::before {
+    display: none;
   }
 
   .section-head {
