@@ -236,7 +236,7 @@
             {:else}
               <ChevronDown size={12} />
             {/if}
-            <span class="dot" style:background={color}></span>
+            <span class="account-bar" style:background={color}></span>
             <span class="account-name">{account.display_name}</span>
           </button>
         {/if}
@@ -377,7 +377,7 @@
     width: 100%;
     height: 32px;
     padding: 0 9px;
-    border-radius: 8px;
+    border-radius: 7px;
     color: var(--muted);
     text-align: left;
   }
@@ -454,13 +454,13 @@
     transform-origin: center;
     animation: spin 1s linear infinite;
   }
-  .dot {
-    width: 6px;
-    height: 6px;
+  .account-bar {
+    width: 3px;
+    height: 14px;
     flex: none;
-    border-radius: 50%;
+    border-radius: 2px;
   }
-  :global([data-color-vision="achromatopsia"]) .dot {
+  :global([data-color-vision="achromatopsia"]) .account-bar {
     box-shadow: 0 0 0 1px var(--border);
   }
   .nav-item.sub {

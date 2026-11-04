@@ -506,7 +506,7 @@ html[data-theme-panes="rounded"] .splitter:focus-visible {
 }
 
 html[data-theme-glass="true"] .nav-item {
-  border-radius: 999px;
+  border-radius: 7px;
   transition: background-color 120ms ease, box-shadow 120ms ease;
 }
 
@@ -517,7 +517,7 @@ html[data-theme-glass="true"] .row:hover:not(.selected):not(.checked) {
 
 html[data-theme-glass="true"] .nav-item.active {
   background: var(--glass-selected);
-  border-radius: 999px;
+  border-radius: 7px;
   box-shadow: none;
   outline: 0;
 }
