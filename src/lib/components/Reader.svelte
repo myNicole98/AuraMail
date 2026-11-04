@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import iconUrl from "../../../resources/logo/aura_mail_icon_only.svg";
-  import {
+    import {
     ArrowLeft,
     BrainCircuit,
     ChevronDown,
@@ -592,13 +592,10 @@
   <div class="reader-body" aria-busy={app.messageLoading}>
     {#if !detail}
       <div class="placeholder empty-state">
-        <img
-          class="empty-logo"
-          class:loading={showLoading}
-          src={iconUrl}
-          alt="AuraMail"
-        />
-        {#if showLoading}<p>Loading message…</p>{/if}
+        {#if showLoading}
+          <img class="empty-logo loading" src={iconUrl} alt="AuraMail" />
+          <p>Loading message…</p>
+        {/if}
       </div>
     {:else}
       {#if app.error}
