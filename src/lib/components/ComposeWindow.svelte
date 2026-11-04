@@ -19,6 +19,7 @@
       : "new";
   const messageId = Number(params.get("messageId")) || null;
   const draftId = Number(params.get("draftId")) || null;
+  const routeTo = params.get("to") ?? "";
 
   let accounts = $state<Account[]>([]);
   let source = $state<MessageDetail | null>(null);
@@ -168,6 +169,7 @@
     {mode}
     {source}
     {draft}
+    initialTo={routeTo}
     {accounts}
     onClose={() => void close()}
     onSent={(accountId) => void sent(accountId)}

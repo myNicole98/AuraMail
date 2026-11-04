@@ -56,6 +56,7 @@
     mode,
     source = null,
     draft = null,
+    initialTo = "",
     accounts,
     onClose,
     onSent
@@ -63,6 +64,7 @@
     mode: ComposeMode;
     source?: MessageDetail | null;
     draft?: Draft | null;
+    initialTo?: string;
     accounts: Account[];
     onClose: () => void;
     onSent: (accountId: number) => void;
@@ -83,8 +85,9 @@
     );
   }
 
-  function initialTo(): string {
+  function initialToField(): string {
     if (draft) return draft.toAddrs.join(", ");
+    if (initialTo.trim()) return initialTo.trim();
     if (mode === "reply-all" && sourceMessage) {
       return replyAllRecipients(
         sourceMessage,
@@ -221,7 +224,7 @@
   });
 
   let accountId = $state(initialAccountId());
-  let to = $state(initialTo());
+  let to = $state(initialToField());
   let cc = $state(initialCc());
   let subject = $state(initialSubject());
   let body = $state(initialBody());
