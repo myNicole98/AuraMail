@@ -397,7 +397,9 @@ pub fn suggestions(
     query: Option<&str>,
     limit: Option<usize>,
 ) -> AppResult<Vec<Contact>> {
+    ensure_local_space(db, space_id)?;
     let needle = query.unwrap_or("").trim().to_ascii_lowercase();
+    let own = own_addresses(db)?;
     let mut seen: HashSet<String> = HashSet::new();
     let mut stored: Vec<Contact> = Vec::new();
     {
@@ -419,15 +421,16 @@ pub fn suggestions(
             let emails: Vec<String> = serde_json::from_str(&emails).unwrap_or_default();
             for email in emails {
                 let key = email.trim().to_ascii_lowercase();
-                if key.is_empty() || !seen.insert(key.clone()) {
+                if key.is_empty() || own.contains(&key) {
                     continue;
                 }
-                if needle.is_empty()
+                let matches = needle.is_empty()
                     || key.contains(&needle)
-                    || name.to_ascii_lowercase().contains(&needle)
-                {
-                    stored.push(Contact { name: name.clone(), email });
+                    || name.to_ascii_lowercase().contains(&needle);
+                if !matches || !seen.insert(key) {
+                    continue;
                 }
+                stored.push(Contact { name: name.clone(), email });
             }
         }
     }
@@ -562,13 +565,28 @@ pub fn record_for_email(
     if email.is_empty() {
         return Ok(None);
     }
-    let records = list_records(db, space_id, None, None, Some(5000))?;
-    Ok(records.into_iter().find(|record| {
-        record
+    let conn = db.read();
+    let mut stmt = conn.prepare(
+        "select c.id, c.address_book_id, b.name, c.display_name,
+                c.emails, c.phones, c.organization, c.title, c.notes, c.photo, b.read_only
+         from contacts c
+         join address_books b on b.id = c.address_book_id
+         join contact_accounts ca on ca.id = b.contact_account_id
+         where ca.space_id = ?1 and lower(c.emails) like ?2
+         order by case when ca.kind = 'carddav' then 0 else 1 end, c.id",
+    )?;
+    let rows = stmt.query_map(params![space_id, format!("%{email}%")], row_to_record)?;
+    for row in rows {
+        let record = row?;
+        if record
             .emails
             .iter()
             .any(|candidate| candidate.eq_ignore_ascii_case(&email))
-    }))
+        {
+            return Ok(Some(record));
+        }
+    }
+    Ok(None)
 }
 
 pub(crate) fn validate(input: &ContactInput) -> AppResult<()> {
@@ -897,6 +915,93 @@ mod tests {
         assert_eq!(books.len(), 1);
         assert_eq!(books[0].name, "Personal");
         assert_eq!(books[0].id, local_book_id(&db, space.id).unwrap());
+    }
+
+    #[test]
+    fn suggestions_exclude_own_addresses_from_stored_contacts() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+        let book = local_book_id(&db, space.id).unwrap();
+        create_local(
+            &db,
+            book,
+            ContactInput {
+                display_name: "Me".into(),
+                emails: vec!["me@example.com".into()],
+                phones: vec![],
+                organization: String::new(),
+                title: String::new(),
+                notes: String::new(),
+                address_book_id: None,
+            },
+        )
+        .unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "insert into accounts (id, display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, sync_interval_secs, space_id, created_at)
+                 values (1, 'Me', 'me@example.com', 'me@example.com', 'imap', 993, 'tls', 'smtp', 465, 'tls', 120, ?1, 0)",
+                params![space.id],
+            )
+            .unwrap();
+        }
+
+        let result = suggestions(&db, space.id, Some("me"), Some(8)).unwrap();
+        assert!(result.iter().all(|contact| contact.email != "me@example.com"));
+    }
+
+    #[test]
+    fn suggestions_match_a_lower_priority_duplicate_when_the_name_matches() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        ensure_local_space(&db, space.id).unwrap();
+        let local = local_book_id(&db, space.id).unwrap();
+        let carddav_book = {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "insert into contact_accounts
+                    (display_name, base_url, username, space_id, position, kind, created_at)
+                 values ('Work', 'https://dav.example.com', 'me', ?1, 0, 'carddav', 0)",
+                params![space.id],
+            )
+            .unwrap();
+            let account = conn.last_insert_rowid();
+            conn.execute(
+                "insert into address_books (contact_account_id, href, name)
+                 values (?1, '/books/work/', 'Work')",
+                params![account],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        };
+        crate::contacts::carddav::apply_snapshot(
+            &db,
+            carddav_book,
+            &[(
+                "ada.vcf".into(),
+                Some("e1".into()),
+                "BEGIN:VCARD\nVERSION:4.0\nUID:ada\nFN:Ada King\nEMAIL:ada@example.com\nEND:VCARD\n".into(),
+            )],
+        )
+        .unwrap();
+        create_local(
+            &db,
+            local,
+            ContactInput {
+                display_name: "Ada Lovelace".into(),
+                emails: vec!["ada@example.com".into()],
+                phones: vec![],
+                organization: String::new(),
+                title: String::new(),
+                notes: String::new(),
+                address_book_id: None,
+            },
+        )
+        .unwrap();
+
+        let result = suggestions(&db, space.id, Some("lovelace"), Some(8)).unwrap();
+        assert_eq!(result[0].name, "Ada Lovelace");
     }
 
     #[test]

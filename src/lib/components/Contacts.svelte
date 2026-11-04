@@ -24,13 +24,16 @@
   let editor = $state<ContactRecord | "new" | null>(null);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let loadedSpace: number | null = null;
+  let loadToken = 0;
 
   const spaceId = $derived(app.activeSpaceId ?? 0);
   const selected = $derived(records.find((record) => record.id === selectedId) ?? null);
   const writable = $derived(selected !== null && !selected.readOnly);
 
   async function load(keepSelection = true): Promise<void> {
-    if (!spaceId) {
+    const target = spaceId;
+    const token = ++loadToken;
+    if (!target) {
       records = [];
       books = [];
       accounts = [];
@@ -40,10 +43,11 @@
     error = null;
     try {
       const [bookList, recordList, accountList] = await Promise.all([
-        api.listAddressBooks(spaceId),
-        api.listContactRecords(spaceId, bookId, query || undefined, 500),
-        api.listContactAccounts(spaceId)
+        api.listAddressBooks(target),
+        api.listContactRecords(target, bookId, query || undefined, 500),
+        api.listContactAccounts(target)
       ]);
+      if (token !== loadToken) return;
       books = bookList;
       records = recordList;
       accounts = accountList;
@@ -51,9 +55,10 @@
         selectedId = recordList[0]?.id ?? null;
       }
     } catch (cause) {
+      if (token !== loadToken) return;
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      loading = false;
+      if (token === loadToken) loading = false;
     }
   }
 
@@ -126,8 +131,27 @@
       loadedSpace = id;
       bookId = null;
       selectedId = null;
-      void load().then(() => autoSync());
+      records = [];
+      books = [];
+      accounts = [];
+      void load().then(() => {
+        if (app.contactsOpen) void autoSync();
+      });
     }
+  });
+
+  $effect(() => {
+    const pending = app.pendingContactId;
+    if (pending === null) return;
+    void (async () => {
+      if (!records.some((record) => record.id === pending)) {
+        await load(false);
+      }
+      if (records.some((record) => record.id === pending)) {
+        selectedId = pending;
+      }
+      app.pendingContactId = null;
+    })();
   });
 
   onMount(() => {

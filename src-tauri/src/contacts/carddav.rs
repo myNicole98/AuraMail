@@ -580,15 +580,53 @@ fn set_sync_token(db: &Database, book_id: i64, token: Option<&str>) -> AppResult
     Ok(())
 }
 
+pub fn prune_books(db: &Database, account_id: i64, remote: &[RemoteBook]) -> AppResult<()> {
+    let keep: std::collections::HashSet<&str> =
+        remote.iter().map(|book| book.href.as_str()).collect();
+    let mut conn = db.conn.lock().unwrap();
+    let tx = conn.transaction()?;
+    let existing: Vec<String> = {
+        let mut stmt = tx.prepare("select href from address_books where contact_account_id = ?1")?;
+        let rows = stmt.query_map(params![account_id], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for href in existing {
+        if !keep.contains(href.as_str()) {
+            tx.execute(
+                "delete from address_books where contact_account_id = ?1 and href = ?2",
+                params![account_id, href],
+            )?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 pub async fn sync_account(
     db: &Database,
     secrets: &dyn SecretStore,
     account_id: i64,
 ) -> AppResult<crate::contacts::ContactSyncResult> {
+    let kind: String = db
+        .read()
+        .query_row(
+            "select kind from contact_accounts where id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::Message("contact account not found".into()))?;
+    if kind == "local" {
+        return Ok(crate::contacts::ContactSyncResult {
+            books: 0,
+            contacts: 0,
+            errors: Vec::new(),
+        });
+    }
     let (base_url, username): (String, String) = db
         .read()
         .query_row(
-            "select base_url, username from contact_accounts where id = ?1 and kind = 'carddav'",
+            "select base_url, username from contact_accounts where id = ?1",
             params![account_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -605,6 +643,8 @@ pub async fn sync_account(
     match discover_books(&client).await {
         Ok(remote) => {
             if let Err(error) = save_books(db, account_id, &remote) {
+                result.errors.push(error.to_string());
+            } else if let Err(error) = prune_books(db, account_id, &remote) {
                 result.errors.push(error.to_string());
             }
         }
@@ -706,6 +746,78 @@ mod tests {
             .find(|candidate| candidate.id == book)
             .unwrap()
             .read_only);
+    }
+
+    #[tokio::test]
+    async fn local_account_sync_is_a_silent_noop() {
+        let db = Database::open_memory().unwrap();
+        let space = crate::spaces::ensure_default(&db).unwrap();
+        crate::contacts::ensure_local_space(&db, space.id).unwrap();
+        let local_id: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "select id from contact_accounts where space_id = ?1 and kind = 'local'",
+                params![space.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let result = sync_account(&db, &crate::secrets::MemoryStore::default(), local_id)
+            .await
+            .unwrap();
+        assert_eq!(result.books, 0);
+        assert_eq!(result.contacts, 0);
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn prune_books_removes_books_missing_from_the_server() {
+        let db = Database::open_memory().unwrap();
+        let (account, book) = seed_carddav_account(&db);
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "insert into address_books (contact_account_id, href, name)
+                 values (?1, '/books/old/', 'Old')",
+                params![account],
+            )
+            .unwrap();
+        }
+        let book_count: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "select count(*) from address_books where contact_account_id = ?1",
+                params![account],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(book_count, 2);
+        prune_books(
+            &db,
+            account,
+            &[RemoteBook {
+                href: "/books/main/".into(),
+                name: "Contacts".into(),
+                color: None,
+            }],
+        )
+        .unwrap();
+        let books: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "select count(*) from address_books where contact_account_id = ?1",
+                params![account],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(books, 1);
+        let _ = book;
     }
 
     #[tokio::test]

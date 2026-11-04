@@ -151,6 +151,12 @@
       0
   );
 
+  $effect(() => {
+    message?.id;
+    senderContact = null;
+    senderMenu = null;
+  });
+
   async function openSenderMenu(event: MouseEvent): Promise<void> {
     if (!message) return;
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();

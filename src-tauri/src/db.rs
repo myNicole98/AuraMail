@@ -1371,6 +1371,65 @@ mod tests {
     }
 
     #[test]
+    fn migration_40_backfills_local_address_books_for_existing_spaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auramail.db");
+        {
+            let db = Database::open(&path).unwrap();
+            assert!(!spaces::list(&db).unwrap().is_empty());
+            db.conn
+                .lock()
+                .unwrap()
+                .execute_batch(
+                    "delete from contacts;
+                     delete from address_books;
+                     delete from contact_accounts;
+                     pragma user_version = 39;",
+                )
+                .unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        let version: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("pragma user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 40);
+        for space in spaces::list(&db).unwrap() {
+            let conn = db.conn.lock().unwrap();
+            let accounts: i64 = conn
+                .query_row(
+                    "select count(*) from contact_accounts where space_id = ?1 and kind = 'local'",
+                    rusqlite::params![space.id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let books: i64 = conn
+                .query_row(
+                    "select count(*) from address_books b
+                     join contact_accounts ca on ca.id = b.contact_account_id
+                     where ca.space_id = ?1 and ca.kind = 'local' and b.href = 'local'",
+                    rusqlite::params![space.id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(accounts, 1);
+            assert_eq!(books, 1);
+        }
+        db.migrate().unwrap();
+        let again: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("select count(*) from contact_accounts where kind = 'local'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(again as usize, spaces::list(&db).unwrap().len());
+    }
+
+    #[test]
     fn migrates_all_tables_and_seeds_tabs() {
         let db = Database::open_memory().unwrap();
         db.migrate().unwrap();
