@@ -414,7 +414,7 @@
 
       <div class="signature-workspace">
         <div class="signature-details">
-          <div class="signature-block-head"><span>Profile</span></div>
+          <h3 class="signature-block-head">Profile</h3>
           <div class="signature-detail-grid">
             <label class="field">
               <span>Profession</span>
@@ -435,7 +435,7 @@
           </div>
 
           <div class="signature-block-head social-head">
-            <span>Social links</span>
+            <h3>Social links</h3>
             <ThemedSelect
               value=""
               placeholder="Add social…"
@@ -477,7 +477,7 @@
         </div>
 
         <div class="signature-preview-card">
-          <div class="signature-block-head"><span>Preview</span></div>
+          <h3 class="signature-block-head">Preview</h3>
           {#if signaturePreview}
             <div class="signature-preview-html">{@html signaturePreview}</div>
           {/if}
@@ -485,7 +485,7 @@
       </div>
 
       <div class="signature-editor-wrap">
-        <div class="signature-block-head"><span>Editor</span></div>
+        <h3 class="signature-block-head">Editor</h3>
         <div class="signature-toolbar" role="toolbar" aria-label="Signature formatting">
           <button type="button" title="Bold" aria-label="Bold" onmousedown={preventSignatureBlur} onclick={() => signatureCommand("bold")}>
             <Bold size={14} />
@@ -549,9 +549,7 @@
         </p>
       </div>
 
-      <div class="signature-preset-head">
-        <span>Presets</span>
-      </div>
+      <h3 class="signature-preset-head">Presets</h3>
       <div class="signature-preset-grid">
         {#each SIGNATURE_PRESETS as preset (preset.id)}
           <button
@@ -698,16 +696,16 @@
   .signature-workspace {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(280px, 0.9fr);
-    gap: 14px;
+    gap: 28px;
     align-items: start;
   }
   .signature-details,
   .signature-preview-card,
   .signature-editor-wrap {
-    padding: 14px 15px;
-    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-    border-radius: 11px;
-    background: color-mix(in srgb, var(--bg-raised) 70%, var(--bg));
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
   }
   .signature-detail-grid {
     display: grid;
@@ -720,11 +718,11 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    margin-bottom: 9px;
-    color: var(--muted);
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
+    margin: 0 0 12px;
+    color: var(--text-strong);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
     text-transform: uppercase;
   }
   .social-head {
@@ -796,7 +794,30 @@
     overflow: auto;
   }
   .signature-editor-wrap {
-    margin-top: 12px;
+    position: relative;
+    margin-top: 26px;
+    padding-top: 26px;
+  }
+  .signature-editor-wrap::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--accent) 38%, transparent) 18%,
+      color-mix(in srgb, var(--accent) 62%, transparent) 50%,
+      color-mix(in srgb, var(--accent) 38%, transparent) 82%,
+      transparent 100%
+    );
+    pointer-events: none;
+  }
+  .signature-block-head h3 {
+    margin: 0;
+    font: inherit;
   }
   .signature-toolbar {
     display: flex;
