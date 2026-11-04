@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { CircleAlert, LoaderCircle, Mail, Pencil, Plus, RefreshCw, Search, Trash2, Users } from "lucide-svelte";
   import { api } from "../api";
   import { contactInitials, contactTitle } from "../contacts";
@@ -127,6 +128,14 @@
       selectedId = null;
       void load().then(() => autoSync());
     }
+  });
+
+  onMount(() => {
+    const refresh = () => {
+      void load().then(() => syncContacts(true));
+    };
+    window.addEventListener("auramail:contacts-changed", refresh);
+    return () => window.removeEventListener("auramail:contacts-changed", refresh);
   });
 </script>
 

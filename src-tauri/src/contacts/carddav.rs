@@ -208,6 +208,9 @@ pub async fn add_account(
             .execute("delete from contact_accounts where id = ?1", params![id]);
         return Err(error);
     }
+    // Populate the cache immediately; a first sync failure must not undo a
+    // successfully connected account.
+    let _ = sync_account(db, secrets, id).await;
     Ok(account)
 }
 

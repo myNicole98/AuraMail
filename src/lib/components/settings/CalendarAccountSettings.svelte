@@ -5,6 +5,7 @@
   import type { CalendarAccount } from "../../types";
   import CalendarAccountDialog from "../calendar/CalendarAccountDialog.svelte";
   import SpaceIcon from "./SpaceIcon.svelte";
+  import ContactAccountSettings from "./ContactAccountSettings.svelte";
 
   let accountsBySpace = $state<Record<number, CalendarAccount[]>>({});
   let loading = $state(true);
@@ -318,12 +319,7 @@
     </div>
   </section>
 
-  <section class="settings-column contacts-column" aria-label="Contacts">
-    <header class="column-head">
-      <span>Contacts</span>
-    </header>
-    <div class="contacts-placeholder">placeholder</div>
-  </section>
+  <ContactAccountSettings />
 </div>
 
 {#if showAddFor !== null}
@@ -546,16 +542,6 @@
   .add-account:hover {
     color: var(--text);
     background: var(--bg-hover);
-  }
-
-  .contacts-placeholder {
-    display: grid;
-    place-items: center;
-    min-height: 250px;
-    border: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
-    border-radius: 12px;
-    color: var(--muted);
-    font-size: 12px;
   }
 
   @media (max-width: 820px) {
