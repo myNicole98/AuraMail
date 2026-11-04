@@ -10,7 +10,8 @@
     Forward,
     MoreHorizontal,
     Reply,
-    ReplyAll
+    ReplyAll,
+    UserPlus
   } from "lucide-svelte";
   import { api } from "../api";
   import { replyDraftInput } from "../compose";
@@ -19,6 +20,8 @@
   import AuraRail from "./AuraRail.svelte";
   import MailBodyFrame from "./MailBodyFrame.svelte";
   import SenderAvatar from "./SenderAvatar.svelte";
+  import ContactEditorDialog from "./contacts/ContactEditorDialog.svelte";
+  import SenderMenu from "./contacts/SenderMenu.svelte";
   import { formatFullDate } from "../format";
   import {
     bodyDocument,
@@ -38,7 +41,7 @@
   } from "../settings";
   import { app } from "../stores/app.svelte";
   import { appearance } from "../stores/appearance.svelte";
-  import type { Attachment, ComposeMode, MessageDetail } from "../types";
+  import type { Attachment, ComposeMode, ContactRecord, MessageDetail } from "../types";
 
   let detail = $derived(app.selectedMessage);
   let message = $derived(detail?.message ?? null);
@@ -138,6 +141,62 @@
   $effect(() => {
     if (bodyDocumentHtml) frameHtml = bodyDocumentHtml;
   });
+  let senderMenu = $state<{ x: number; y: number } | null>(null);
+  let senderContact = $state<ContactRecord | null>(null);
+  let senderLoading = $state(false);
+  let senderEditorOpen = $state(false);
+  let senderSpaceId = $derived(
+    app.accounts.find((account) => account.id === message?.account_id)?.space_id ??
+      app.activeSpaceId ??
+      0
+  );
+
+  async function openSenderMenu(event: MouseEvent): Promise<void> {
+    if (!message) return;
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    senderMenu = { x: rect.left, y: rect.bottom + 4 };
+    senderContact = null;
+    senderLoading = true;
+    try {
+      senderContact = await api.contactForEmail(senderSpaceId, message.from_addr);
+    } catch {
+      senderContact = null;
+    } finally {
+      senderLoading = false;
+    }
+  }
+
+  function closeSenderMenu(): void {
+    senderMenu = null;
+  }
+
+  function sendToSender(): void {
+    if (!message) return;
+    void api.openComposeWindow("new", null, null, message.from_addr);
+    closeSenderMenu();
+  }
+
+  function addSenderContact(): void {
+    senderEditorOpen = true;
+    closeSenderMenu();
+  }
+
+  function editSenderContact(): void {
+    if (senderContact) app.selectContacts(senderContact.id);
+    closeSenderMenu();
+  }
+
+  function copySenderAddress(): void {
+    if (!message) return;
+    if (navigator.clipboard) void navigator.clipboard.writeText(message.from_addr);
+    closeSenderMenu();
+  }
+
+  function senderSaved(record: ContactRecord): void {
+    senderEditorOpen = false;
+    senderContact = record;
+  }
+
   let inTrash = $derived(
     message ? app.folders.find((folder) => folder.id === message.folder_id)?.role === "trash" : false
   );
@@ -491,18 +550,31 @@
 
     {#if message}
       <div class="byline">
-        <SenderAvatar
-          name={message.from_name}
-          email={message.from_addr}
-          enabled={showProfilePictures}
-        />
-        <div class="who">
-          <strong>{sender}</strong>
-          <span class="sender-address">{message.from_addr}</span>
-          <span title={`to ${recipients}${cc ? ` cc ${cc}` : ""}`}>
-            to {recipients}{#if cc} · cc {cc}{/if} · {formatFullDate(message.date, appearance.timeFormat)}
+        <button
+          class="sender-button"
+          type="button"
+          aria-haspopup="menu"
+          aria-label={`Actions for ${sender}`}
+          onclick={(event) => void openSenderMenu(event)}
+        >
+          <SenderAvatar
+            name={message.from_name}
+            email={message.from_addr}
+            enabled={showProfilePictures}
+          />
+          <span class="sender-text">
+            <span class="sender-name"><strong>{sender}</strong></span>
+            <span class="sender-address">{message.from_addr}</span>
           </span>
-        </div>
+          {#if !senderLoading && !senderContact}
+            <UserPlus class="sender-add" size={13} aria-hidden="true" />
+          {/if}
+        </button>
+      </div>
+      <div class="byline-meta">
+        <span title={`to ${recipients}${cc ? ` cc ${cc}` : ""}`}>
+          to {recipients}{#if cc} · cc {cc}{/if} · {formatFullDate(message.date, appearance.timeFormat)}
+        </span>
         {#if message.has_attachments}
           <span class="tag">Attachments</span>
         {/if}
@@ -719,6 +791,36 @@
   {/if}
 </section>
 
+{#if senderMenu && message}
+  <button
+    class="sender-backdrop"
+    type="button"
+    aria-label="Close sender menu"
+    onclick={closeSenderMenu}
+  ></button>
+  <SenderMenu
+    x={senderMenu.x}
+    y={senderMenu.y}
+    name={message.from_name}
+    email={message.from_addr}
+    contact={senderContact}
+    onSend={sendToSender}
+    onAdd={addSenderContact}
+    onEdit={editSenderContact}
+    onCopy={copySenderAddress}
+    onClose={closeSenderMenu}
+  />
+{/if}
+
+{#if senderEditorOpen && message}
+  <ContactEditorDialog
+    spaceId={senderSpaceId}
+    seed={{ name: message.from_name, email: message.from_addr }}
+    onClose={() => (senderEditorOpen = false)}
+    onSaved={senderSaved}
+  />
+{/if}
+
 <style>
   .reader {
     position: relative;
@@ -871,33 +973,93 @@
     color: var(--accent);
     background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
+  .sender-backdrop {
+    position: fixed;
+    z-index: 69;
+    inset: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: default;
+  }
+
   .byline {
     display: flex;
     align-items: center;
-    gap: 9px;
-    margin-top: 9px;
+    margin: 5px 0 0;
   }
-  .who {
+  .sender-button {
     display: flex;
-    flex-direction: column;
+    align-items: center;
+    gap: 9px;
+    width: fit-content;
+    max-width: 100%;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 110ms ease;
+  }
+
+  .sender-button:hover,
+  .sender-button:focus-visible {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    outline: none;
+  }
+
+  .sender-text {
+    display: flex;
     min-width: 0;
+    flex: 0 1 auto;
+    flex-direction: column;
     line-height: 1.35;
   }
-  .who strong {
+
+  .sender-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .sender-name strong {
+    overflow: hidden;
     color: var(--text);
     font-size: 12px;
     font-weight: 600;
-  }
-  .who span {
-    overflow: hidden;
-    color: var(--muted);
-    font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .who .sender-address {
+
+  .sender-address {
+    overflow: hidden;
     color: color-mix(in srgb, var(--muted) 78%, transparent);
     font-size: 10.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  :global(.sender-add) {
+    flex: none;
+    margin-left: 1px;
+    color: var(--accent);
+  }
+
+  .byline-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    padding-left: 8px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .byline-meta > span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .tag {
     margin-left: auto;
@@ -1250,7 +1412,7 @@
       padding: 10px 12px;
     }
     .byline {
-      margin-top: 7px;
+      margin: 4px 0 0;
     }
     .actions {
       flex-wrap: wrap;
