@@ -767,24 +767,7 @@
     grid-column: 2;
     grid-row: 2;
   }
-  .settings-stack {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    gap: 12px;
-    height: 100%;
-  }
-  .mail-panel {
-    display: flex;
-    flex-direction: column;
-    padding: 8px 16px 2px;
-  }
-  .tabs-row {
-    flex: 1;
-    gap: 12px;
-    padding: 12px 0;
-  }
-  .tabs-options {
+        .tabs-options {
     display: flex;
     gap: 7px;
     justify-content: flex-start;

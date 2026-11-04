@@ -546,11 +546,6 @@ html[data-theme-glass="true"] .settings-tabs {
   background: color-mix(in srgb, var(--bg-raised) 94%, transparent);
 }
 
-html[data-theme-glass="true"] .settings-panel {
-  background: color-mix(in srgb, var(--bg-raised) 90%, transparent);
-  border-color: var(--glass-border);
-}
-
 html[data-theme-glass="true"] .aura-rail {
   background: color-mix(in srgb, var(--bg-raised) 52%, transparent);
   border-left-color: var(--glass-border);
@@ -657,10 +652,6 @@ html[data-theme-glass="true"][data-high-contrast="true"] .settings-root,
 html[data-theme-glass="true"][data-high-contrast="true"] .settings-header,
 html[data-theme-glass="true"][data-high-contrast="true"] .settings-tabs {
   background: var(--bg);
-}
-
-html[data-theme-glass="true"][data-high-contrast="true"] .settings-panel {
-  background: var(--bg-raised);
 }
 
 html[data-theme-glass="true"][data-high-contrast="true"] .composer {

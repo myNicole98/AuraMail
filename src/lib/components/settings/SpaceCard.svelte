@@ -66,6 +66,7 @@
   class:drop-target={dragTarget}
   role="group"
   aria-label={space.name}
+  aria-current={active ? "true" : undefined}
   ondragover={(event) => {
     event.preventDefault();
     onDragOverSpace();
@@ -204,10 +205,9 @@
     border-radius: 0;
     background: transparent;
   }
-  :global(.space-card + .space-card) {
-    margin-top: 14px;
-    padding-top: 14px;
-    border-top: 1px solid var(--border);
+  .space-card.active {
+    padding-left: 9px;
+    border-left: 2px solid var(--accent);
   }
   .space-card.active .space-name {
     color: var(--accent);

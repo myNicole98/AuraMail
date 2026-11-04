@@ -720,10 +720,9 @@
     gap: 8px;
     margin: 0 0 12px;
     color: var(--text-strong);
-    font-size: 16px;
+    font-size: 20px;
     font-weight: 600;
     letter-spacing: -0.01em;
-    text-transform: uppercase;
   }
   .social-head {
     margin-top: 16px;

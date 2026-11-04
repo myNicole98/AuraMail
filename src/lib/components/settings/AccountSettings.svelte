@@ -770,6 +770,10 @@
     flex-direction: column;
     gap: 12px;
   }
+  .space-list > :global(.space-card + .space-card) {
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
   .create-space {
     display: flex;
     align-items: center;

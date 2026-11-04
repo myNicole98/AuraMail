@@ -146,11 +146,6 @@
 }
 
 
-
-
-
-
-
 .settings-row {
   display: flex;
   align-items: center;
@@ -166,40 +161,7 @@
   font-size: 12.5px;
   font-weight: 500;
 }
-.settings-nested {
-  display: flex;
-  flex-direction: column;
-  padding-left: 18px;
-}
-.settings-nested .settings-row {
-  padding-top: 7px;
-  padding-bottom: 7px;
-}
-.settings-nested strong {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 500;
-}
-.settings-nested.disabled {
-  opacity: 0.5;
-}
 
-
-.settings-control {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 7px;
-  flex: none;
-  min-width: 74px;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--bg) 55%, var(--bg-raised));
-  color: var(--text);
-  font-size: 10px;
-}
 
 .settings-foot {
   display: flex;
@@ -218,7 +180,6 @@
   color: var(--text);
   font-weight: 550;
 }
-
 
 
 .settings-root .form {

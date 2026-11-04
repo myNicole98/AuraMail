@@ -95,7 +95,12 @@
   <div class="space-stack">
     {#each spaces as space (space.id)}
       {@const accounts = orderedAccounts(space.id)}
-      <section class="space-card" aria-label={space.name}>
+      <section
+        class="space-card"
+        class:active={space.id === app.activeSpaceId}
+        aria-label={space.name}
+        aria-current={space.id === app.activeSpaceId ? "true" : undefined}
+      >
         <header class="space-head">
           <span class="space-icon"><SpaceIcon name={space.icon} size={14} /></span>
           <span class="space-name">{space.name}</span>
@@ -186,6 +191,13 @@
     border: 0;
     border-radius: 0;
     background: transparent;
+  }
+  .space-card.active {
+    padding-left: 9px;
+    border-left: 2px solid var(--accent);
+  }
+  .space-card.active .space-name {
+    color: var(--accent);
   }
   .space-card + .space-card {
     padding-top: 14px;

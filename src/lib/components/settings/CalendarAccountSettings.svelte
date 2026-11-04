@@ -228,6 +228,7 @@
           class:active={space.id === app.activeSpaceId}
           class:drop-target={dragTargetSpaceId === space.id}
           aria-label={space.name}
+          aria-current={space.id === app.activeSpaceId ? "true" : undefined}
           ondragover={(event) => {
             event.preventDefault();
             dragOverSpace(space.id);
@@ -415,12 +416,17 @@
     padding-top: 14px;
     border-top: 1px solid var(--border);
   }
+  .space-card.active {
+    padding-left: 9px;
+    border-left: 2px solid var(--accent);
+  }
   .space-card.active .space-name {
     color: var(--accent);
   }
 
   .space-card.drop-target {
-    border-color: var(--accent);
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 1px var(--accent);
     background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
   }
 
