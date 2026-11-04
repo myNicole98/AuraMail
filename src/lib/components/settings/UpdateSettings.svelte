@@ -6,6 +6,7 @@
     RotateCcw
   } from "lucide-svelte";
   import type { UpdateInfo } from "../../types";
+  import SettingsSection from "./SettingsSection.svelte";
 
   let {
     currentVersion,
@@ -40,7 +41,9 @@
   );
 </script>
 
-<section class="update-panel">
+<div class="settings-inner">
+<SettingsSection title="Updates">
+<div class="update-body">
   {#if update}
     <span class="update-orb available" aria-hidden="true">
       <ArrowDownToLine size={24} strokeWidth={2.5} />
@@ -111,16 +114,18 @@
       release from the release page.
     </p>
   {/if}
-</section>
+</div>
+</SettingsSection>
+</div>
 
 <style>
-  .update-panel {
+  .update-body {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 18px;
-    min-height: 100%;
+    padding: 10px 0;
     text-align: center;
   }
   .update-orb {
