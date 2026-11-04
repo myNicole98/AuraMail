@@ -4,6 +4,7 @@
     Archive,
     CircleAlert,
     FileText,
+    Inbox,
     Paperclip,
     PenLine,
     Search,
@@ -692,7 +693,9 @@
         {:else if app.searchActive}
           No results for “{app.search.trim()}”.
         {:else}
-          No messages yet.
+          <Inbox class="empty-icon" size={28} aria-hidden="true" />
+          <strong>No messages yet</strong>
+          <span class="empty-hint">New mail will show up here.</span>
         {/if}
       </div>
       {/each}
@@ -743,7 +746,7 @@
     min-width: 0;
     height: 100%;
     overflow: hidden;
-    background: var(--bg);
+    background: var(--bg-list);
   }
   .list-head {
     flex: none;
@@ -1264,9 +1267,26 @@
     color: var(--muted);
   }
   .empty {
-    padding: 28px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 40px 16px;
     color: var(--muted);
     font-size: 12px;
     text-align: center;
+  }
+  :global(.empty-icon) {
+    color: var(--muted);
+    opacity: 0.8;
+  }
+  .empty strong {
+    color: var(--text);
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .empty-hint {
+    color: var(--muted-soft, var(--muted));
+    font-size: 12px;
   }
 </style>

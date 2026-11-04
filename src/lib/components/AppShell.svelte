@@ -644,7 +644,7 @@
     height: 100vh;
     height: 100dvh;
     overflow: hidden;
-    background: var(--bg);
+    background: var(--bg-app);
   }
   .calendar-host {
     grid-column: 2;

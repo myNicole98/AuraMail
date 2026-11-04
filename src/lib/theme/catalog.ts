@@ -44,17 +44,17 @@ const p = (scheme: string, values: string[]): Base16 => ({
 });
 
 export const auraLightTheme: Base16 = p("Aura Light", [
-  "#F7F8FD", "#EEF1F9", "#E2E7F3", "#C8D0E2",
-  "#66708A", "#242A3E", "#141827", "#0A0D17",
-  "#D6435B", "#C96A2B", "#9A7412", "#2E8A62",
-  "#0E7F97", "#3F60E8", "#6B4EF5", "#A855C8"
+  "#FBFBFD", "#FFFFFF", "#EEF0F6", "#E3E6EE",
+  "#475569", "#0F172A", "#0F172A", "#020617",
+  "#DC2626", "#C2410C", "#A16207", "#15803D",
+  "#0E7490", "#4F46E5", "#6D28D9", "#A21CAF"
 ]);
 
 export const auraDarkTheme: Base16 = p("Aura Dark", [
-  "#0A0A0A", "#121212", "#1A1A1A", "#333333",
-  "#8A8A8A", "#E8E8E8", "#F4F4F4", "#FFFFFF",
+  "#13151B", "#181B23", "#1D2029", "#262A34",
+  "#A3A9B8", "#E8EAF0", "#F1F3F8", "#FFFFFF",
   "#FF6B81", "#FF9A62", "#F4C95D", "#5ED69B",
-  "#4DD6E8", "#7C8DFF", "#A983FF", "#D08CFF"
+  "#4DD6E8", "#6366F1", "#A983FF", "#D08CFF"
 ]);
 
 const catppuccinAccents: ThemeAccent[] = [

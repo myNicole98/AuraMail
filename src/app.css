@@ -1,5 +1,10 @@
 :root {
   --bg: var(--base00);
+  --bg-app: var(--bg);
+  --bg-sidebar: var(--bg-raised);
+  --bg-list: var(--bg);
+  --accent-text: var(--accent);
+  --muted-soft: var(--muted);
   --bg-raised: var(--base01);
   --bg-hover: var(--base02);
   --border: var(--base03);
@@ -21,6 +26,43 @@
   --font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
   color-scheme: light dark;
+}
+
+/* Surface hierarchy and accent split for every theme. The Aura Light/Dark
+   blocks below override these with their hand-tuned values; named palettes and
+   Matugen derive the same gentle steps from their own Base16 colors. */
+html[data-theme-dark="true"] {
+  --bg-app: color-mix(in srgb, var(--base00) 78%, #000);
+  --bg-raised: color-mix(in srgb, var(--base00) 42%, var(--base02));
+  --bg-sidebar: color-mix(in srgb, var(--base00) 68%, var(--base02));
+  --bg-list: color-mix(in srgb, var(--base00) 86%, var(--base02));
+  --accent-text: color-mix(in srgb, var(--accent) 72%, var(--text));
+  --muted-soft: color-mix(in srgb, var(--muted) 76%, var(--base00));
+}
+
+html[data-theme-dark="false"] {
+  --bg-app: color-mix(in srgb, var(--base00) 92%, var(--base03));
+  --bg-raised: color-mix(in srgb, var(--base00) 35%, #ffffff);
+  --bg-sidebar: color-mix(in srgb, var(--base00) 88%, var(--base03));
+  --bg-list: color-mix(in srgb, var(--base00) 96%, var(--base03));
+  --accent-text: var(--accent);
+  --muted-soft: color-mix(in srgb, var(--muted) 82%, var(--base00));
+}
+
+html[data-theme-scheme="Aura Light"] {
+  --bg-app: #EAEEF6;
+  --bg-raised: #FFFFFF;
+  --bg-sidebar: #F0F3F9;
+  --bg-list: #F5F7FB;
+  --accent-text: #4F46E5;
+  --muted-soft: #64748B;
+}
+
+html[data-theme-scheme="Aura Dark"] {
+  --bg-sidebar: #101218;
+  --bg-list: #13151B;
+  --accent-text: #8B93FF;
+  --muted-soft: #7A8194;
 }
 
 html[data-theme-scheme="Matugen"] {
@@ -604,7 +646,7 @@ html[data-theme-glass="true"][data-high-contrast="true"] {
 }
 
 html[data-theme-glass="true"][data-high-contrast="true"] body {
-  background: var(--bg);
+  background: var(--bg-app);
 }
 
 html[data-theme-glass="true"][data-high-contrast="true"] .shell > .sidebar,
@@ -662,7 +704,7 @@ html[data-theme-glass="true"][data-high-contrast="true"] .composer {
 
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; }
-#app { background: var(--bg); }
+#app { background: var(--bg-app); }
 body {
   background: var(--bg);
   color: var(--text);

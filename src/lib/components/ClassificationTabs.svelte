@@ -283,7 +283,7 @@
   <div
     class="tab-wrap all"
     class:active={app.selectedTabId === null}
-    style:--tab-color="var(--accent)"
+    style:--tab-color="var(--accent-text)"
   >
     <button
       type="button"
@@ -324,7 +324,10 @@
   >
     {#each orderedTabs as tab, index (tab.id)}
       {@const Icon = tabIconComponent(tab)}
-      {@const color = tabColor(tab, index, appearance.colorVision, appearance.themeDark)}
+      {@const rawColor = tabColor(tab, index, appearance.colorVision, appearance.themeDark)}
+      {@const color = appearance.themeDark
+        ? rawColor
+        : `color-mix(in srgb, ${rawColor} 78%, var(--text))`}
       <div
         class="tab-wrap"
         class:active={app.selectedTabId === tab.id}
@@ -438,7 +441,7 @@
   }
   .tab-wrap.active {
     border-bottom-color: var(--tab-color);
-    color: var(--text-strong);
+    color: var(--tab-color);
   }
   .tab-wrap.dragging {
     z-index: 3;
@@ -466,6 +469,14 @@
   }
   .tab :global(svg) {
     flex: none;
+    color: var(--muted);
+    transition: color 130ms ease;
+  }
+  .tab:hover :global(svg),
+  .tab:focus-visible :global(svg) {
+    color: var(--text);
+  }
+  .tab-wrap.active .tab :global(svg) {
     color: var(--tab-color);
   }
   .count {

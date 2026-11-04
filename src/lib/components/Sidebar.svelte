@@ -327,7 +327,7 @@
     height: 100%;
     padding: 10px 8px;
     overflow: hidden;
-    background: var(--bg-raised);
+    background: var(--bg-sidebar);
   }
   .sidebar.collapsed {
     align-items: center;
@@ -389,11 +389,11 @@
     outline: 0;
   }
   .nav-item.active {
-    color: var(--text-strong);
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent-text);
+    background: color-mix(in srgb, var(--accent-text) 12%, transparent);
   }
   .nav-item.active :global(svg) {
-    color: var(--accent);
+    color: var(--accent-text);
   }
   .sidebar.collapsed .nav-item {
     justify-content: center;
