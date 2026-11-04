@@ -375,14 +375,71 @@ open "$target"
 
 #[cfg(target_os = "windows")]
 const WINDOWS_HELPER: &str = r#"param([int]$ProcessId, [string]$Zip, [string]$Exe)
-Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
-$dir = Split-Path -Parent $Exe
-foreach ($name in @("AuraMail.exe", "auramail-proton-bridge.exe")) {
-  Remove-Item (Join-Path $dir $name) -Force -ErrorAction SilentlyContinue
+$ErrorActionPreference = "Stop"
+$log = Join-Path $env:TEMP "auramail-update.log"
+function Write-Log([string]$message) {
+  Add-Content -Path $log -Value ("{0} {1}" -f (Get-Date -Format o), $message)
 }
-Remove-Item (Join-Path $dir "resources") -Recurse -Force -ErrorAction SilentlyContinue
-Expand-Archive -Path $Zip -DestinationPath $dir -Force
-Start-Process $Exe
+function Replace-ItemWithRetry([string]$source, [string]$target) {
+  for ($i = 0; $i -lt 30; $i++) {
+    try {
+      if (Test-Path $target) { Remove-Item $target -Force -Recurse }
+      Copy-Item $source $target -Force -Recurse
+      return
+    } catch {
+      Start-Sleep -Milliseconds 500
+    }
+  }
+  throw "could not replace $target"
+}
+$stage = $null
+try {
+  Write-Log "waiting for process $ProcessId"
+  $deadline = (Get-Date).AddSeconds(90)
+  while ((Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 200
+  }
+  # Give Windows a moment to release the image handle.
+  Start-Sleep -Milliseconds 800
+  if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+    throw "the app did not exit before the update timed out"
+  }
+
+  $dir = Split-Path -Parent $Exe
+  $stage = Join-Path $env:TEMP ("auramail-update-" + [guid]::NewGuid().ToString("N"))
+  New-Item -ItemType Directory -Path $stage | Out-Null
+  Write-Log "extracting $Zip to $stage"
+  Expand-Archive -Path $Zip -DestinationPath $stage -Force
+  if (!(Test-Path (Join-Path $stage "AuraMail.exe"))) {
+    throw "the update archive did not contain AuraMail.exe"
+  }
+
+  Write-Log "replacing files in $dir"
+  foreach ($name in @("AuraMail.exe", "auramail-proton-bridge.exe")) {
+    $source = Join-Path $stage $name
+    if (Test-Path $source) {
+      Replace-ItemWithRetry $source (Join-Path $dir $name)
+    }
+  }
+  $sourceResources = Join-Path $stage "resources"
+  if (Test-Path $sourceResources) {
+    Replace-ItemWithRetry $sourceResources (Join-Path $dir "resources")
+  }
+
+  if (Test-Path $Exe) {
+    Write-Log ("installed exe version: " + (Get-Item $Exe).VersionInfo.FileVersion)
+  }
+  Write-Log "starting $Exe"
+  Start-Process -FilePath $Exe -WorkingDirectory $dir
+  Write-Log "started"
+} catch {
+  Write-Log ("FAILED: " + $_.Exception.Message)
+  throw
+} finally {
+  if ($stage -and (Test-Path $stage)) {
+    Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
 "#;
 
 /// Spawn a detached helper that waits for this process to exit, replaces the
@@ -436,6 +493,7 @@ pub fn install(staged: &Path) -> crate::error::AppResult<()> {
     {
         let script = script_dir.join("auramail-update.ps1");
         std::fs::write(&script, WINDOWS_HELPER)?;
+        let _ = std::fs::remove_file(std::env::temp_dir().join("auramail-update.log"));
         let mut command = Command::new("powershell.exe");
         command
             .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File"])
