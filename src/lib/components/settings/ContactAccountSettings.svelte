@@ -99,9 +99,6 @@
         <header class="space-head">
           <span class="space-icon"><SpaceIcon name={space.icon} size={14} /></span>
           <span class="space-name">{space.name}</span>
-          {#if space.id === app.activeSpaceId}
-            <span class="active-mark">Active</span>
-          {/if}
         </header>
 
         <div class="space-accounts" role="list">
@@ -186,18 +183,20 @@
   }
 
   .space-card {
-    border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--bg-raised) 78%, var(--bg));
-    overflow: hidden;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .space-card + .space-card {
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
   }
 
   .space-head {
     display: flex;
     align-items: center;
     gap: 7px;
-    padding: 8px 10px;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 52%, transparent);
+    padding: 4px 0 8px;
   }
 
   .space-icon {
@@ -221,23 +220,12 @@
     white-space: nowrap;
   }
 
-  .active-mark {
-    flex: none;
-    padding: 2px 5px;
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--accent) 13%, transparent);
-    color: var(--accent);
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-  }
-
+  
   .space-accounts {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 6px 8px 9px;
+    gap: 0;
+    padding: 0;
   }
 
   .account-row {
@@ -249,6 +237,12 @@
     border-radius: 8px;
   }
 
+  .account-row {
+    border-radius: 0;
+  }
+  .account-row + .account-row {
+    border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  }
   .account-row:hover {
     background: var(--bg-hover);
   }

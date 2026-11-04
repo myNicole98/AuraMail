@@ -225,7 +225,7 @@
 </script>
 
 <form
-  class="card form account-editor"
+  class="form account-editor"
   onsubmit={(event) => {
     event.preventDefault();
     void save();
@@ -502,6 +502,10 @@
 
 <style>
   .account-editor {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
     display: flex;
     flex-direction: column;
     gap: 16px;

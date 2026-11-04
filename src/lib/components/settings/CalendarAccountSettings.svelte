@@ -245,9 +245,6 @@
           <header class="space-head">
             <span class="space-icon"><SpaceIcon name={space.icon} size={14} /></span>
             <span class="space-name">{space.name}</span>
-            {#if space.id === app.activeSpaceId}
-              <span class="active-mark">Active</span>
-            {/if}
           </header>
 
           <div class="space-accounts" role="list">
@@ -332,11 +329,48 @@
 
 <style>
   .settings-columns {
+    position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 22px;
+    gap: 34px;
     align-items: start;
-    margin-top: 22px;
+    margin-top: 26px;
+    padding-top: 26px;
+  }
+  .settings-columns::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--accent) 38%, transparent) 18%,
+      color-mix(in srgb, var(--accent) 62%, transparent) 50%,
+      color-mix(in srgb, var(--accent) 38%, transparent) 82%,
+      transparent 100%
+    );
+    pointer-events: none;
+  }
+  .settings-columns::after {
+    content: "";
+    position: absolute;
+    top: 26px;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    transform: translateX(-0.5px);
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      color-mix(in srgb, var(--accent) 38%, transparent) 18%,
+      color-mix(in srgb, var(--accent) 62%, transparent) 50%,
+      color-mix(in srgb, var(--accent) 38%, transparent) 82%,
+      transparent 100%
+    );
+    pointer-events: none;
   }
 
   .settings-column {
@@ -373,13 +407,16 @@
 
   .space-card {
     position: relative;
-    border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--bg-raised) 70%, var(--bg));
+    border: 0;
+    border-radius: 0;
+    background: transparent;
   }
-
-  .space-card.active {
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  .space-card + .space-card {
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .space-card.active .space-name {
+    color: var(--accent);
   }
 
   .space-card.drop-target {
@@ -391,8 +428,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    padding: 8px 9px;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+    padding: 4px 0 8px;
   }
 
   .space-icon {
@@ -416,23 +452,12 @@
     white-space: nowrap;
   }
 
-  .active-mark {
-    flex: none;
-    padding: 2px 5px;
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--accent) 13%, transparent);
-    color: var(--accent);
-    font-size: 9px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
+  
   .space-accounts {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 6px 8px 9px;
+    gap: 0;
+    padding: 0;
   }
 
   .account-row {
@@ -445,6 +470,12 @@
     cursor: grab;
   }
 
+  .account-row {
+    border-radius: 0;
+  }
+  .account-row + .account-row {
+    border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  }
   .account-row:hover {
     background: var(--bg-hover);
   }
@@ -525,28 +556,30 @@
   }
 
   .add-account {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 7px;
-    min-height: 30px;
+    align-self: flex-start;
+    gap: 5px;
     margin-top: 2px;
-    padding: 0 8px;
+    padding: 5px 7px;
     border: 0;
-    border-radius: 8px;
+    border-radius: 6px;
     background: transparent;
-    color: var(--muted);
+    color: var(--accent);
     font-size: 11px;
     cursor: pointer;
   }
 
   .add-account:hover {
-    color: var(--text);
     background: var(--bg-hover);
   }
 
   @media (max-width: 820px) {
     .settings-columns {
       grid-template-columns: minmax(0, 1fr);
+    }
+    .settings-columns::after {
+      display: none;
     }
   }
 </style>

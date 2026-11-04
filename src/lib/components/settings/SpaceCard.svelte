@@ -91,7 +91,6 @@
       <span class="space-icon"><SpaceIcon name={space.icon} size={14} /></span>
       <span class="space-name">{space.name}</span>
       {#if unread > 0}<span class="space-unread">{unread}</span>{/if}
-      {#if active}<span class="active-mark">Active</span>{/if}
     </button>
     <div class="space-actions">
       <button
@@ -201,23 +200,28 @@
 <style>
   .space-card {
     position: relative;
-    border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--bg-raised) 70%, var(--bg));
+    border: 0;
+    border-radius: 0;
+    background: transparent;
   }
-  .space-card.active {
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  :global(.space-card + .space-card) {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .space-card.active .space-name {
+    color: var(--accent);
   }
   .space-card.drop-target {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .space-head {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 9px;
+    padding: 4px 0;
   }
   .space-toggle {
     display: flex;
@@ -252,17 +256,7 @@
     font-weight: 700;
     text-align: center;
   }
-  .active-mark {
-    flex: none;
-    padding: 1px 5px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-    color: var(--accent);
-    font-size: 8.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-  }
-  .space-actions,
+    .space-actions,
   .order-actions {
     display: flex;
     gap: 1px;
@@ -297,10 +291,14 @@
     align-items: center;
     gap: 6px;
     min-width: 0;
-    padding: 6px;
-    border: 1px solid transparent;
-    border-radius: 9px;
+    padding: 7px 6px;
+    border: 0;
+    border-radius: 7px;
     cursor: grab;
+  }
+  .account-row + .account-row {
+    border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+    border-radius: 0;
   }
   .account-row:hover {
     background: color-mix(in srgb, var(--bg-hover) 65%, transparent);
