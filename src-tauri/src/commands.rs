@@ -3177,11 +3177,13 @@ pub fn get_theme_settings(
 
 #[tauri::command]
 pub fn set_theme_settings(
+    app: AppHandle,
     state: State<'_, AppState>,
     space_id: i64,
     settings: ThemeSettings,
 ) -> AppResult<ThemeSettings> {
     theme::save_settings(&state.db, space_id, &settings)?;
+    theme::refresh_watch(&state.db, &app)?;
     theme::load_settings(&state.db, space_id)
 }
 

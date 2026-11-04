@@ -524,7 +524,12 @@ export function applyMatugenPalette(payload: unknown): Base16 {
   // Cache the raw palette; applyThemeSettings re-applies the transform from
   // this raw copy, so painting the shifted palette here never double-shifts.
   matugenPalette = palette;
-  applyBase16(shiftPalette(palette, loadPreferences().color_vision));
+  const preferences = loadPreferences();
+  // A stale watcher can deliver a palette after the user left the Matugen
+  // theme. Keep it cached for a later switch, but never repaint another theme.
+  if (preferences.theme_choice === "matugen") {
+    applyBase16(shiftPalette(palette, preferences.color_vision));
+  }
   return palette;
 }
 

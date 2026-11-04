@@ -365,6 +365,20 @@ pub fn set_active_theme_space(
     Ok(())
 }
 
+/// Re-evaluate the watcher for the active space after its theme changes.
+pub fn refresh_watch(db: &Database, app: &AppHandle) -> AppResult<()> {
+    let space_id = ACTIVE_SPACE.load(Ordering::SeqCst);
+    if space_id <= 0 {
+        return Ok(());
+    }
+    if matugen_enabled(db, space_id)? {
+        watch(app.clone(), theme_path(app)?)
+    } else {
+        unwatch();
+        Ok(())
+    }
+}
+
 pub fn watch(app: AppHandle, path: PathBuf) -> AppResult<()> {
     let mut slot = WATCHER
         .lock()
