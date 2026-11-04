@@ -1249,7 +1249,7 @@ impl Database {
                    select 1 from contact_accounts ca where ca.space_id = s.id and ca.kind = 'local'
                  );
                  insert into address_books (contact_account_id, href, name)
-                 select ca.id, 'local', 'Personal'
+                 select ca.id, 'local', 'Local'
                  from contact_accounts ca
                  where ca.kind = 'local'
                    and not exists (
@@ -1257,6 +1257,24 @@ impl Database {
                    );",
             )?;
             conn.pragma_update(None, "user_version", 40)?;
+        }
+        let renamed: i64 = conn.query_row(
+            "select count(*) from settings where key = 'contact-local-book-named'",
+            [],
+            |row| row.get(0),
+        )?;
+        if renamed == 0 {
+            conn.execute(
+                "update address_books set name = 'Local'
+                 where href = 'local' and name = 'Personal'
+                   and contact_account_id in
+                     (select id from contact_accounts where kind = 'local')",
+                [],
+            )?;
+            conn.execute(
+                "insert into settings (key, value) values ('contact-local-book-named', '1')",
+                [],
+            )?;
         }
         // The unreleased local calendar was first named "Personal"; repair
         // databases that already ran version 39 exactly once.

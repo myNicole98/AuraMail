@@ -92,7 +92,7 @@ pub fn ensure_local_space(db: &Database, space_id: i64) -> AppResult<()> {
     )?;
     conn.execute(
         "insert into address_books (contact_account_id, href, name)
-         select ca.id, 'local', 'Personal'
+         select ca.id, 'local', 'Local'
          from contact_accounts ca
          where ca.space_id = ?1 and ca.kind = 'local'
            and not exists (
@@ -146,7 +146,7 @@ pub fn list_address_books(db: &Database, space_id: i64) -> AppResult<Vec<Contact
          from address_books b
          join contact_accounts ca on ca.id = b.contact_account_id
          where ca.space_id = ?1
-         order by case when ca.kind = 'carddav' then 0 else 1 end,
+         order by case when ca.kind = 'local' then 0 else 1 end,
                   ca.position, b.name collate nocase, b.id",
     )?;
     let rows = stmt.query_map(params![space_id], |row| {
@@ -913,7 +913,7 @@ mod tests {
         assert!(list_accounts(&db, space.id).unwrap().is_empty());
         let books = list_address_books(&db, space.id).unwrap();
         assert_eq!(books.len(), 1);
-        assert_eq!(books[0].name, "Personal");
+        assert_eq!(books[0].name, "Local");
         assert_eq!(books[0].id, local_book_id(&db, space.id).unwrap());
     }
 

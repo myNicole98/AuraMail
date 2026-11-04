@@ -28,6 +28,11 @@
 
   const spaceId = $derived(app.activeSpaceId ?? 0);
   const selected = $derived(records.find((record) => record.id === selectedId) ?? null);
+  const localBookValue = $derived(
+    books.find((book) => book.href === "local")
+      ? String(books.find((book) => book.href === "local")!.id)
+      : null
+  );
   const writable = $derived(selected !== null && !selected.readOnly);
 
   async function load(keepSelection = true): Promise<void> {
@@ -165,6 +170,10 @@
 
 <section class="contacts-workspace" aria-label="Contacts">
   <aside class="contacts-sidebar">
+    <button class="new-contact" type="button" onclick={() => (editor = "new")}>
+      <Plus size={15} /> New Contact
+    </button>
+
     <header class="contacts-head">
       <div class="head-title">
         <h2>Contacts</h2>
@@ -184,9 +193,6 @@
           {:else}
             <RefreshCw size={15} />
           {/if}
-        </button>
-        <button class="add-contact" type="button" onclick={() => (editor = "new")}>
-          <Plus size={14} /> Add contact
         </button>
       </div>
     </header>
@@ -210,6 +216,7 @@
           ...books.map((book) => ({ value: String(book.id), label: book.name }))
         ]}
         ariaLabel="Address book filter"
+        separatorAfter={localBookValue}
         onchange={chooseBook}
       />
     </div>
@@ -369,6 +376,26 @@
     background: var(--bg-raised);
   }
 
+  .new-contact {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .new-contact:hover {
+    filter: brightness(1.08);
+  }
+
   .contacts-head {
     display: flex;
     align-items: center;
@@ -398,24 +425,6 @@
     display: flex;
     align-items: center;
     gap: 4px;
-  }
-
-  .add-contact {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 6px 9px;
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    background: var(--bg);
-    color: var(--text);
-    font-size: 11.5px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .add-contact:hover {
-    background: var(--bg-hover);
   }
 
   .filters {

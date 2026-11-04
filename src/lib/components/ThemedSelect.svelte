@@ -7,7 +7,8 @@
     onchange,
     ariaLabel,
     placeholder = "",
-    disabled = false
+    disabled = false,
+    separatorAfter = null
   }: {
     value: string | number;
     options: { value: string; label: string }[];
@@ -15,6 +16,7 @@
     ariaLabel: string;
     placeholder?: string;
     disabled?: boolean;
+    separatorAfter?: string | null;
   } = $props();
 
   let open = $state(false);
@@ -64,6 +66,9 @@
           <span>{option.label}</span>
           {#if option.value === String(value)}<Check size={13} />{/if}
         </button>
+        {#if separatorAfter === option.value && options.at(-1)?.value !== option.value}
+          <div class="option-divider" role="separator"></div>
+        {/if}
       {/each}
     </div>
   {/if}
@@ -140,6 +145,11 @@
   }
   .menu button:hover {
     background: var(--bg-hover);
+  }
+  .option-divider {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--border);
   }
   .menu button[aria-selected="true"] {
     background: color-mix(in srgb, var(--accent) 14%, transparent);
