@@ -37,6 +37,8 @@
     SemanticStatus
   } from "../../types";
   import ToggleSwitch from "../ToggleSwitch.svelte";
+  import SettingsRow from "./SettingsRow.svelte";
+  import SettingsSection from "./SettingsSection.svelte";
   import ThemedSelect from "../ThemedSelect.svelte";
   import { errorMessage } from "./errors";
 
@@ -594,14 +596,15 @@
       Loading AI settings…
     </p>
   {:else}
-    <div class="ai-enable-row">
-      <strong>Enable Aura AI</strong>
-      <ToggleSwitch
-        checked={aiEnabled}
-        label="Enable Aura AI"
-        onchange={(value) => void setAiEnabled(value)}
-      />
-    </div>
+    <SettingsSection title="Aura AI">
+      <SettingsRow label="Enable Aura AI">
+        <ToggleSwitch
+          checked={aiEnabled}
+          label="Enable Aura AI"
+          onchange={(value) => void setAiEnabled(value)}
+        />
+      </SettingsRow>
+    </SettingsSection>
 
     {#if aiEnabled}
     {@const selectedIcons = providerIconUrls(aiProvider)}
@@ -657,15 +660,15 @@
         </span>
       </button>
     {/snippet}
-    <div class="settings-label">
-      <span>Provider &amp; connection</span>
-      <span class="status-pill" class:on={aiConfigured}>
-        <KeyRound size={13} />
-        {aiConfigured ? "Configured" : "Not configured"}
-      </span>
-    </div>
-    <div class="ai-grid">
-      <section class="settings-panel ai-panel">
+    <SettingsSection title="Provider &amp; connection">
+      <div class="ai-status-row">
+        <span class="status-pill" class:on={aiConfigured}>
+          <KeyRound size={13} />
+          {aiConfigured ? "Configured" : "Not configured"}
+        </span>
+      </div>
+      <div class="ai-grid">
+      <section class="ai-panel">
         <div class="panel-head">
           <h4>Provider</h4>
           <button
@@ -778,7 +781,7 @@
         {/if}
       </section>
 
-      <section class="settings-panel ai-panel">
+      <section class="ai-panel">
         <h4>Conversation Model</h4>
         <div class="field">
           {#if aiModels.length > 0}
@@ -880,13 +883,14 @@
         </div>
 
       </section>
-    </div>
+      </div>
+    </SettingsSection>
 
     {#if aiConfigured}
       {@const embeddingProviderIcons = providerIconUrls(embeddingProvider)}
-      <div class="settings-label">Related mail</div>
+      <SettingsSection title="Related mail">
       <div class="ai-grid">
-        <section class="settings-panel ai-panel">
+        <section class="ai-panel">
           <div class="panel-head">
             <h4>Provider</h4>
             <button
@@ -1016,7 +1020,7 @@
           {/if}
         </section>
 
-        <section class="settings-panel ai-panel">
+        <section class="ai-panel">
           <h4>Embedding Model</h4>
           <div class="field">
             {#if embeddingModels.length > 0}
@@ -1105,6 +1109,7 @@
           </div>
         </section>
       </div>
+      </SettingsSection>
       <div class="semantic-footer">
         <div
           class="semantic-status"
@@ -1139,8 +1144,7 @@
       </div>
     {/if}
 
-    <div class="settings-label">Classification &amp; context</div>
-    <section class="settings-panel">
+    <SettingsSection title="Classification &amp; context">
       <div class="settings-row">
         <strong>Classify new mail automatically</strong>
         <ToggleSwitch
@@ -1165,11 +1169,10 @@
           onchange={setFullBodyContext}
         />
       </div>
-    </section>
+    </SettingsSection>
 
     {#if aiConfigured}
-      <div class="settings-label">Writing style</div>
-      <section class="settings-panel">
+      <SettingsSection title="Writing style">
         <div class="settings-row">
           <strong>Match my writing</strong>
           <ToggleSwitch
@@ -1215,7 +1218,7 @@
             </p>
           {/if}
         </div>
-      </section>
+      </SettingsSection>
     {/if}
 
     <div class="form-actions ai-actions">
@@ -1246,22 +1249,6 @@
   .edit-space-row :global(.themed-select) {
     width: 170px;
   }
-  .ai-enable-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 18px;
-    margin-bottom: 14px;
-    padding: 11px 13px;
-    border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-    border-radius: 9px;
-    background: color-mix(in srgb, var(--bg-raised) 55%, var(--bg));
-  }
-  .ai-enable-row strong {
-    color: var(--text-strong);
-    font-size: 11px;
-    font-weight: 650;
-  }
   .status-pill {
     display: inline-flex;
     align-items: center;
@@ -1287,10 +1274,27 @@
     align-items: start;
   }
   .ai-panel {
-    padding-bottom: 16px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .ai-status-row {
+    display: flex;
+    justify-content: flex-end;
+    padding: 4px 0 10px;
+  }
+  .ai-panel > h4 {
+    display: flex;
+    align-items: center;
+    min-height: 26px;
+    margin: 0;
+    color: var(--text);
+    font-size: 11.5px;
+    font-weight: 620;
   }
   .ai-panel > h4 + .field {
-    margin-top: 9px;
+    margin-top: 4px;
   }
   .ai-field {
     margin-top: 12px;
@@ -1300,6 +1304,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    min-height: 26px;
+    margin-bottom: 4px;
   }
   .panel-head h4 {
     margin: 0;
