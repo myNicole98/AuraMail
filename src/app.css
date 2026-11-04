@@ -32,19 +32,19 @@
    blocks below override these with their hand-tuned values; named palettes and
    Matugen derive the same gentle steps from their own Base16 colors. */
 html[data-theme-dark="true"] {
-  --bg-app: color-mix(in srgb, var(--base00) 78%, #000);
-  --bg-raised: color-mix(in srgb, var(--base00) 42%, var(--base02));
-  --bg-sidebar: color-mix(in srgb, var(--base00) 68%, var(--base02));
-  --bg-list: color-mix(in srgb, var(--base00) 86%, var(--base02));
+  --bg-app: color-mix(in srgb, var(--base00) 90%, #000);
+  --bg-raised: color-mix(in srgb, var(--base00) 88%, #fff);
+  --bg-sidebar: color-mix(in srgb, var(--base00) 94%, #000);
+  --bg-list: color-mix(in srgb, var(--base00) 97%, #000);
   --accent-text: color-mix(in srgb, var(--accent) 72%, var(--text));
   --muted-soft: color-mix(in srgb, var(--muted) 76%, var(--base00));
 }
 
 html[data-theme-dark="false"] {
-  --bg-app: color-mix(in srgb, var(--base00) 92%, var(--base03));
-  --bg-raised: color-mix(in srgb, var(--base00) 35%, #ffffff);
-  --bg-sidebar: color-mix(in srgb, var(--base00) 88%, var(--base03));
-  --bg-list: color-mix(in srgb, var(--base00) 96%, var(--base03));
+  --bg-app: color-mix(in srgb, var(--base00) 92%, #000);
+  --bg-raised: color-mix(in srgb, var(--base00) 40%, #fff);
+  --bg-sidebar: color-mix(in srgb, var(--base00) 94%, #000);
+  --bg-list: color-mix(in srgb, var(--base00) 97%, #000);
   --accent-text: var(--accent);
   --muted-soft: color-mix(in srgb, var(--muted) 82%, var(--base00));
 }
@@ -66,10 +66,7 @@ html[data-theme-scheme="Aura Dark"] {
 }
 
 html[data-theme-scheme="Matugen"] {
-  --bg: color-mix(in srgb, var(--base02) 70%, var(--base00));
-  --bg-raised: var(--base02);
-  --bg-hover: var(--base07);
-  --border: color-mix(in srgb, var(--base03) 56%, var(--base02));
+  --border: color-mix(in srgb, var(--base03) 70%, var(--base02));
 }
 
 /* Solid + Straight Matugen keeps its original single-gradient shell. Glass
