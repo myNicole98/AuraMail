@@ -7,8 +7,7 @@
   import BootSplash from "./BootSplash.svelte";
   import Calendar from "./Calendar.svelte";
   import Contacts from "./Contacts.svelte";
-  import GlowBackdrop from "./GlowBackdrop.svelte";
-  import MessageList from "./MessageList.svelte";
+    import MessageList from "./MessageList.svelte";
   import Reader from "./Reader.svelte";
   import Settings from "./Settings.svelte";
   import Sidebar from "./Sidebar.svelte";
@@ -520,9 +519,6 @@
 />
 
 
-{#if splashDone && !onboardingDue}
-  <GlowBackdrop />
-{/if}
 {#if !app.booted || !splashDone}
   <div
     class="boot-layer"

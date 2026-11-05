@@ -15,12 +15,10 @@
 <span
   class="style-preview"
   class:compact
-  class:glass={background === "glass"}
+  class:modern={background === "modern"}
   class:rounded={panes === "rounded"}
   aria-hidden="true"
 >
-  <span class="style-preview-glow one"></span>
-  <span class="style-preview-glow two"></span>
   <span class="style-preview-side">
     <span class="style-preview-brand"></span>
     <span class="style-preview-nav active"></span>
@@ -62,33 +60,6 @@
   .style-preview.compact {
     height: 54px;
   }
-  .style-preview-glow {
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(18px);
-    opacity: 0;
-    pointer-events: none;
-  }
-  .style-preview-glow.one {
-    top: -18%;
-    left: 28%;
-    width: 72%;
-    height: 92%;
-    background: var(--accent);
-  }
-  .style-preview-glow.two {
-    bottom: -18%;
-    left: -12%;
-    width: 58%;
-    height: 82%;
-    background: var(--info);
-  }
-  .style-preview.glass .style-preview-glow.one {
-    opacity: 0.62;
-  }
-  .style-preview.glass .style-preview-glow.two {
-    opacity: 0.46;
-  }
   .style-preview-side {
     position: relative;
     z-index: 1;
@@ -110,11 +81,16 @@
     min-width: 0;
     background: var(--bg);
   }
-  .style-preview.glass .style-preview-side {
-    background: color-mix(in srgb, var(--bg-raised) 76%, transparent);
+  .style-preview.modern {
+    background: var(--bg-app);
   }
-  .style-preview.glass .style-preview-main {
-    background: color-mix(in srgb, var(--bg) 74%, transparent);
+  .style-preview.modern .style-preview-side {
+    background: color-mix(in srgb, var(--bg-raised) 72%, transparent);
+    border-color: color-mix(in srgb, var(--text) 12%, transparent);
+  }
+  .style-preview.modern .style-preview-main {
+    background: color-mix(in srgb, var(--bg) 76%, transparent);
+    border-color: color-mix(in srgb, var(--text) 12%, transparent);
   }
   .style-preview.rounded {
     padding: 3px;
@@ -129,8 +105,8 @@
   .style-preview.rounded .style-preview-side {
     border-right: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
   }
-  .style-preview.rounded:not(.glass) .style-preview-side,
-  .style-preview.rounded:not(.glass) .style-preview-main {
+  .style-preview.rounded:not(.modern) .style-preview-side,
+  .style-preview.rounded:not(.modern) .style-preview-main {
     background: var(--bg-raised);
   }
   .style-preview-brand {

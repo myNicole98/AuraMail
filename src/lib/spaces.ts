@@ -82,7 +82,7 @@ function themeChoice(value: unknown): ThemeChoice {
 }
 
 function themeBackground(value: unknown): ThemeBackground {
-  return value === "glass" ? "glass" : "solid";
+  return value === "modern" || value === "glass" ? "modern" : "solid";
 }
 
 function themePanes(value: unknown): ThemePanes {

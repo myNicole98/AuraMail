@@ -23,11 +23,11 @@ import {
 } from "./spaces";
 
 export type { ThemeChoice };
-export type ThemeBackground = "solid" | "glass";
+export type ThemeBackground = "solid" | "modern";
 export type ThemePanes = "straight" | "rounded";
 export const THEME_BACKGROUNDS: { id: ThemeBackground; label: string }[] = [
   { id: "solid", label: "Solid" },
-  { id: "glass", label: "Glass" }
+  { id: "modern", label: "Modern" }
 ];
 export const THEME_PANES: { id: ThemePanes; label: string }[] = [
   { id: "straight", label: "Straight" },
@@ -181,7 +181,8 @@ export function defaultPreferences(): SettingsPreferences {
 }
 
 function normalizeThemeBackground(value: unknown): ThemeBackground {
-  return value === "glass" ? "glass" : "solid";
+  // "glass" is the pre-0.7 name for the same translucent-pane mode.
+  return value === "modern" || value === "glass" ? "modern" : "solid";
 }
 
 function normalizeThemePanes(value: unknown): ThemePanes {
@@ -192,8 +193,8 @@ function legacyThemeShape(style: unknown): {
   background: ThemeBackground;
   panes: ThemePanes;
 } {
-  if (style === "frosted") return { background: "glass", panes: "straight" };
-  if (style === "fancy") return { background: "glass", panes: "rounded" };
+  if (style === "frosted") return { background: "modern", panes: "straight" };
+  if (style === "fancy") return { background: "modern", panes: "rounded" };
   return { background: "solid", panes: "straight" };
 }
 
@@ -489,7 +490,7 @@ function applyThemeShapeAttributes(
   const root = document.documentElement;
   root.dataset.themeBackground = background;
   root.dataset.themePanes = panes;
-  root.dataset.themeGlass = background === "glass" ? "true" : "false";
+  root.dataset.themeModern = background === "modern" ? "true" : "false";
 }
 
 export function applyThemePreferences(

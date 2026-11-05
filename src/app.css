@@ -69,9 +69,8 @@ html[data-theme-scheme="Matugen"] {
   --border: color-mix(in srgb, var(--base03) 70%, var(--base02));
 }
 
-/* Solid + Straight Matugen keeps its original single-gradient shell. Glass
-   replaces it with the layered glow field below. */
-html[data-theme-scheme="Matugen"]:not([data-theme-glass="true"])[data-theme-panes="straight"] .shell {
+/* Solid + Straight Matugen keeps its original single-gradient shell. */
+html[data-theme-scheme="Matugen"]:not([data-theme-modern="true"])[data-theme-panes="straight"] .shell {
   background: linear-gradient(
     145deg,
     var(--bg),
@@ -79,66 +78,51 @@ html[data-theme-scheme="Matugen"]:not([data-theme-glass="true"])[data-theme-pane
   );
 }
 
-/* Glass is the layered glow field behind the workspace. The separate pane
+/* Modern keeps translucent panes over the solid app background. The pane
    shape is controlled independently by data-theme-panes. */
-html[data-theme-glass="true"] {
-  --glow-primary: var(--base0D);
-  --glow-secondary: var(--base0C);
-  --glow-tertiary: var(--base0E);
-  --glow-1: color-mix(in srgb, var(--glow-primary) 15%, transparent);
-  --glow-2: color-mix(in srgb, var(--glow-secondary) 14%, transparent);
-  --glow-3: color-mix(in srgb, var(--glow-tertiary) 15%, transparent);
-  --glow-4: color-mix(in srgb, var(--glow-primary) 8%, transparent);
-  --glow-5: color-mix(in srgb, var(--glow-secondary) 5%, transparent);
-  --glass-surface: color-mix(in srgb, var(--bg) 62%, transparent);
-  --glass-nav: color-mix(in srgb, var(--bg-raised) 52%, transparent);
-  --glass-list: color-mix(in srgb, var(--bg-raised) 50%, transparent);
-  --glass-reader: color-mix(in srgb, var(--bg) 56%, transparent);
-  --glass-raised: color-mix(in srgb, var(--bg-raised) 64%, transparent);
-  --glass-hover: color-mix(in srgb, var(--bg-hover) 70%, transparent);
-  --glass-edge: color-mix(in srgb, var(--text) 14%, transparent);
-  --glass-border: var(--glass-edge);
-  --glass-highlight: inset 0 1px 0 color-mix(in srgb, #fff 11%, transparent);
-  --glass-selected: color-mix(in srgb, var(--accent) 18%, transparent);
-  --glass-selected-strong: color-mix(in srgb, var(--accent) 26%, transparent);
-  --glass-shadow:
+html[data-theme-modern="true"] {
+  --modern-surface: color-mix(in srgb, var(--bg) 62%, transparent);
+  --modern-nav: color-mix(in srgb, var(--bg-raised) 52%, transparent);
+  --modern-list: color-mix(in srgb, var(--bg-raised) 50%, transparent);
+  --modern-reader: color-mix(in srgb, var(--bg) 56%, transparent);
+  --modern-raised: color-mix(in srgb, var(--bg-raised) 64%, transparent);
+  --modern-hover: color-mix(in srgb, var(--bg-hover) 70%, transparent);
+  --modern-edge: color-mix(in srgb, var(--text) 14%, transparent);
+  --modern-border: var(--modern-edge);
+  --modern-highlight: inset 0 1px 0 color-mix(in srgb, #fff 11%, transparent);
+  --modern-selected: color-mix(in srgb, var(--accent) 18%, transparent);
+  --modern-selected-strong: color-mix(in srgb, var(--accent) 26%, transparent);
+  --modern-shadow:
     0 22px 60px color-mix(in srgb, #000 34%, transparent),
     0 3px 12px color-mix(in srgb, #000 20%, transparent);
-  --glass-blur: 24px;
-  --glass-blur-strong: 32px;
-  --glass-saturate: 1.35;
-  --glass-muted: color-mix(in srgb, var(--base04) 58%, var(--base05));
-  --pane-border: var(--glass-border);
-  --pane-highlight: var(--glass-highlight);
+  --modern-blur: 24px;
+  --modern-blur-strong: 32px;
+  --modern-saturate: 1.35;
+  --modern-muted: color-mix(in srgb, var(--base04) 58%, var(--base05));
+  --pane-border: var(--modern-border);
+  --pane-highlight: var(--modern-highlight);
   --pane-shadow:
     0 10px 28px color-mix(in srgb, #000 18%, transparent),
     0 2px 6px color-mix(in srgb, #000 12%, transparent);
 }
 
 /* Matugen has real primary/secondary/tertiary roles from the wallpaper. */
-html[data-theme-glass="true"][data-theme-scheme="Matugen"] {
-  --glow-secondary: var(--base0A);
-  --glow-tertiary: var(--base09);
+html[data-theme-modern="true"][data-theme-scheme="Matugen"] {
 }
 
-html[data-theme-glass="true"] body {
+html[data-theme-modern="true"] body {
   background-color: var(--bg);
 }
 
-html[data-theme-glass="true"][data-theme-dark="false"] {
-  --glow-1: color-mix(in srgb, var(--glow-primary) 9%, transparent);
-  --glow-2: color-mix(in srgb, var(--glow-secondary) 9%, transparent);
-  --glow-3: color-mix(in srgb, var(--glow-tertiary) 10%, transparent);
-  --glow-4: color-mix(in srgb, var(--glow-primary) 6%, transparent);
-  --glow-5: color-mix(in srgb, var(--glow-secondary) 5%, transparent);
-  --glass-surface: color-mix(in srgb, var(--bg) 74%, transparent);
-  --glass-nav: color-mix(in srgb, var(--bg-raised) 68%, transparent);
-  --glass-list: color-mix(in srgb, var(--bg) 66%, transparent);
-  --glass-reader: color-mix(in srgb, var(--bg) 70%, transparent);
-  --glass-raised: color-mix(in srgb, var(--bg-raised) 78%, transparent);
-  --glass-border: color-mix(in srgb, var(--text) 10%, transparent);
-  --glass-highlight: inset 0 1px 0 color-mix(in srgb, #fff 50%, transparent);
-  --glass-shadow:
+html[data-theme-modern="true"][data-theme-dark="false"] {
+  --modern-surface: color-mix(in srgb, var(--bg) 74%, transparent);
+  --modern-nav: color-mix(in srgb, var(--bg-raised) 68%, transparent);
+  --modern-list: color-mix(in srgb, var(--bg) 66%, transparent);
+  --modern-reader: color-mix(in srgb, var(--bg) 70%, transparent);
+  --modern-raised: color-mix(in srgb, var(--bg-raised) 78%, transparent);
+  --modern-border: color-mix(in srgb, var(--text) 10%, transparent);
+  --modern-highlight: inset 0 1px 0 color-mix(in srgb, #fff 50%, transparent);
+  --modern-shadow:
     0 22px 58px color-mix(in srgb, #000 18%, transparent),
     0 3px 12px color-mix(in srgb, #000 10%, transparent);
   --pane-shadow:
@@ -146,53 +130,45 @@ html[data-theme-glass="true"][data-theme-dark="false"] {
     0 2px 5px color-mix(in srgb, #000 6%, transparent);
 }
 
-/* Aura Dark keeps its neutral identity. The glow layers are neutral gray
-   depth; colour stays in controls and accents. */
-html[data-theme-glass="true"][data-theme-scheme="Aura Dark"] {
-  --glow-primary: var(--base04);
-  --glow-secondary: var(--base03);
-  --glow-tertiary: var(--base02);
-  --glow-1: color-mix(in srgb, var(--glow-primary) 12%, transparent);
-  --glow-2: color-mix(in srgb, var(--glow-secondary) 34%, transparent);
-  --glow-3: color-mix(in srgb, var(--glow-secondary) 24%, transparent);
-  --glow-4: color-mix(in srgb, var(--glow-tertiary) 42%, transparent);
-  --glass-nav: color-mix(in srgb, var(--base00) 62%, transparent);
-  --glass-list: color-mix(in srgb, var(--base00) 58%, transparent);
-  --glass-reader: color-mix(in srgb, var(--base00) 64%, transparent);
-  --glass-edge: color-mix(in srgb, var(--text) 14%, transparent);
+/* Aura Dark keeps its neutral identity. Colour stays in controls and accents. */
+html[data-theme-modern="true"][data-theme-scheme="Aura Dark"] {
+  --modern-nav: color-mix(in srgb, var(--base00) 62%, transparent);
+  --modern-list: color-mix(in srgb, var(--base00) 58%, transparent);
+  --modern-reader: color-mix(in srgb, var(--base00) 64%, transparent);
+  --modern-edge: color-mix(in srgb, var(--text) 14%, transparent);
 }
 
-html[data-theme-glass="true"] .shell {
+html[data-theme-modern="true"] .shell {
   position: relative;
   z-index: 1;
   padding: 0;
   column-gap: 0;
   row-gap: 0;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--modern-border);
   background: transparent;
 }
 
-html[data-theme-glass="true"] .shell > .sidebar,
-html[data-theme-glass="true"] .shell > .message-list,
-html[data-theme-glass="true"] .shell > .reader {
+html[data-theme-modern="true"] .shell > .sidebar,
+html[data-theme-modern="true"] .shell > .message-list,
+html[data-theme-modern="true"] .shell > .reader {
   border: 0;
   border-radius: 0;
   box-shadow: none;
 }
 
-html[data-theme-glass="true"] .shell > .sidebar {
-  background-color: var(--glass-nav);
+html[data-theme-modern="true"] .shell > .sidebar {
+  background-color: var(--modern-nav);
 }
 
-html[data-theme-glass="true"] .shell > .message-list {
-  background-color: var(--glass-list);
+html[data-theme-modern="true"] .shell > .message-list {
+  background-color: var(--modern-list);
 }
 
-html[data-theme-glass="true"] .shell > .reader {
-  background-color: var(--glass-reader);
+html[data-theme-modern="true"] .shell > .reader {
+  background-color: var(--modern-reader);
 }
 
-/* The rail and the folder sidebar float as glass cards. The mail list and
+/* The rail and the folder sidebar float as modern cards. The mail list and
    reader share one surface, divided only by their splitter. */
 html[data-theme-panes="rounded"] .shell > .sidebar,
 html[data-theme-panes="rounded"] .shell > .app-rail {
@@ -276,11 +252,11 @@ html[data-theme-panes="rounded"] .calendar-main {
   overflow: hidden;
 }
 
-html[data-theme-panes="rounded"]:not([data-theme-glass="true"]) .calendar-sidebar {
+html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .calendar-sidebar {
   background-color: var(--bg-raised);
 }
 
-html[data-theme-panes="rounded"]:not([data-theme-glass="true"]) .calendar-main {
+html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .calendar-main {
   background-color: color-mix(in srgb, var(--bg) 84%, var(--bg-raised));
 }
 
@@ -290,86 +266,86 @@ html[data-high-contrast="true"][data-theme-panes="rounded"] .calendar-main {
   box-shadow: none;
 }
 
-/* Calendar surfaces use the same translucent glass language as the mail
+/* Calendar surfaces use the same translucent modern language as the mail
    panes in every view, not just the month grid. */
-html[data-theme-glass="true"] .calendar-workspace {
+html[data-theme-modern="true"] .calendar-workspace {
   background: transparent;
 }
 
-html[data-theme-glass="true"] .calendar-sidebar {
-  background-color: var(--glass-nav);
-  border-color: var(--glass-border);
+html[data-theme-modern="true"] .calendar-sidebar {
+  background-color: var(--modern-nav);
+  border-color: var(--modern-border);
 }
 
-html[data-theme-glass="true"] .calendar-main {
-  background-color: var(--glass-reader);
-  border-color: var(--glass-border);
+html[data-theme-modern="true"] .calendar-main {
+  background-color: var(--modern-reader);
+  border-color: var(--modern-border);
 }
 
-html[data-theme-glass="true"] .calendar-toolbar,
-html[data-theme-glass="true"] .time-head-spacer,
-html[data-theme-glass="true"] .day-head,
-html[data-theme-glass="true"] .month-header-row {
-  background-color: var(--glass-raised);
+html[data-theme-modern="true"] .calendar-toolbar,
+html[data-theme-modern="true"] .time-head-spacer,
+html[data-theme-modern="true"] .day-head,
+html[data-theme-modern="true"] .month-header-row {
+  background-color: var(--modern-raised);
   border-color: color-mix(in srgb, var(--text) 8%, transparent);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--modern-blur)) saturate(var(--modern-saturate));
+  backdrop-filter: blur(var(--modern-blur)) saturate(var(--modern-saturate));
 }
 
-html[data-theme-glass="true"] .time-axis {
-  background-color: var(--glass-nav);
+html[data-theme-modern="true"] .time-axis {
+  background-color: var(--modern-nav);
   border-color: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
-html[data-theme-glass="true"] .time-column {
+html[data-theme-modern="true"] .time-column {
   background-color: color-mix(in srgb, var(--bg) 24%, transparent);
   border-color: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
-html[data-theme-glass="true"] .month-day {
+html[data-theme-modern="true"] .month-day {
   border-color: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
-html[data-theme-glass="true"] .time-event {
+html[data-theme-modern="true"] .time-event {
   background-color: color-mix(in srgb, var(--accent) 16%, transparent);
-  box-shadow: var(--glass-highlight);
+  box-shadow: var(--modern-highlight);
 }
 
-html[data-theme-glass="true"] .view-switcher {
+html[data-theme-modern="true"] .view-switcher {
   background-color: color-mix(in srgb, var(--bg) 34%, transparent);
-  border-color: var(--glass-border);
+  border-color: var(--modern-border);
 }
 
-html[data-theme-glass="true"] .view-switcher button.active,
-html[data-theme-glass="true"] .mini-day.selected {
-  background-color: var(--glass-selected);
+html[data-theme-modern="true"] .view-switcher button.active,
+html[data-theme-modern="true"] .mini-day.selected {
+  background-color: var(--modern-selected);
 }
 
-html[data-theme-glass="true"] .day-head:hover,
-html[data-theme-glass="true"] .month-day:hover,
-html[data-theme-glass="true"] .calendar-row:hover,
-html[data-theme-glass="true"] .mini-day:hover,
-html[data-theme-glass="true"] .icon-button:hover:not(:disabled),
-html[data-theme-glass="true"] .mini-nav:hover:not(:disabled),
-html[data-theme-glass="true"] .add-calendar-button:hover {
+html[data-theme-modern="true"] .day-head:hover,
+html[data-theme-modern="true"] .month-day:hover,
+html[data-theme-modern="true"] .calendar-row:hover,
+html[data-theme-modern="true"] .mini-day:hover,
+html[data-theme-modern="true"] .icon-button:hover:not(:disabled),
+html[data-theme-modern="true"] .mini-nav:hover:not(:disabled),
+html[data-theme-modern="true"] .add-calendar-button:hover {
   background-color: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
-html[data-theme-glass="true"] .calendar-context-menu,
-html[data-theme-glass="true"] .date-picker,
-html[data-theme-glass="true"] .event-popover {
-  background: var(--glass-raised);
-  border-color: var(--glass-border);
-  -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(var(--glass-saturate));
-  backdrop-filter: blur(var(--glass-blur-strong)) saturate(var(--glass-saturate));
+html[data-theme-modern="true"] .calendar-context-menu,
+html[data-theme-modern="true"] .date-picker,
+html[data-theme-modern="true"] .event-popover {
+  background: var(--modern-raised);
+  border-color: var(--modern-border);
+  -webkit-backdrop-filter: blur(var(--modern-blur-strong)) saturate(var(--modern-saturate));
+  backdrop-filter: blur(var(--modern-blur-strong)) saturate(var(--modern-saturate));
   box-shadow: 0 18px 46px color-mix(in srgb, #000 26%, transparent);
 }
 
 /* Keep the event editor free of backdrop-filter: it would become the
    containing block for the fixed date picker and clip it. */
-html[data-theme-glass="true"] .event-dialog {
-  background: var(--glass-raised);
-  border-color: var(--glass-border);
+html[data-theme-modern="true"] .event-dialog {
+  background: var(--modern-raised);
+  border-color: var(--modern-border);
   box-shadow: 0 18px 46px color-mix(in srgb, #000 26%, transparent);
 }
 
@@ -381,14 +357,14 @@ html[data-theme-panes="rounded"] .shell {
   background: transparent;
 }
 
-/* Solid panes draw straight on the theme background; the glass variants get
+/* Solid panes draw straight on the theme background; the modern variants get
    a whisper of tint so the content still reads as a surface. */
-html[data-theme-panes="rounded"]:not([data-theme-glass="true"]) .shell > .sidebar {
+html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .shell > .sidebar {
   background-color: var(--bg-raised);
 }
 
-html[data-theme-panes="rounded"]:not([data-theme-glass="true"]) .shell > .message-list,
-html[data-theme-panes="rounded"]:not([data-theme-glass="true"]) .shell > .reader {
+html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .shell > .message-list,
+html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .shell > .reader {
   background-color: transparent;
 }
 
@@ -400,28 +376,28 @@ html[data-theme-panes="rounded"] .shell > .reader {
   height: auto;
 }
 
-/* The glass overlay spans the whole shell, not just the mail panes: one
+/* The modern overlay spans the whole shell, not just the mail panes: one
    translucent background behind the floating cards, so no seam can appear at
    the mail viewer's left edge. */
-html[data-theme-glass="true"][data-theme-panes="rounded"] .shell {
+html[data-theme-modern="true"][data-theme-panes="rounded"] .shell {
   background-color: color-mix(in srgb, var(--bg-raised) 22%, transparent);
 }
 
-html[data-theme-glass="true"][data-theme-panes="rounded"] .shell > .message-list,
-html[data-theme-glass="true"][data-theme-panes="rounded"] .shell > .reader {
+html[data-theme-modern="true"][data-theme-panes="rounded"] .shell > .message-list,
+html[data-theme-modern="true"][data-theme-panes="rounded"] .shell > .reader {
   background-color: transparent;
 }
 
-html[data-theme-glass="true"] .shell > .sidebar,
-html[data-theme-glass="true"] .shell > .message-list,
-html[data-theme-glass="true"] .shell > .reader,
-html[data-theme-glass="true"] .settings-root,
-html[data-theme-glass="true"] .composer,
-html[data-theme-glass="true"] .onboarding {
-  --muted: var(--glass-muted);
+html[data-theme-modern="true"] .shell > .sidebar,
+html[data-theme-modern="true"] .shell > .message-list,
+html[data-theme-modern="true"] .shell > .reader,
+html[data-theme-modern="true"] .settings-root,
+html[data-theme-modern="true"] .composer,
+html[data-theme-modern="true"] .onboarding {
+  --muted: var(--modern-muted);
 }
 
-html[data-theme-glass="true"] .reader-main {
+html[data-theme-modern="true"] .reader-main {
   background: transparent;
   box-shadow: none;
 }
@@ -429,28 +405,28 @@ html[data-theme-glass="true"] .reader-main {
 /* WebKitGTK can leave stale paint tiles when translucent rows are combined
    with content-visibility/contain/will-change. Frosted trades those
    optimizations for correct painting. */
-html[data-theme-glass="true"] .rows {
+html[data-theme-modern="true"] .rows {
   contain: none;
   will-change: auto;
 }
 
-html[data-theme-glass="true"] .row {
+html[data-theme-modern="true"] .row {
   content-visibility: visible;
   contain-intrinsic-block-size: auto;
   border-bottom-color: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
-html[data-theme-glass="true"] .row::before {
+html[data-theme-modern="true"] .row::before {
   opacity: 0.65;
 }
 
-html[data-theme-glass="true"] .row.unread::before,
-html[data-theme-glass="true"] .row.selected::before {
+html[data-theme-modern="true"] .row.unread::before,
+html[data-theme-modern="true"] .row.selected::before {
   opacity: 1;
 }
 
-html[data-theme-glass="true"] .list-head,
-html[data-theme-glass="true"] .reader-head {
+html[data-theme-modern="true"] .list-head,
+html[data-theme-modern="true"] .reader-head {
   background: transparent;
   border-bottom-color: color-mix(in srgb, var(--text) 6%, transparent);
   box-shadow: none;
@@ -458,39 +434,39 @@ html[data-theme-glass="true"] .reader-head {
   backdrop-filter: none;
 }
 
-html[data-theme-glass="true"] .settings-header,
-html[data-theme-glass="true"] .settings-tabs,
-html[data-theme-glass="true"] .composer-head,
-html[data-theme-glass="true"] .composer-foot {
-  background: var(--glass-raised);
-  box-shadow: var(--glass-highlight);
+html[data-theme-modern="true"] .settings-header,
+html[data-theme-modern="true"] .settings-tabs,
+html[data-theme-modern="true"] .composer-head,
+html[data-theme-modern="true"] .composer-foot {
+  background: var(--modern-raised);
+  box-shadow: var(--modern-highlight);
 }
 
-html[data-theme-glass="true"] .search {
+html[data-theme-modern="true"] .search {
   background: color-mix(in srgb, var(--bg) 34%, transparent);
   border-color: color-mix(in srgb, var(--text) 10%, transparent);
 }
 
-html[data-theme-glass="true"] .bulk-bar {
+html[data-theme-modern="true"] .bulk-bar {
   background: color-mix(in srgb, var(--text) 4%, transparent);
   border-bottom-color: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
-html[data-theme-glass="true"] .bulk-bar button {
+html[data-theme-modern="true"] .bulk-bar button {
   color: var(--text);
 }
 
-html[data-theme-glass="true"] .bulk-bar button:disabled {
+html[data-theme-modern="true"] .bulk-bar button:disabled {
   color: var(--muted);
   opacity: 0.72;
 }
 
-html[data-theme-glass="true"] .splitter {
+html[data-theme-modern="true"] .splitter {
   width: 100%;
-  background: var(--glass-border);
+  background: var(--modern-border);
 }
 
-html[data-theme-glass="true"] .splitter:focus-visible {
+html[data-theme-modern="true"] .splitter:focus-visible {
   background: var(--accent);
 }
 
@@ -505,177 +481,166 @@ html[data-theme-panes="rounded"] .splitter:focus-visible {
   border-radius: 999px;
 }
 
-html[data-theme-glass="true"] .nav-item {
+html[data-theme-modern="true"] .nav-item {
   border-radius: 7px;
   transition: background-color 120ms ease, box-shadow 120ms ease;
 }
 
-html[data-theme-glass="true"] .nav-item:hover:not(.active),
-html[data-theme-glass="true"] .row:hover:not(.selected):not(.checked) {
+html[data-theme-modern="true"] .nav-item:hover:not(.active),
+html[data-theme-modern="true"] .row:hover:not(.selected):not(.checked) {
   background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
-html[data-theme-glass="true"] .nav-item.active {
-  background: var(--glass-selected);
+html[data-theme-modern="true"] .nav-item.active {
+  background: var(--modern-selected);
   border-radius: 7px;
   box-shadow: none;
   outline: 0;
 }
 
-html[data-theme-glass="true"] .row.selected {
+html[data-theme-modern="true"] .row.selected {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   box-shadow: none;
 }
 
-html[data-theme-glass="true"] .row.checked {
+html[data-theme-modern="true"] .row.checked {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent),
-    var(--glass-highlight);
+    var(--modern-highlight);
 }
 
-html[data-theme-glass="true"] .row-actions {
+html[data-theme-modern="true"] .row-actions {
   display: none;
   background: color-mix(in srgb, var(--bg) 62%, transparent);
   border: 0;
   box-shadow: none;
 }
 
-html[data-theme-glass="true"] .row:hover .row-actions {
+html[data-theme-modern="true"] .row:hover .row-actions {
   display: flex;
 }
 
-html[data-theme-glass="true"] .shell > .sidebar .sidebar-foot {
+html[data-theme-modern="true"] .shell > .sidebar .sidebar-foot {
   border-top-color: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
-html[data-theme-glass="true"] .settings-tab.active .settings-tab-icon {
+html[data-theme-modern="true"] .settings-tab.active .settings-tab-icon {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
-    var(--glass-highlight),
+    var(--modern-highlight),
     0 4px 14px color-mix(in srgb, #000 14%, transparent);
 }
 
-html[data-theme-glass="true"] .theme-option.active,
-html[data-theme-glass="true"] .layout-option.active,
-html[data-theme-glass="true"] .preview-option.active {
+html[data-theme-modern="true"] .theme-option.active,
+html[data-theme-modern="true"] .layout-option.active,
+html[data-theme-modern="true"] .preview-option.active {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
-    var(--glass-highlight),
+    var(--modern-highlight),
     0 6px 18px color-mix(in srgb, #000 12%, transparent);
 }
 
-html[data-theme-glass="true"] .provider-menu button.active {
+html[data-theme-modern="true"] .provider-menu button.active {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-html[data-theme-glass="true"] .settings-layer {
+html[data-theme-modern="true"] .settings-layer {
   background: transparent;
 }
 
-html[data-theme-glass="true"] .settings-root {
+html[data-theme-modern="true"] .settings-root {
   background: color-mix(in srgb, var(--bg) 94%, transparent);
 }
 
-html[data-theme-glass="true"] .settings-header,
-html[data-theme-glass="true"] .settings-tabs {
+html[data-theme-modern="true"] .settings-header,
+html[data-theme-modern="true"] .settings-tabs {
   background: color-mix(in srgb, var(--bg-raised) 94%, transparent);
 }
 
-html[data-theme-glass="true"] .aura-rail {
+html[data-theme-modern="true"] .aura-rail {
   background: color-mix(in srgb, var(--bg-raised) 52%, transparent);
-  border-left-color: var(--glass-border);
+  border-left-color: var(--modern-border);
 }
 
-html[data-theme-glass="true"] .composer {
-  background:
-    radial-gradient(
-      720px 480px at 10% -8%,
-      color-mix(in srgb, var(--glow-primary) 12%, transparent),
-      transparent 64%
-    ),
-    radial-gradient(
-      620px 420px at 100% 108%,
-      color-mix(in srgb, var(--glow-tertiary) 10%, transparent),
-      transparent 68%
-    ),
-    var(--glass-surface);
+html[data-theme-modern="true"] .composer {
+  background: var(--modern-surface);
 }
 
-html[data-theme-glass="true"] .mail-context-menu,
-html[data-theme-glass="true"] .submenu,
-html[data-theme-glass="true"] .provider-menu,
-html[data-theme-glass="true"] .account-menu,
-html[data-theme-glass="true"] .suggestions,
-html[data-theme-glass="true"] .color-menu,
-html[data-theme-glass="true"] .ai-popover,
-html[data-theme-glass="true"] .reply-menu,
-html[data-theme-glass="true"] .theme-toast,
-html[data-theme-glass="true"] .toast {
-  background: var(--glass-raised);
-  border-color: var(--glass-border);
-  -webkit-backdrop-filter: blur(24px) saturate(var(--glass-saturate));
-  backdrop-filter: blur(24px) saturate(var(--glass-saturate));
+html[data-theme-modern="true"] .mail-context-menu,
+html[data-theme-modern="true"] .submenu,
+html[data-theme-modern="true"] .provider-menu,
+html[data-theme-modern="true"] .account-menu,
+html[data-theme-modern="true"] .suggestions,
+html[data-theme-modern="true"] .color-menu,
+html[data-theme-modern="true"] .ai-popover,
+html[data-theme-modern="true"] .reply-menu,
+html[data-theme-modern="true"] .theme-toast,
+html[data-theme-modern="true"] .toast {
+  background: var(--modern-raised);
+  border-color: var(--modern-border);
+  -webkit-backdrop-filter: blur(24px) saturate(var(--modern-saturate));
+  backdrop-filter: blur(24px) saturate(var(--modern-saturate));
   box-shadow: 0 18px 46px color-mix(in srgb, #000 24%, transparent);
 }
 
-html[data-theme-glass="true"] .onboarding {
-  background: var(--glass-surface);
+html[data-theme-modern="true"] .onboarding {
+  background: var(--modern-surface);
 }
 
-/* Keep high-contrast mode legible: no translucent glass, grain, or
+/* Keep high-contrast mode legible: no translucent modern, grain, or
    background light masses. */
-html[data-theme-glass="true"][data-high-contrast="true"] {
-  --glass-surface: var(--bg);
-  --glass-nav: var(--bg-raised);
-  --glass-list: var(--bg);
-  --glass-reader: var(--bg);
-  --glass-raised: var(--bg-raised);
-  --glass-hover: var(--bg-hover);
-  --glass-edge: var(--border);
-  --glass-border: var(--border);
-  --glass-highlight: none;
-  --glass-shadow: none;
-  --glass-muted: color-mix(in srgb, var(--base04) 60%, var(--base05));
+html[data-theme-modern="true"][data-high-contrast="true"] {
+  --modern-surface: var(--bg);
+  --modern-nav: var(--bg-raised);
+  --modern-list: var(--bg);
+  --modern-reader: var(--bg);
+  --modern-raised: var(--bg-raised);
+  --modern-hover: var(--bg-hover);
+  --modern-edge: var(--border);
+  --modern-border: var(--border);
+  --modern-highlight: none;
+  --modern-shadow: none;
+  --modern-muted: color-mix(in srgb, var(--base04) 60%, var(--base05));
 }
 
-html[data-theme-glass="true"][data-high-contrast="true"] body {
+html[data-theme-modern="true"][data-high-contrast="true"] body {
   background: var(--bg-app);
 }
 
-html[data-theme-glass="true"][data-high-contrast="true"] .shell > .sidebar,
-html[data-theme-glass="true"][data-high-contrast="true"] .shell > .message-list,
-html[data-theme-glass="true"][data-high-contrast="true"] .shell > .reader,
-html[data-theme-glass="true"][data-high-contrast="true"] .settings-root,
-html[data-theme-glass="true"][data-high-contrast="true"] .aura-rail,
-html[data-theme-glass="true"][data-high-contrast="true"] .composer,
-html[data-theme-glass="true"][data-high-contrast="true"] .onboarding,
-html[data-theme-glass="true"][data-high-contrast="true"] .list-head,
-html[data-theme-glass="true"][data-high-contrast="true"] .reader-head,
-html[data-theme-glass="true"][data-high-contrast="true"] .settings-header,
-html[data-theme-glass="true"][data-high-contrast="true"] .settings-tabs,
-html[data-theme-glass="true"][data-high-contrast="true"] .composer-head,
-html[data-theme-glass="true"][data-high-contrast="true"] .composer-foot,
-html[data-theme-glass="true"][data-high-contrast="true"] .mail-context-menu,
-html[data-theme-glass="true"][data-high-contrast="true"] .provider-menu,
-html[data-theme-glass="true"][data-high-contrast="true"] .calendar-toolbar,
-html[data-theme-glass="true"][data-high-contrast="true"] .time-head-spacer,
-html[data-theme-glass="true"][data-high-contrast="true"] .day-head,
-html[data-theme-glass="true"][data-high-contrast="true"] .month-header-row,
-html[data-theme-glass="true"][data-high-contrast="true"] .calendar-context-menu,
-html[data-theme-glass="true"][data-high-contrast="true"] .date-picker,
-html[data-theme-glass="true"][data-high-contrast="true"] .event-dialog,
-html[data-theme-glass="true"][data-high-contrast="true"] .event-popover {
+html[data-theme-modern="true"][data-high-contrast="true"] .shell > .sidebar,
+html[data-theme-modern="true"][data-high-contrast="true"] .shell > .message-list,
+html[data-theme-modern="true"][data-high-contrast="true"] .shell > .reader,
+html[data-theme-modern="true"][data-high-contrast="true"] .settings-root,
+html[data-theme-modern="true"][data-high-contrast="true"] .aura-rail,
+html[data-theme-modern="true"][data-high-contrast="true"] .composer,
+html[data-theme-modern="true"][data-high-contrast="true"] .onboarding,
+html[data-theme-modern="true"][data-high-contrast="true"] .list-head,
+html[data-theme-modern="true"][data-high-contrast="true"] .reader-head,
+html[data-theme-modern="true"][data-high-contrast="true"] .settings-header,
+html[data-theme-modern="true"][data-high-contrast="true"] .settings-tabs,
+html[data-theme-modern="true"][data-high-contrast="true"] .composer-head,
+html[data-theme-modern="true"][data-high-contrast="true"] .composer-foot,
+html[data-theme-modern="true"][data-high-contrast="true"] .mail-context-menu,
+html[data-theme-modern="true"][data-high-contrast="true"] .provider-menu,
+html[data-theme-modern="true"][data-high-contrast="true"] .calendar-toolbar,
+html[data-theme-modern="true"][data-high-contrast="true"] .time-head-spacer,
+html[data-theme-modern="true"][data-high-contrast="true"] .day-head,
+html[data-theme-modern="true"][data-high-contrast="true"] .month-header-row,
+html[data-theme-modern="true"][data-high-contrast="true"] .calendar-context-menu,
+html[data-theme-modern="true"][data-high-contrast="true"] .date-picker,
+html[data-theme-modern="true"][data-high-contrast="true"] .event-dialog,
+html[data-theme-modern="true"][data-high-contrast="true"] .event-popover {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
-html[data-theme-glass="true"][data-high-contrast="true"] .shell > .sidebar,
-html[data-theme-glass="true"][data-high-contrast="true"] .shell > .message-list,
-html[data-theme-glass="true"][data-high-contrast="true"] .shell > .reader {
+html[data-theme-modern="true"][data-high-contrast="true"] .shell > .sidebar,
+html[data-theme-modern="true"][data-high-contrast="true"] .shell > .message-list,
+html[data-theme-modern="true"][data-high-contrast="true"] .shell > .reader {
   background-image: none;
   box-shadow: none;
 }
@@ -687,13 +652,13 @@ html[data-high-contrast="true"][data-theme-panes="rounded"] .shell > .reader {
   box-shadow: none;
 }
 
-html[data-theme-glass="true"][data-high-contrast="true"] .settings-root,
-html[data-theme-glass="true"][data-high-contrast="true"] .settings-header,
-html[data-theme-glass="true"][data-high-contrast="true"] .settings-tabs {
+html[data-theme-modern="true"][data-high-contrast="true"] .settings-root,
+html[data-theme-modern="true"][data-high-contrast="true"] .settings-header,
+html[data-theme-modern="true"][data-high-contrast="true"] .settings-tabs {
   background: var(--bg);
 }
 
-html[data-theme-glass="true"][data-high-contrast="true"] .composer {
+html[data-theme-modern="true"][data-high-contrast="true"] .composer {
   background: var(--bg-raised);
 }
 

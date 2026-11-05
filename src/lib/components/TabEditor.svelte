@@ -318,11 +318,11 @@
     color: var(--text);
     animation: editor-in 140ms ease-out both;
   }
-  :global(html[data-theme-glass="true"]) .editor {
-    background: var(--glass-raised);
-    border-color: var(--glass-border);
-    -webkit-backdrop-filter: blur(24px) saturate(var(--glass-saturate));
-    backdrop-filter: blur(24px) saturate(var(--glass-saturate));
+  :global(html[data-theme-modern="true"]) .editor {
+    background: var(--modern-raised);
+    border-color: var(--modern-border);
+    -webkit-backdrop-filter: blur(24px) saturate(var(--modern-saturate));
+    backdrop-filter: blur(24px) saturate(var(--modern-saturate));
   }
   form {
     display: flex;

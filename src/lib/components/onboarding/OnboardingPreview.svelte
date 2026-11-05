@@ -134,7 +134,7 @@
 <div class="preview" aria-hidden="true">
   <div
     class="mail"
-    class:glass={background === "glass"}
+    class:modern={background === "modern"}
     class:rounded={panes === "rounded"}
     class:focus={appearance.layoutMode === "reader"}
     class:stacked={appearance.layoutMode === "stacked"}
@@ -743,19 +743,19 @@
     font-size: 7px;
     line-height: 1.5;
   }
-  .mail.glass {
+  .mail.modern {
     border-color: color-mix(in srgb, var(--text) 12%, transparent);
-    background: transparent;
+    background: var(--bg-app);
   }
-  .mail.glass .sidebar,
-  .mail.glass .rail {
-    background: color-mix(in srgb, var(--bg-raised) 42%, transparent);
+  .mail.modern .sidebar,
+  .mail.modern .rail {
+    background: color-mix(in srgb, var(--bg-raised) 72%, transparent);
   }
-  .mail.glass .list {
-    background: color-mix(in srgb, var(--bg) 32%, transparent);
+  .mail.modern .list {
+    background: color-mix(in srgb, var(--bg) 78%, transparent);
   }
-  .mail.glass article {
-    background: color-mix(in srgb, var(--bg) 22%, transparent);
+  .mail.modern article {
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
   }
   /* Matches the real rounded theme: the navigation floats as two rounded
      cards, while the list and reader share one continuous mail surface. */
@@ -763,7 +763,7 @@
     gap: 3px;
     padding: 3px;
     border: 0;
-    background: transparent;
+    background: var(--bg-app);
   }
   .mail.rounded .rail,
   .mail.rounded .sidebar {
@@ -774,15 +774,15 @@
   .mail.rounded .list {
     margin-right: -3px;
     border: 0;
-    border-right: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+    border-right: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
     border-radius: 0;
-    background: transparent;
+    background: color-mix(in srgb, var(--bg) 78%, transparent);
   }
   .mail.rounded article {
     margin-left: -3px;
     border: 0;
     border-radius: 0;
-    background: transparent;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
   }
   .focus {
     grid-template-columns: 20px 24% 0 minmax(0, 1fr);
