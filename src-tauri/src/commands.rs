@@ -2113,6 +2113,155 @@ pub fn reorder_tabs(
 }
 
 #[tauri::command]
+pub fn list_rules(
+    state: State<'_, AppState>,
+    account_id: Option<i64>,
+) -> AppResult<Vec<crate::rules::Rule>> {
+    crate::rules::list(&state.db, account_id)
+}
+
+#[tauri::command]
+pub fn save_rule(
+    state: State<'_, AppState>,
+    id: Option<i64>,
+    input: crate::rules::RuleInput,
+) -> AppResult<crate::rules::Rule> {
+    match id {
+        Some(id) => crate::rules::update(&state.db, id, &input),
+        None => crate::rules::create(&state.db, &input),
+    }
+}
+
+#[tauri::command]
+pub fn delete_rule(state: State<'_, AppState>, id: i64) -> AppResult<()> {
+    crate::rules::delete(&state.db, id)
+}
+
+#[tauri::command]
+pub fn reorder_rules(
+    state: State<'_, AppState>,
+    account_id: i64,
+    ids: Vec<i64>,
+) -> AppResult<()> {
+    crate::rules::reorder(&state.db, account_id, &ids)
+}
+
+#[tauri::command]
+pub fn list_labels(state: State<'_, AppState>) -> AppResult<Vec<crate::labels::Label>> {
+    crate::labels::list(&state.db)
+}
+
+#[tauri::command]
+pub fn save_label(
+    state: State<'_, AppState>,
+    id: Option<i64>,
+    name: String,
+    color: String,
+) -> AppResult<crate::labels::Label> {
+    match id {
+        Some(id) => crate::labels::update(&state.db, id, &name, &color),
+        None => crate::labels::create(&state.db, &name, &color),
+    }
+}
+
+#[tauri::command]
+pub fn delete_label(state: State<'_, AppState>, id: i64) -> AppResult<()> {
+    crate::labels::delete(&state.db, id)
+}
+
+#[tauri::command]
+pub fn set_message_labels(
+    state: State<'_, AppState>,
+    message_id: i64,
+    label_ids: Vec<i64>,
+) -> AppResult<()> {
+    let message = mail::message_by_id(&state.db, message_id)?;
+    let key = crate::labels::message_key(message.message_id.as_deref(), message.id);
+    crate::labels::set_for_message(&state.db, message.account_id, &key, &label_ids)
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RulesProgress {
+    account_id: i64,
+    done: usize,
+    total: usize,
+    matched: usize,
+    moved: usize,
+    failed: usize,
+}
+
+#[tauri::command]
+pub async fn run_rules(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: Option<i64>,
+    folder_id: Option<i64>,
+    rule_id: Option<i64>,
+) -> AppResult<crate::rules::run::RunSummary> {
+    use std::sync::atomic::Ordering;
+    if state.rules_running.swap(true, Ordering::SeqCst) {
+        return Err(AppError::Message("rules are already running".into()));
+    }
+    let running = Arc::clone(&state.rules_running);
+    let cancel = Arc::clone(&state.rules_cancel);
+    cancel.store(false, Ordering::SeqCst);
+    let db = Arc::clone(&state.db);
+    let secrets = Arc::clone(&state.secrets);
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let accounts = match account_id {
+            Some(id) => accounts::list(&db)?
+                .into_iter()
+                .filter(|account| account.id == id)
+                .collect::<Vec<_>>(),
+            None => accounts::list(&db)?,
+        };
+        let mut overall = crate::rules::run::RunSummary::default();
+        for account in accounts {
+            let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
+            let progress_app = app.clone();
+            let progress_cancel = Arc::clone(&cancel);
+            let summary = crate::rules::run::sweep(
+                &app,
+                &db,
+                &account,
+                &credential,
+                folder_id,
+                rule_id,
+                &progress_cancel,
+                |progress| {
+                    let _ = progress_app.emit(
+                        "rules://progress",
+                        RulesProgress {
+                            account_id: account.id,
+                            done: progress.done,
+                            total: progress.total,
+                            matched: progress.summary.matched,
+                            moved: progress.summary.moved,
+                            failed: progress.summary.failed,
+                        },
+                    );
+                },
+            )?;
+            overall.merge(summary);
+        }
+        Ok(overall)
+    })
+    .await
+    .map_err(|_| blocking_error())?;
+    running.store(false, Ordering::SeqCst);
+    result
+}
+
+#[tauri::command]
+pub fn cancel_rules(state: State<'_, AppState>) -> AppResult<()> {
+    state
+        .rules_cancel
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn classify_message(
     state: State<'_, AppState>,
     message_id: i64,
@@ -3386,6 +3535,7 @@ mod tests {
             has_attachments: false,
             body_cached: true,
             tab_id: None,
+            label_ids: Vec::new(),
         }
     }
 

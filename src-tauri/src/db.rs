@@ -1258,6 +1258,75 @@ impl Database {
             )?;
             conn.pragma_update(None, "user_version", 40)?;
         }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 41 {
+            // Mail rules and Outlook-style labels. Labels are keyed by message
+            // identity rather than by `messages.id` so they survive a folder
+            // row being rebuilt (UIDVALIDITY reset) and show on every copy.
+            conn.execute_batch(
+                "create table if not exists labels (
+                   id integer primary key autoincrement,
+                   name text not null unique,
+                   color text not null,
+                   position integer not null default 0,
+                   created_at integer not null
+                 );
+                 create table if not exists message_labels (
+                   account_id integer not null references accounts(id) on delete cascade,
+                   message_key text not null,
+                   label_id integer not null references labels(id) on delete cascade,
+                   primary key (account_id, message_key, label_id)
+                 );
+                 create table if not exists rules (
+                   id integer primary key autoincrement,
+                   account_id integer not null references accounts(id) on delete cascade,
+                   name text not null,
+                   enabled integer not null default 1,
+                   position integer not null default 0,
+                   stop_processing integer not null default 0,
+                   conditions text not null default '[]',
+                   exceptions text not null default '[]',
+                   actions text not null default '[]',
+                   created_at integer not null
+                 );
+                 create index if not exists idx_rules_account on rules(account_id, position);
+                 create index if not exists idx_message_labels_key on message_labels(account_id, message_key);",
+            )?;
+            for (column, ddl) in [
+                (
+                    "importance",
+                    "alter table messages add column importance text not null default 'normal'",
+                ),
+                (
+                    "sensitivity",
+                    "alter table messages add column sensitivity text not null default 'normal'",
+                ),
+                (
+                    "followup",
+                    "alter table messages add column followup text not null default 'none'",
+                ),
+            ] {
+                let exists: i64 = conn.query_row(
+                    "select count(*) from pragma_table_info('messages') where name = ?1",
+                    [column],
+                    |row| row.get(0),
+                )?;
+                if exists == 0 {
+                    conn.execute(ddl, [])?;
+                }
+            }
+            let seeded: i64 = conn.query_row("select count(*) from labels", [], |row| row.get(0))?;
+            if seeded == 0 {
+                let created = now();
+                for (position, (name, color)) in crate::labels::DEFAULT_LABELS.iter().enumerate() {
+                    conn.execute(
+                        "insert into labels (name, color, position, created_at) values (?1, ?2, ?3, ?4)",
+                        rusqlite::params![name, color, position as i64, created],
+                    )?;
+                }
+            }
+            conn.pragma_update(None, "user_version", 41)?;
+        }
         let renamed: i64 = conn.query_row(
             "select count(*) from settings where key = 'contact-local-book-named'",
             [],
@@ -1413,7 +1482,7 @@ mod tests {
             .unwrap()
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         for space in spaces::list(&db).unwrap() {
             let conn = db.conn.lock().unwrap();
             let accounts: i64 = conn
@@ -1493,7 +1562,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         let tabs: i64 = conn
             .query_row("select count(*) from tabs", [], |row| row.get(0))
             .unwrap();
@@ -1649,7 +1718,7 @@ mod tests {
             .unwrap();
         assert_eq!(bodies, 0);
         assert_eq!(cached, 0);
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
     }
 
     #[test]
@@ -1676,7 +1745,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table, 1);
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
     }
 
     #[test]
@@ -1703,7 +1772,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(cached, 0);
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
     }
 
     #[test]
@@ -1746,7 +1815,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
     }
 
     #[test]
@@ -1827,7 +1896,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!((auth_type, provider, version), (1, 1, 40));
+        assert_eq!((auth_type, provider, version), (1, 1, 41));
     }
 
     #[test]

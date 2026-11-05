@@ -12,12 +12,14 @@ mod error;
 mod graphics;
 mod imap;
 mod links;
+mod labels;
 #[cfg(target_os = "linux")]
 mod session;
 mod mail;
 mod mail_auth;
 mod oauth;
 mod proton;
+mod rules;
 mod secrets;
 mod smtp;
 mod spaces;
@@ -39,6 +41,10 @@ pub struct AppState {
     pub secrets: Arc<dyn SecretStore>,
     pub syncing: Arc<Mutex<HashSet<i64>>>,
     pub oauth_flow: Arc<OAuthFlowState>,
+    /// Set by the UI to stop a manual rules sweep.
+    pub rules_cancel: Arc<std::sync::atomic::AtomicBool>,
+    /// Guards against two sweeps running at once.
+    pub rules_running: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -78,6 +84,8 @@ pub fn run() {
                 secrets: Arc::clone(&secrets),
                 syncing: Arc::clone(&syncing),
                 oauth_flow: Arc::clone(&oauth_flow),
+                rules_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                rules_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             });
 
             let proton_dir = data_dir.join("proton-bridge");
@@ -253,6 +261,16 @@ pub fn run() {
             commands::update_tab,
             commands::delete_tab,
             commands::reorder_tabs,
+            commands::list_rules,
+            commands::save_rule,
+            commands::delete_rule,
+            commands::reorder_rules,
+            commands::list_labels,
+            commands::save_label,
+            commands::delete_label,
+            commands::set_message_labels,
+            commands::run_rules,
+            commands::cancel_rules,
             commands::classify_message,
             commands::classify_messages,
             commands::classify_unclassified,

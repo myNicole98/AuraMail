@@ -413,6 +413,7 @@ mod tests {
                 has_attachments: false,
                 body_cached: false,
             tab_id: None,
+            label_ids: Vec::new(),
             })
             .collect()
     }
@@ -761,6 +762,7 @@ mod review_tests {
             has_attachments: false,
             body_cached: false,
             tab_id: None,
+            label_ids: Vec::new(),
         }]
     }
 

@@ -681,6 +681,107 @@ pub fn move_to_folder(
     move_many(account, credential, folder_path, &[uid], target_path)
 }
 
+/// Select a folder on an open session, e.g. before a rules sweep.
+pub fn select_folder(session: &mut ImapSession, path: &str) -> AppResult<()> {
+    run(async {
+        session
+            .select(path)
+            .await
+            .map_err(|_| AppError::Message("IMAP folder select failed".into()))?;
+        Ok(())
+    })
+}
+
+/// Move messages over an already-selected session, for the rules engine which
+/// runs while the sync connection is open.
+pub fn move_selected_in_session(
+    session: &mut ImapSession,
+    uids: &[u32],
+    target_path: &str,
+    auth_type: AccountAuth,
+) -> AppResult<()> {
+    run(move_selected_many(session, uids, target_path, auth_type))
+}
+
+/// Copy messages over an already-selected session.
+pub fn copy_selected_in_session(
+    session: &mut ImapSession,
+    uids: &[u32],
+    target_path: &str,
+) -> AppResult<()> {
+    run(async {
+        for chunk in uids.chunks(MAX_UIDS_PER_COMMAND) {
+            session
+                .uid_copy(format_uid_set(chunk), target_path)
+                .await
+                .map_err(|error| {
+                    AppError::Message(format!("IMAP message copy failed: {error}"))
+                })?;
+        }
+        Ok(())
+    })
+}
+
+/// Add or remove one flag over an already-selected session.
+pub fn set_flag_on(
+    session: &mut ImapSession,
+    uids: &[u32],
+    flag: &str,
+    enabled: bool,
+) -> AppResult<()> {
+    run(store_flags_on(session, uids, flag, enabled))
+}
+
+/// Permanently delete messages over an already-selected session.
+pub fn delete_selected_permanently(
+    session: &mut ImapSession,
+    uids: &[u32],
+    auth_type: AccountAuth,
+) -> AppResult<()> {
+    run(delete_selected_many(session, uids, auth_type))
+}
+
+/// Fetch a full message over an already-selected session. Mail rules need the
+/// whole body to evaluate text conditions, and they run mid-sync, when the
+/// session is already open.
+pub fn fetch_message_in_session(session: &mut ImapSession, uid: u32) -> AppResult<Vec<u8>> {
+    run(async {
+        let size = session
+            .uid_fetch(uid.to_string(), "(RFC822.SIZE)")
+            .await
+            .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?
+            .iter()
+            .find_map(|fetch| fetch.size)
+            .unwrap_or(0) as u64;
+        if exceeds_message_limit(size) {
+            return Err(AppError::Message(
+                "message is too large for a mail rule".into(),
+            ));
+        }
+        let fetches = session
+            .uid_fetch(uid.to_string(), "(BODY.PEEK[])")
+            .await
+            .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|_| AppError::Message("IMAP message fetch failed".into()))?;
+        let raw = fetches
+            .iter()
+            .find_map(|fetch| fetch.body())
+            .map(Vec::from)
+            .ok_or_else(|| AppError::Message("IMAP message body is unavailable".into()))?;
+        if exceeds_message_limit(raw.len() as u64) {
+            return Err(AppError::Message(
+                "message is too large for a mail rule".into(),
+            ));
+        }
+        Ok(raw)
+    })
+}
+
 /// Move a whole selection with one session and UID-set commands. Providers
 /// throttle per connection, so batching N messages into a handful of commands
 /// is what keeps a 200-message action from opening 200 sessions.

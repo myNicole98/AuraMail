@@ -146,10 +146,14 @@ pub fn set_for_space(
     Ok(preferences)
 }
 
+/// Legacy unscoped accessor, only used by the preference tests.
+#[cfg(test)]
 pub fn get(db: &Database) -> AppResult<DesktopPreferences> {
     get_for_space(db, 0)
 }
 
+/// Legacy unscoped writer, only used by the preference tests.
+#[cfg(test)]
 pub fn set(db: &Database, preferences: DesktopPreferences) -> AppResult<DesktopPreferences> {
     if !matches!(preferences.close_action.as_str(), "tray" | "quit") {
         return Err(AppError::Message("invalid close action".into()));
@@ -198,6 +202,21 @@ pub fn notify_new_mail(app: &AppHandle, db: &Database, account: &Account, messag
     let enabled = get_for_space(db, account.space_id)
         .map(|preferences| preferences.notifications)
         .unwrap_or(false);
+    notify_impl(app, db, account, message_ids, enabled);
+}
+
+/// A rule action asks for a notification explicitly, so it does not depend on
+/// the arrival-notification preference.
+pub fn notify_message_now(
+    app: &AppHandle,
+    _db: &Database,
+    account: &Account,
+    message_ids: &[i64],
+) {
+    notify_impl(app, _db, account, message_ids, true);
+}
+
+fn notify_impl(app: &AppHandle, db: &Database, account: &Account, message_ids: &[i64], enabled: bool) {
     if !enabled || message_ids.is_empty() {
         return;
     }

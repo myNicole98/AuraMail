@@ -147,11 +147,32 @@ pub fn send(
     input: &ComposeInput,
 ) -> AppResult<Vec<u8>> {
     let message = compose::build(input, Some(&account.identity), &account.email)?;
+    send_built(account, credential, &message)
+}
+
+/// Send an already-built message and return the bytes that went over the wire,
+/// so the caller can append the same copy to Sent.
+pub fn send_built(
+    account: &Account,
+    credential: &MailCredential,
+    message: &lettre::Message,
+) -> AppResult<Vec<u8>> {
     let transport = account_transport(account, credential, SEND_TIMEOUT)?;
-    transport.send(&message).map_err(safe_smtp_error)?;
-    // The raw bytes are returned so the caller can append the same message to
-    // the account's Sent folder; SMTP alone leaves no copy there.
+    transport.send(message).map_err(safe_smtp_error)?;
     Ok(message.formatted())
+}
+
+/// Send raw MIME with an explicit envelope. Mail rules use this to redirect a
+/// message untouched, adding only the `Resent-*` headers.
+pub fn send_raw(
+    account: &Account,
+    credential: &MailCredential,
+    envelope: &lettre::address::Envelope,
+    raw: &[u8],
+) -> AppResult<()> {
+    let transport = account_transport(account, credential, SEND_TIMEOUT)?;
+    transport.send_raw(envelope, raw).map_err(safe_smtp_error)?;
+    Ok(())
 }
 
 fn safe_smtp_error(err: lettre::transport::smtp::Error) -> AppError {

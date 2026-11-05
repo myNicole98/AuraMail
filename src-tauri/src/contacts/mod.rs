@@ -104,6 +104,8 @@ pub fn ensure_local_space(db: &Database, space_id: i64) -> AppResult<()> {
     Ok(())
 }
 
+/// Test helper: resolves the Local address book for a space.
+#[cfg(test)]
 pub fn local_book_id(db: &Database, space_id: i64) -> AppResult<i64> {
     db.read()
         .query_row(

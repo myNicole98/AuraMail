@@ -12,6 +12,7 @@ use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::imap::client;
 use crate::mail::{self, parse};
+use crate::mail_auth::MailCredential;
 use crate::secrets::SecretStore;
 
 const SYNC_RETRY_SECS: u64 = 10;
@@ -194,7 +195,7 @@ pub fn sync_folder_by_id(
     };
     let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
     let mut session = client::open_session(&account, &credential)?;
-    let result = sync_folder(&mut session, app, &db, &account, &folder, false);
+    let result = sync_folder(&mut session, app, &db, &account, &credential, &folder, false);
     let _ = session.logout();
     result?;
     app.emit(
@@ -458,7 +459,7 @@ fn sync_account_inner(
         let mut first_error = None;
         let mut inserted = Vec::new();
         for folder in folders {
-            match sync_folder(&mut session, app, db.as_ref(), account, &folder, true) {
+            match sync_folder(&mut session, app, db.as_ref(), account, &credential, &folder, true) {
                 Ok(mut outcome) => {
                     let classify_ids = std::mem::take(&mut outcome.auto_classify);
                     if !classify_ids.is_empty() {
@@ -508,7 +509,7 @@ fn sync_inbox_inner(
         let mut first_error = None;
         let mut inserted = Vec::new();
         for folder in folders {
-            match sync_folder(&mut session, app, db.as_ref(), account, &folder, false) {
+            match sync_folder(&mut session, app, db.as_ref(), account, &credential, &folder, false) {
                 Ok(mut outcome) => {
                     let classify_ids = std::mem::take(&mut outcome.auto_classify);
                     if !classify_ids.is_empty() {
@@ -595,27 +596,12 @@ fn sync_inbox_with_report(
 }
 
 fn store_header_batch(
-    app: &AppHandle,
     db: &Database,
     account_id: i64,
     folder_id: i64,
     headers: &[mail::MessageHeader],
 ) -> AppResult<(Vec<i64>, Vec<i64>)> {
-    let (inserted, new_messages) =
-        mail::apply_folder_headers_batch(db, account_id, folder_id, headers)?;
-    if !inserted.is_empty() {
-        app.emit(
-            "sync://new",
-            SyncNew {
-                account_id,
-                folder_id,
-                count: inserted.len() as u32,
-                inserted: inserted.len() as u32,
-            },
-        )
-        .ok();
-    }
-    Ok((inserted, new_messages))
+    mail::apply_folder_headers_batch(db, account_id, folder_id, headers)
 }
 
 fn sync_folder(
@@ -623,6 +609,7 @@ fn sync_folder(
     app: &AppHandle,
     db: &Database,
     account: &Account,
+    credential: &MailCredential,
     folder: &mail::Folder,
     reconcile: bool,
 ) -> AppResult<SyncOutcome> {
@@ -668,6 +655,10 @@ fn sync_folder(
     let mut inserted = Vec::new();
     let mut new_messages = Vec::new();
     let mut notify_messages = Vec::new();
+    // Only mail that genuinely arrived triggers rules; copies imported by the
+    // backfill or by another client do not.
+    let mut arrived: Vec<i64> = Vec::new();
+    let mut raw_by_uid: HashMap<u32, Vec<u8>> = HashMap::new();
     match action {
         SyncAction::Noop => {}
         SyncAction::Reset => {
@@ -684,14 +675,12 @@ fn sync_folder(
             client::fetch_headers_batched(session, &folder.path, from_uid, state.latest_uid, |fetched| {
                 highest = highest.max(fetched.iter().map(|header| header.uid).max().unwrap_or(0));
                 let headers = build_headers(&fetched);
-                let (ids, new) = store_header_batch(
-                    app,
-                    db,
-                    account.id,
-                    folder.id,
-                    &headers,
-                )?;
+                for header in &fetched {
+                    raw_by_uid.insert(header.uid, header.raw.clone());
+                }
+                let (ids, new) = store_header_batch(db, account.id, folder.id, &headers)?;
                 inserted.extend(ids);
+                arrived.extend(new.iter().copied());
                 new_messages.extend(new.iter().copied());
                 notify_messages.extend(new);
                 // Keep progress if a long catch-up is interrupted mid-way.
@@ -714,13 +703,7 @@ fn sync_folder(
             budget,
             |fetched, next_seq| {
                 let headers = build_headers(&fetched);
-                let (ids, new) = store_header_batch(
-                    app,
-                    db,
-                    account.id,
-                    folder.id,
-                    &headers,
-                )?;
+                let (ids, new) = store_header_batch(db, account.id, folder.id, &headers)?;
                 inserted.extend(ids);
                 new_messages.extend(new);
                 mail::set_folder_backfill_seq(db, folder.id, next_seq)?;
@@ -739,6 +722,48 @@ fn sync_folder(
     }
 
     let _ = mail::adopt_pending_messages(db, folder.id)?;
+
+    // Rules run before the UI is told about the new mail, so a message a rule
+    // moves never appears in the folder it was moved out of.
+    if folder.role == "inbox" && !arrived.is_empty() {
+        let summary = crate::rules::run::on_new_messages(
+            app,
+            db,
+            session,
+            account,
+            credential,
+            folder,
+            &arrived,
+            &raw_by_uid,
+        );
+        if summary.failed > 0 {
+            eprintln!(
+                "mail rules: {} action(s) failed in {}",
+                summary.failed, folder.path
+            );
+        }
+    }
+
+    // A rule may have moved some of them out of this folder; those must not
+    // raise an "arrived in Inbox" notification.
+    notify_messages.retain(|id| {
+        mail::message_by_id(db, *id)
+            .map(|message| message.folder_id == folder.id)
+            .unwrap_or(false)
+    });
+
+    if !inserted.is_empty() {
+        app.emit(
+            "sync://new",
+            SyncNew {
+                account_id: account.id,
+                folder_id: folder.id,
+                count: inserted.len() as u32,
+                inserted: inserted.len() as u32,
+            },
+        )
+        .ok();
+    }
 
     if changed > 0 {
         app.emit(
@@ -1027,6 +1052,7 @@ mod tests {
             has_attachments: false,
             body_cached: false,
             tab_id: None,
+            label_ids: Vec::new(),
         }
     }
 

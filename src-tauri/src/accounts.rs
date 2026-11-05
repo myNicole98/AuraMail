@@ -1365,7 +1365,7 @@ mod tests {
             .unwrap()
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         let has_identity: i64 = db
             .conn
             .lock()

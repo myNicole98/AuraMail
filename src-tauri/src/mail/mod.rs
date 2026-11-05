@@ -12,7 +12,7 @@ use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use parse::ParsedHeaders;
 
-const MESSAGE_COLUMNS: &str = "m.id, m.account_id, m.folder_id, m.uid, m.message_id, m.from_addr, m.from_name, m.to_addrs, m.cc_addrs, m.subject, m.date, m.snippet, m.is_seen, m.is_starred, m.has_attachments, m.body_cached, m.references_header, m.thread_key, (select c.tab_id from classifications c where c.message_id = m.id) as tab_id";
+const MESSAGE_COLUMNS: &str = "m.id, m.account_id, m.folder_id, m.uid, m.message_id, m.from_addr, m.from_name, m.to_addrs, m.cc_addrs, m.subject, m.date, m.snippet, m.is_seen, m.is_starred, m.has_attachments, m.body_cached, m.references_header, m.thread_key, (select c.tab_id from classifications c where c.message_id = m.id) as tab_id, (select group_concat(ml.label_id) from message_labels ml where ml.account_id = m.account_id and ml.message_key = trim(coalesce(nullif(m.message_id, ''), 'local:' || m.id))) as label_ids";
 
 const SEARCH_MATCH_FTS: &str =
     "m.id in (select rowid from message_search where message_search match ?)";
@@ -61,6 +61,8 @@ pub struct Message {
     pub has_attachments: bool,
     pub body_cached: bool,
     pub tab_id: Option<i64>,
+    /// Outlook-style labels, shared by every copy of the message.
+    pub label_ids: Vec<i64>,
 }
 
 impl Message {
@@ -234,6 +236,7 @@ pub fn set_folder_backfill_seq(db: &Database, folder_id: i64, seq: u32) -> AppRe
     Ok(())
 }
 
+#[cfg(test)]
 pub fn apply_folder_headers(
     db: &Database,
     account_id: i64,
@@ -337,6 +340,7 @@ pub fn set_folder_cursor(
     write_cursor(&conn, folder_id, uid_validity, highest_uid)
 }
 
+#[cfg(test)]
 pub fn replace_folder_messages(
     db: &Database,
     account_id: i64,
@@ -430,7 +434,7 @@ fn write_message(
                 references_header = ?5, thread_key = ?6, from_addr = ?7,
                 from_name = ?8, to_addrs = ?9, cc_addrs = ?10, subject = ?11,
                 date = ?12, snippet = ?13, is_seen = ?14, is_starred = ?15,
-                has_attachments = ?16
+                has_attachments = ?16, importance = ?17, sensitivity = ?18
              where id = ?1",
             params![
                 pending_id,
@@ -449,6 +453,8 @@ fn write_message(
                 is_seen as i64,
                 is_starred as i64,
                 headers.has_attachments as i64,
+                headers.importance,
+                headers.sensitivity,
             ],
         )?;
         return Ok(None);
@@ -482,7 +488,7 @@ fn write_message(
     };
 
     conn.prepare_cached(
-        "insert into messages (account_id, folder_id, uid, message_id, references_header, thread_key, from_addr, from_name, to_addrs, cc_addrs, subject, date, snippet, is_seen, is_starred, has_attachments, body_cached) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 0) on conflict(folder_id, uid) do update set account_id = excluded.account_id, message_id = excluded.message_id, references_header = excluded.references_header, thread_key = excluded.thread_key, from_addr = excluded.from_addr, from_name = excluded.from_name, to_addrs = excluded.to_addrs, cc_addrs = excluded.cc_addrs, subject = excluded.subject, date = excluded.date, snippet = excluded.snippet, is_seen = excluded.is_seen, is_starred = excluded.is_starred, has_attachments = excluded.has_attachments",
+        "insert into messages (account_id, folder_id, uid, message_id, references_header, thread_key, from_addr, from_name, to_addrs, cc_addrs, subject, date, snippet, is_seen, is_starred, has_attachments, body_cached, importance, sensitivity) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 0, ?17, ?18) on conflict(folder_id, uid) do update set account_id = excluded.account_id, message_id = excluded.message_id, references_header = excluded.references_header, thread_key = excluded.thread_key, from_addr = excluded.from_addr, from_name = excluded.from_name, to_addrs = excluded.to_addrs, cc_addrs = excluded.cc_addrs, subject = excluded.subject, date = excluded.date, snippet = excluded.snippet, is_seen = excluded.is_seen, is_starred = excluded.is_starred, has_attachments = excluded.has_attachments, importance = excluded.importance, sensitivity = excluded.sensitivity",
     )?
     .execute(params![
         account_id,
@@ -501,6 +507,8 @@ fn write_message(
         is_seen as i64,
         is_starred as i64,
         headers.has_attachments as i64,
+        headers.importance,
+        headers.sensitivity,
     ])?;
     let inserted_id = conn.last_insert_rowid();
     if exists {
@@ -762,9 +770,9 @@ pub fn list_threads(db: &Database, query: &MessageQuery) -> AppResult<Vec<Thread
     let rows = stmt.query_map(params_from_iter(values.iter()), |row| {
         Ok(ThreadMessage {
             message: row_to_message(row)?,
-            thread_count: row.get(19)?,
-            thread_unread_count: row.get(20)?,
-            thread_has_inbox: row.get::<_, i64>(21)? != 0,
+            thread_count: row.get(20)?,
+            thread_unread_count: row.get(21)?,
+            thread_has_inbox: row.get::<_, i64>(22)? != 0,
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -963,6 +971,26 @@ fn update_message_flag(
         return Err(AppError::Message("message not found".into()));
     }
     message_by_id(db, message_id)
+}
+
+/// Local message ids of a folder, newest first, excluding optimistic rows that
+/// a move created and the next folder sync will adopt.
+pub fn folder_message_ids(db: &Database, folder_id: i64) -> AppResult<Vec<i64>> {
+    let conn = db.read();
+    let mut stmt = conn.prepare(
+        "select id from messages where folder_id = ?1 and uid < ?2 order by date desc, id desc",
+    )?;
+    let rows = stmt.query_map(params![folder_id, PENDING_UID_BASE as i64], |row| row.get(0))?;
+    Ok(rows.collect::<Result<Vec<i64>, _>>()?)
+}
+
+pub fn folder_message_count(db: &Database, folder_id: i64) -> AppResult<i64> {
+    let conn = db.read();
+    Ok(conn.query_row(
+        "select count(*) from messages where folder_id = ?1 and uid < ?2",
+        params![folder_id, PENDING_UID_BASE as i64],
+        |row| row.get(0),
+    )?)
 }
 
 pub fn newest_message_uids(
@@ -1374,6 +1402,14 @@ fn row_to_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         has_attachments: row.get::<_, i64>(14)? != 0,
         body_cached: row.get::<_, i64>(15)? != 0,
         tab_id: row.get(18)?,
+        label_ids: row
+            .get::<_, Option<String>>(19)?
+            .map(|raw| {
+                raw.split(',')
+                    .filter_map(|value| value.trim().parse::<i64>().ok())
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -1403,6 +1439,7 @@ mod tests {
             has_attachments: false,
             body_cached: false,
             tab_id: None,
+            label_ids: Vec::new(),
         }
     }
 

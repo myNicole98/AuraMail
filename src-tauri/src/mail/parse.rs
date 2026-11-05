@@ -15,6 +15,10 @@ pub struct ParsedHeaders {
     pub date: i64,
     pub snippet: String,
     pub has_attachments: bool,
+    /// Sender importance: "high", "normal" or "low".
+    pub importance: String,
+    /// Sender sensitivity: "normal", "personal", "private" or "confidential".
+    pub sensitivity: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -76,8 +80,13 @@ pub fn parse_headers_with_preview(raw: &[u8], preview: &[u8]) -> ParsedHeaders {
     headers
 }
 
-pub fn parse_message(raw: &[u8]) -> ParsedMessage {
-    let Some(message) = MessageParser::default().parse(raw) else {
+/// Render an HTML body to text. Mail rules match against the plain-text form
+/// when a message carries no text/plain part.
+pub fn html_body_to_text(html: &str) -> String {
+    html_to_text(html)
+}
+
+pub fn parse_message(raw: &[u8]) -> ParsedMessage {    let Some(message) = MessageParser::default().parse(raw) else {
         return ParsedMessage::default();
     };
     let headers = headers_from(&message);
@@ -143,6 +152,49 @@ fn headers_from(message: &Message<'_>) -> ParsedHeaders {
         date: message.date().map(|date| date.to_timestamp()).unwrap_or(0),
         snippet: snippet(message),
         has_attachments: message.attachment_count() > 0,
+        importance: importance(message),
+        sensitivity: sensitivity(message),
+    }
+}
+
+fn header_text(message: &Message<'_>, name: &str) -> Option<String> {
+    message
+        .headers()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case(name))
+        .and_then(|header| header.value().as_text())
+        .map(|value| value.trim().to_string())
+}
+
+fn importance(message: &Message<'_>) -> String {
+    if let Some(value) = header_text(message, "Importance") {
+        return match value.to_ascii_lowercase().as_str() {
+            "high" => "high".to_string(),
+            "low" => "low".to_string(),
+            _ => "normal".to_string(),
+        };
+    }
+    if let Some(value) = header_text(message, "X-Priority") {
+        let head = value.chars().next().unwrap_or('3');
+        return match head {
+            '1' | '2' => "high".to_string(),
+            '4' | '5' => "low".to_string(),
+            _ => "normal".to_string(),
+        };
+    }
+    "normal".to_string()
+}
+
+fn sensitivity(message: &Message<'_>) -> String {
+    match header_text(message, "Sensitivity")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "personal" => "personal".to_string(),
+        "private" => "private".to_string(),
+        "company-confidential" | "confidential" => "confidential".to_string(),
+        _ => "normal".to_string(),
     }
 }
 
