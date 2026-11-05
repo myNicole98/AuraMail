@@ -40,6 +40,10 @@ import type {
   Draft,
   DraftSummary,
   Folder,
+  Label,
+  Rule,
+  RuleInput,
+  RuleRunSummary,
   GoogleOAuthStatus,
   MailPreferences,
   MicrosoftOAuthStatus,
@@ -347,6 +351,22 @@ export const api = {
     invoke<string>("load_remote_images", { messageId }),
   readAttachmentPaths: (paths: string[]) =>
     invoke<AttachmentUpload[]>("read_attachment_paths", { paths }),
+  listRules: (accountId?: number | null) =>
+    invoke<Rule[]>("list_rules", { accountId }),
+  saveRule: (id: number | null, input: RuleInput) =>
+    invoke<Rule>("save_rule", { id, input }),
+  deleteRule: (id: number) => invoke<void>("delete_rule", { id }),
+  reorderRules: (accountId: number, ids: number[]) =>
+    invoke<void>("reorder_rules", { accountId, ids }),
+  listLabels: () => invoke<Label[]>("list_labels"),
+  saveLabel: (id: number | null, name: string, color: string) =>
+    invoke<Label>("save_label", { id, name, color }),
+  deleteLabel: (id: number) => invoke<void>("delete_label", { id }),
+  setMessageLabels: (messageId: number, labelIds: number[]) =>
+    invoke<void>("set_message_labels", { messageId, labelIds }),
+  runRules: (accountId: number | null, folderId: number | null, ruleId: number | null) =>
+    invoke<RuleRunSummary>("run_rules", { accountId, folderId, ruleId }),
+  cancelRules: () => invoke<void>("cancel_rules"),
   sendMessage: (input: ComposeInput, draftId?: number) =>
     invoke<void>("send_message", { input, draftId }),
   saveDraft: (input: ComposeInput, draftId?: number) =>

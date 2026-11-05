@@ -5,6 +5,8 @@ export type SettingsSection =
   | "accessibility"
   | "signatures"
   | "ai"
+  | "categories"
+  | "rules"
   | "updates";
 
 export type SettingsTab = {
@@ -19,6 +21,8 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { id: "accessibility", label: "Accessibility" },
   { id: "signatures", label: "Signatures" },
   { id: "ai", label: "Aura AI" },
+  { id: "categories", label: "Categories" },
+  { id: "rules", label: "Rules" },
   { id: "updates", label: "Updates" }
 ];
 

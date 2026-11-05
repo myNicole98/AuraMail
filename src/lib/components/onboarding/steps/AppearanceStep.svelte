@@ -52,6 +52,7 @@
     { value: false, label: "Full" },
     { value: true, label: "Icon only" }
   ];
+
   const avatarChoices = [
     { value: false, label: "No avatar" },
     { value: true, label: "Avatar" }
@@ -232,7 +233,6 @@
         onclick={() => setMessagePreviewChoice(option.value)}
       >
         <span class="mini-row" aria-hidden="true">
-          <span class="mini-avatar">AL</span>
           <span class="mini-lines">
             <span class="mini-top"><span>Ada Lovelace</span><span>10:24</span></span>
             <span class="mini-subject">Project update</span>
@@ -240,24 +240,6 @@
               <span class="mini-snippet">The latest notes are ready for review.</span>
             {/if}
           </span>
-        </span>
-        <span class="choice-label">{option.label}</span>
-      </button>
-    {/each}
-  </div>
-
-  <span class="group-label">Classification tabs</span>
-  <div class="choice-row" role="group" aria-label="Classification tabs">
-    {#each tabChoices as option (option.label)}
-      <button
-        type="button"
-        class:active={iconOnlyTabs === option.value}
-        aria-pressed={iconOnlyTabs === option.value}
-        onclick={() => setIconOnlyTabsChoice(option.value)}
-      >
-        <span class="mini-tabs" aria-hidden="true">
-          <span class="mini-tab"><Inbox size={9} />{#if !option.value}<span>Inbox</span>{/if}</span>
-          <span class="mini-tab"><Bell size={9} />{#if !option.value}<span>Updates</span>{/if}</span>
         </span>
         <span class="choice-label">{option.label}</span>
       </button>
@@ -279,6 +261,24 @@
             <span class="mini-top"><span>Ada Lovelace</span><span>10:24</span></span>
             <span class="mini-subject">Project update</span>
           </span>
+        </span>
+        <span class="choice-label">{option.label}</span>
+      </button>
+    {/each}
+  </div>
+
+  <span class="group-label">Classification tabs</span>
+  <div class="choice-row" role="group" aria-label="Classification tabs">
+    {#each tabChoices as option (option.label)}
+      <button
+        type="button"
+        class:active={iconOnlyTabs === option.value}
+        aria-pressed={iconOnlyTabs === option.value}
+        onclick={() => setIconOnlyTabsChoice(option.value)}
+      >
+        <span class="mini-tabs" aria-hidden="true">
+          <span class="mini-tab"><Inbox size={9} />{#if !option.value}<span>Inbox</span>{/if}</span>
+          <span class="mini-tab"><Bell size={9} />{#if !option.value}<span>Updates</span>{/if}</span>
         </span>
         <span class="choice-label">{option.label}</span>
       </button>

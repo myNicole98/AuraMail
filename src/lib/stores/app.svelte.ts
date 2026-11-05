@@ -21,6 +21,7 @@ import type {
   Draft,
   DraftSummary,
   Folder,
+  Label,
   Message,
   MessageDetail,
   MessageQuery,
@@ -80,6 +81,7 @@ class AppStore {
   accounts = $state<Account[]>([]);
   folders = $state<Folder[]>([]);
   tabs = $state<Tab[]>([]);
+  labels = $state<Label[]>([]);
   tabUnreadCounts = $state<{ all: number; tabs: Record<number, number> }>({
     all: 0,
     tabs: {}
@@ -431,13 +433,14 @@ class AppStore {
       const countKey = this.tabCountKey();
       const counts = this.fetchTabUnreadCounts();
       const spaceId = this.activeSpaceId;
-      const [accounts, folders, drafts, tabs] = await Promise.all([
+      const [accounts, folders, drafts, tabs, labels] = await Promise.all([
         api.listAccounts(),
         api.listFolders(undefined, spaceId),
         this.draftsOpen
           ? api.listDrafts(undefined, spaceId)
           : Promise.resolve(null),
-        api.listTabs(spaceId)
+        api.listTabs(spaceId),
+        api.listLabels()
       ]);
       this.accounts = accounts;
       const limited = this.protonAccessLimited;
@@ -450,6 +453,7 @@ class AppStore {
       this.folders = folders;
       if (drafts) this.drafts = drafts;
       this.tabs = tabs;
+      this.labels = labels;
       // Counts computed for an older scope must not land on the badges.
       if (countRequest === this.tabRequest) {
         this.tabUnreadCounts = await counts;

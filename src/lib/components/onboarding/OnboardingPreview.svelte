@@ -29,71 +29,71 @@
   const messages = [
     {
       sender: "Ada Lovelace",
-      initials: "AL",
       subject: "Project update",
       snippet: "The latest notes are ready for review.",
       time: "10:24",
       unread: true,
+      initials: "AL",
       selected: true,
       attachment: true
     },
     {
       sender: "Grace Hopper",
-      initials: "GH",
       subject: "Compiler notes",
       snippet: "I found a small issue in the parser.",
       time: "09:48",
       unread: false,
+      initials: "GH",
       selected: false,
       attachment: false
     },
     {
       sender: "Alan Turing",
-      initials: "AT",
       subject: "Lunch?",
       snippet: "Are we still on for today?",
       time: "Yesterday",
       unread: false,
+      initials: "AT",
       selected: false,
       attachment: false
     },
     {
       sender: "Katherine Johnson",
-      initials: "KJ",
       subject: "Orbit calculations",
       snippet: "The numbers check out.",
       time: "Mon",
       unread: false,
+      initials: "KJ",
       selected: false,
       attachment: false
     },
     {
       sender: "Margaret Hamilton",
-      initials: "MH",
       subject: "Apollo guidance",
       snippet: "The priority display is ready to test.",
       time: "Mon",
       unread: false,
+      initials: "MH",
       selected: false,
       attachment: true
     },
     {
       sender: "Barbara Liskov",
-      initials: "BL",
       subject: "Substitution notes",
       snippet: "I cleaned up the examples from yesterday.",
       time: "Sun",
       unread: false,
+      initials: "BL",
       selected: false,
       attachment: false
     },
     {
       sender: "Edsger Dijkstra",
-      initials: "ED",
       subject: "Shortest path",
       snippet: "A shorter route through the graph.",
       time: "Fri",
       unread: false,
+      initials: "ED",
       selected: false,
       attachment: false
     }

@@ -10,6 +10,8 @@
     import MessageList from "./MessageList.svelte";
   import Reader from "./Reader.svelte";
   import Settings from "./Settings.svelte";
+  import type { SettingsSection } from "./settings/settingsTabs";
+  import type { RuleCondition } from "../types";
   import Sidebar from "./Sidebar.svelte";
   import Splitter from "./Splitter.svelte";
   import Onboarding from "./onboarding/Onboarding.svelte";
@@ -58,8 +60,17 @@
   );
   let openFade = $state(false);
   let width = $state(1200);
-  type SettingsRequest = { tab: "general" | "account"; accountId: number | null };
+  type RuleSeed = {
+    accountId?: number;
+    conditions: RuleCondition[];
+  };
+  type SettingsRequest = {
+    tab: SettingsSection;
+    accountId: number | null;
+    ruleSeed?: RuleSeed | null;
+  };
   let settingsRequest = $state<SettingsRequest>({ tab: "general", accountId: null });
+  let ruleSeed = $state<RuleSeed | null>(null);
   let settingsRequestNonce = $state(0);
   let mode = $derived(appearance.layoutMode);
   let columns = $derived(layoutColumns(layout, width));
@@ -165,12 +176,18 @@
     };
     window.addEventListener("auramail:message-order-changed", onMessageOrderChanged);
     const onOpenSettings = (event: Event) => {
-      const detail = (event as CustomEvent<{ tab?: string; accountId?: number }>).detail;
-      if (detail?.tab === "account") {
-        openSettings({ tab: "account", accountId: detail.accountId ?? null });
-      } else {
-        openSettings();
-      }
+      const detail = (
+        event as CustomEvent<{
+          tab?: SettingsRequest["tab"];
+          accountId?: number;
+          ruleSeed?: RuleSeed;
+        }>
+      ).detail;
+      openSettings({
+        tab: detail?.tab ?? "general",
+        accountId: detail?.accountId ?? null,
+        ruleSeed: detail?.ruleSeed ?? null
+      });
     };
     window.addEventListener("auramail:open-settings", onOpenSettings);
     return () => {
@@ -382,6 +399,7 @@
     request: SettingsRequest = { tab: "general", accountId: null }
   ) {
     settingsRequest = request;
+    ruleSeed = request.ruleSeed ?? null;
     settingsRequestNonce += 1;
     settingsOpen = true;
   }
@@ -613,6 +631,7 @@
       initialTab={settingsRequest.tab}
       focusAccountId={settingsRequest.accountId}
       requestNonce={settingsRequestNonce}
+      {ruleSeed}
     />
   </div>
 {/if}

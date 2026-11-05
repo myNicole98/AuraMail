@@ -9,17 +9,21 @@
     PenLine,
     RefreshCw,
     SlidersHorizontal,
+    Tags,
     X
   } from "lucide-svelte";
   import { listen } from "@tauri-apps/api/event";
   import { appVersion } from "../version";
   import { api } from "../api";
-  import type { UpdateInfo } from "../types";
+  import type { RuleCondition, UpdateInfo } from "../types";
   import AccessibilitySettings from "./settings/AccessibilitySettings.svelte";
   import AccountSettings from "./settings/AccountSettings.svelte";
   import AiSettings from "./settings/AiSettings.svelte";
   import AppearanceSettings from "./settings/AppearanceSettings.svelte";
   import GeneralSettings from "./settings/GeneralSettings.svelte";
+  import CategoriesSettings from "./settings/CategoriesSettings.svelte";
+  import RulesIcon from "./RulesIcon.svelte";
+  import RulesSettings from "./settings/RulesSettings.svelte";
   import SignatureSettings from "./settings/SignatureSettings.svelte";
   import UpdateSettings from "./settings/UpdateSettings.svelte";
   import {
@@ -33,12 +37,14 @@
     onClose,
     initialTab = "general",
     focusAccountId = null,
-    requestNonce = 0
+    requestNonce = 0,
+    ruleSeed = null
   }: {
     onClose: () => void;
     initialTab?: SettingsSection;
     focusAccountId?: number | null;
     requestNonce?: number;
+    ruleSeed?: { accountId?: number; conditions: RuleCondition[] } | null;
   } = $props();
 
   const icons = {
@@ -48,6 +54,8 @@
     accessibility: Contrast,
     signatures: PenLine,
     ai: BrainCircuit,
+    categories: Tags,
+    rules: RulesIcon,
     updates: RefreshCw
   } as const;
 
@@ -278,6 +286,10 @@
       <SignatureSettings />
     {:else if active === "ai"}
       <AiSettings />
+    {:else if active === "categories"}
+      <CategoriesSettings />
+    {:else if active === "rules"}
+      <RulesSettings {ruleSeed} {requestNonce} />
     {:else if active === "updates"}
       <UpdateSettings
         currentVersion={appVersion}

@@ -2,7 +2,9 @@
   import { onMount } from "svelte";
   import {
     Archive,
+    Check,
     ChevronRight,
+    Filter,
     FolderInput,
     Mail,
     MailOpen,
@@ -10,12 +12,13 @@
     ReplyAll,
     Send,
     Star,
+    Tag,
     Tags,
     Trash2
   } from "lucide-svelte";
   import { tabColor, tabIconComponent } from "../tabAppearance";
   import { appearance } from "../stores/appearance.svelte";
-  import type { Folder, Tab, ThreadMessage } from "../types";
+  import type { Folder, Label, Tab, ThreadMessage } from "../types";
 
   export type MailContextAction =
     | {
@@ -31,6 +34,8 @@
       }
     | { type: "move"; folderId: number }
     | { type: "categorize"; tabId: number | null }
+    | { type: "labels"; labelIds: number[] }
+    | { type: "rule-from-message" }
     | { type: "classify" };
 
   let {
@@ -39,6 +44,7 @@
     message,
     folders,
     tabs,
+    labels = [],
     canClassify = true,
     onAction,
     onClose
@@ -48,13 +54,15 @@
     message: ThreadMessage;
     folders: Folder[];
     tabs: Tab[];
+    labels?: Label[];
     canClassify?: boolean;
     onAction: (action: MailContextAction) => void;
     onClose: () => void;
   } = $props();
 
   let menu = $state<HTMLElement | null>(null);
-  let submenu = $state<"move" | "categorize" | null>(null);
+  let submenu = $state<"move" | "categorize" | "labels" | null>(null);
+  let submenuTop = $state(0);
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
   let movableFolders = $derived(
@@ -70,7 +78,7 @@
     folders.find((folder) => folder.id === message.folder_id)?.role === "trash"
   );
   let left = $derived(Math.max(8, Math.min(x, window.innerWidth - 232)));
-  let top = $derived(Math.max(8, Math.min(y, window.innerHeight - 380)));
+  let top = $derived(Math.max(8, Math.min(y, window.innerHeight - 460)));
 
   function close() {
     if (closed) return;
@@ -89,17 +97,27 @@
     hoverTimer = undefined;
   }
 
-  function hoverSubmenu(name: "move" | "categorize") {
+  function placeSubmenu(name: "move" | "categorize" | "labels", target: EventTarget | null) {
+    const element = target instanceof HTMLElement ? target : null;
+    submenuTop = element ? element.offsetTop : 0;
+    submenu = name;
+  }
+
+  function hoverSubmenu(name: "move" | "categorize" | "labels", target: EventTarget | null) {
     cancelSubmenuHover();
     hoverTimer = setTimeout(() => {
-      submenu = name;
+      placeSubmenu(name, target);
       hoverTimer = undefined;
     }, 140);
   }
 
-  function toggleSubmenu(name: "move" | "categorize") {
+  function toggleSubmenu(name: "move" | "categorize" | "labels", target: EventTarget | null) {
     cancelSubmenuHover();
-    submenu = submenu === name ? null : name;
+    if (submenu === name) {
+      submenu = null;
+      return;
+    }
+    placeSubmenu(name, target);
   }
 
   onMount(() => {
@@ -180,8 +198,8 @@
     role="menuitem"
     aria-haspopup="menu"
     aria-expanded={submenu === "move"}
-    onclick={() => toggleSubmenu("move")}
-    onpointerenter={() => hoverSubmenu("move")}
+    onclick={(event) => toggleSubmenu("move", event.currentTarget)}
+    onpointerenter={(event) => hoverSubmenu("move", event.currentTarget)}
     onpointerleave={cancelSubmenuHover}
   >
     <FolderInput size={14} />
@@ -192,9 +210,22 @@
     type="button"
     role="menuitem"
     aria-haspopup="menu"
+    aria-expanded={submenu === "labels"}
+    onclick={(event) => toggleSubmenu("labels", event.currentTarget)}
+    onpointerenter={(event) => hoverSubmenu("labels", event.currentTarget)}
+    onpointerleave={cancelSubmenuHover}
+  >
+    <Tag size={14} />
+    Assign labels
+    <span class="chevron"><ChevronRight size={13} /></span>
+  </button>
+  <button
+    type="button"
+    role="menuitem"
+    aria-haspopup="menu"
     aria-expanded={submenu === "categorize"}
-    onclick={() => toggleSubmenu("categorize")}
-    onpointerenter={() => hoverSubmenu("categorize")}
+    onclick={(event) => toggleSubmenu("categorize", event.currentTarget)}
+    onpointerenter={(event) => hoverSubmenu("categorize", event.currentTarget)}
     onpointerleave={cancelSubmenuHover}
   >
     <Tags size={14} />
@@ -210,8 +241,16 @@
     <Tags size={14} />
     Categorize
   </button>
+  <button
+    type="button"
+    role="menuitem"
+    onclick={() => choose({ type: "rule-from-message" })}
+  >
+    <Filter size={14} />
+    Create rule for this mail
+  </button>
   {#if submenu === "move"}
-    <div class="submenu move" role="menu" aria-label="Move to folder">
+    <div class="submenu move" role="menu" aria-label="Move to folder" style:top={`${submenuTop}px`}>
       {#each movableFolders as folder (folder.id)}
         <button
           type="button"
@@ -226,7 +265,7 @@
       {/each}
     </div>
   {:else if submenu === "categorize"}
-    <div class="submenu categorize" role="menu" aria-label="Assign category">
+    <div class="submenu categorize" role="menu" aria-label="Assign category" style:top={`${submenuTop}px`}>
       <button
         type="button"
         role="menuitem"
@@ -249,6 +288,33 @@
           </span>
           {tab.name}
         </button>
+      {/each}
+    </div>
+  {:else if submenu === "labels"}
+    <div class="submenu labels" role="menu" aria-label="Assign labels" style:top={`${submenuTop}px`}>
+      {#each labels as label (label.id)}
+        {@const assigned = message.label_ids.includes(label.id)}
+        <button
+          type="button"
+          role="menuitemcheckbox"
+          aria-checked={assigned}
+          class:active={assigned}
+          onclick={() =>
+            choose({
+              type: "labels",
+              labelIds: assigned
+                ? (message.label_ids ?? []).filter((id) => id !== label.id)
+                : [...(message.label_ids ?? []), label.id]
+            })}
+        >
+          <span class="label-icon" style:color={label.color}><Tag size={12} /></span>
+          {label.name}
+          {#if assigned}
+            <Check size={12} />
+          {/if}
+        </button>
+      {:else}
+        <span class="empty">No labels yet</span>
       {/each}
     </div>
   {/if}
@@ -348,9 +414,6 @@
     background: var(--bg-raised);
     box-shadow: 0 10px 26px color-mix(in srgb, #000 22%, transparent);
   }
-  .submenu.categorize {
-    top: 96px;
-  }
   .submenu button.active {
     color: var(--accent);
   }
@@ -362,6 +425,11 @@
     flex: none;
     border-radius: 5px;
     background: color-mix(in srgb, currentColor 14%, transparent);
+  }
+  .label-icon {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
   }
   .empty {
     display: block;

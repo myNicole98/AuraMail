@@ -24,10 +24,10 @@
   import { app } from "../../stores/app.svelte";
   import { appearance } from "../../stores/appearance.svelte";
   import ThemedSelect from "../ThemedSelect.svelte";
-  import MessageRowPreview from "./MessageRowPreview.svelte";
   import ThemeStylePreview from "../ThemeStylePreview.svelte";
   import SettingsRow from "./SettingsRow.svelte";
   import SettingsSection from "./SettingsSection.svelte";
+  import MessageRowPreview from "./MessageRowPreview.svelte";
   import ToggleSwitch from "../ToggleSwitch.svelte";
   import type { Base16 } from "../../theme/base16";
   import {
@@ -826,6 +826,13 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
     margin-top: 10px;
+  }
+  .avatar-preview-card {
+    min-height: 0;
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
+    background: var(--bg);
   }
   .avatar-preview-card {
     min-height: 0;

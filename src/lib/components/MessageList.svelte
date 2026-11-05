@@ -271,6 +271,29 @@
       case "categorize":
         void app.categorizeMessages(ids, action.tabId);
         break;
+      case "labels":
+        void api
+          .setMessageLabels(message.id, action.labelIds)
+          .then(() => app.reloadMessages());
+        break;
+      case "rule-from-message":
+        window.dispatchEvent(
+          new CustomEvent("auramail:open-settings", {
+            detail: {
+              tab: "rules",
+              ruleSeed: {
+                accountId: message.account_id,
+                conditions: [
+                  { kind: "fromContains", values: [message.from_addr] },
+                  ...(message.subject.trim()
+                    ? [{ kind: "subjectContains", values: [message.subject.trim()] }]
+                    : [])
+                ]
+              }
+            }
+          })
+        );
+        break;
       case "classify":
         void app.classifyMessagesByIds(ids);
         break;
@@ -336,7 +359,6 @@
     });
     window.addEventListener("pointermove", onPointerMove, { passive: true });
     window.addEventListener("blur", onBlur);
-    window.addEventListener("auramail:preferences-changed", onPreferencesChanged);
     return () => {
       observer?.disconnect();
       window.removeEventListener("auramail:clear-mail-selection", clearBulkSelection);
@@ -345,11 +367,7 @@
       });
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("blur", onBlur);
-      window.removeEventListener(
-        "auramail:preferences-changed",
-        onPreferencesChanged
-      );
-    };
+      };
   });
 </script>
 
@@ -610,6 +628,19 @@
           {/if}
           <span class="row-main">
             <span class="row-top">
+              {#if (message.label_ids ?? []).length > 0}
+                <span class="label-chips" aria-label="Labels">
+                  {#each (message.label_ids ?? []).slice(0, 2) as labelId (labelId)}
+                    {@const label = app.labels.find((item) => item.id === labelId)}
+                    {#if label}
+                      <span class="label-chip" style:--label-color={label.color}>{label.name}</span>
+                    {/if}
+                  {/each}
+                  {#if (message.label_ids ?? []).length > 2}
+                    <span class="label-more">+{(message.label_ids ?? []).length - 2}</span>
+                  {/if}
+                </span>
+              {/if}
               <span class="sender">{sender(message)}</span>
               {#if message.thread_count > 1}
                 <span class="thread-count" title={`${message.thread_count} messages in this thread`}>
@@ -720,6 +751,7 @@
       message={contextMenu.message}
       folders={app.folders}
       tabs={app.tabs}
+      labels={app.labels}
       canClassify={app.aiConfigured && !app.classifyBusy}
       onAction={runContextAction}
       onClose={() => (contextMenu = null)}
@@ -1146,16 +1178,35 @@
     place-items: center;
     position: relative;
     flex: none;
-    /* Match the compact left gutter (padding + dot + gap) so the avatar sits
-       centred between the account bar and the text. */
     margin-left: 4px;
     margin-right: 6px;
     padding-top: 1px;
   }
-  /* With avatars the separate unread dot reads as a stray speck; show the
-     unread state as a ring around the picture instead. */
   .row-avatar.unread :global(.avatar) {
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 78%, transparent);
+  }
+  .label-chips {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 6px;
+    flex: none;
+  }
+  .label-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 16px;
+    padding: 0 6px;
+    border-radius: 4px;
+    border: 1px solid color-mix(in srgb, var(--label-color) 65%, transparent);
+    color: var(--label-color);
+    font-size: 0.62rem;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .label-more {
+    font-size: 0.62rem;
+    color: var(--muted);
   }
   .row-main {
     display: flex;

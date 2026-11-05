@@ -404,6 +404,7 @@ export type Message = {
   has_attachments: boolean;
   body_cached: boolean;
   tab_id: number | null;
+  label_ids: number[];
 };
 
 export type ThreadMessage = Message & {
@@ -656,4 +657,98 @@ export type DraftSummary = {
   snippet: string;
   hasAttachments: boolean;
   updatedAt: number;
+};
+
+export type Label = {
+  id: number;
+  name: string;
+  color: string;
+  position: number;
+};
+
+export type RulePriority = "high" | "normal" | "low";
+export type RuleSensitivity = "normal" | "personal" | "private" | "confidential";
+export type RuleMessageType = "normal" | "invitation" | "receipt";
+
+export type RuleCondition =
+  | { kind: "fromContains"; values: string[] }
+  | { kind: "toContains"; values: string[] }
+  | { kind: "ccContains"; values: string[] }
+  | { kind: "onBehalfOf" }
+  | { kind: "myNameInTo" }
+  | { kind: "myNameInCc" }
+  | { kind: "myNameInToOrCc" }
+  | { kind: "myNameNotInTo" }
+  | { kind: "onlyRecipient" }
+  | { kind: "mentionedInBody" }
+  | { kind: "subjectContains"; values: string[] }
+  | { kind: "subjectOrBodyContains"; values: string[] }
+  | { kind: "bodyContains"; values: string[] }
+  | { kind: "senderAddressContains"; values: string[] }
+  | { kind: "recipientAddressContains"; values: string[] }
+  | { kind: "headerContains"; name: string; values: string[] }
+  | { kind: "importance"; value: RulePriority }
+  | { kind: "sensitivity"; value: RuleSensitivity }
+  | { kind: "externalSender" }
+  | { kind: "hasFlag" }
+  | { kind: "messageType"; value: RuleMessageType }
+  | { kind: "hasAttachment" }
+  | { kind: "hasLabel"; label_id: number }
+  | { kind: "hasAnyLabel" };
+
+export type RuleAction =
+  | { kind: "moveTo"; folder_id: number }
+  | { kind: "copyTo"; folder_id: number }
+  | { kind: "delete" }
+  | { kind: "permanentDelete" }
+  | { kind: "markRead" }
+  | { kind: "markJunk" }
+  | { kind: "setImportance"; value: RulePriority }
+  | { kind: "addLabel"; label_id: number }
+  | { kind: "clearLabels" }
+  | { kind: "setFlag" }
+  | { kind: "clearFlag" }
+  | { kind: "completeFlag" }
+  | { kind: "forwardTo"; address: string }
+  | { kind: "forwardAsAttachment"; address: string }
+  | { kind: "redirectTo"; address: string }
+  | { kind: "notifyDesktop" }
+  | { kind: "playSound" };
+
+export type Rule = {
+  id: number;
+  account_id: number;
+  name: string;
+  enabled: boolean;
+  position: number;
+  stop_processing: boolean;
+  conditions: RuleCondition[];
+  exceptions: RuleCondition[];
+  actions: RuleAction[];
+};
+
+export type RuleInput = {
+  account_id: number;
+  name: string;
+  enabled: boolean;
+  stop_processing: boolean;
+  conditions: RuleCondition[];
+  exceptions: RuleCondition[];
+  actions: RuleAction[];
+};
+
+export type RuleRunSummary = {
+  matched: number;
+  moved: number;
+  failed: number;
+  errors: string[];
+};
+
+export type RulesProgress = {
+  account_id: number;
+  done: number;
+  total: number;
+  matched: number;
+  moved: number;
+  failed: number;
 };

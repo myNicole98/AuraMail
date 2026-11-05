@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { CircleAlert, Search, Trash2, X } from "lucide-svelte";
+  import { api } from "../api";
   import { app } from "../stores/app.svelte";
   import { appearance } from "../stores/appearance.svelte";
   import type { Tab } from "../types";
@@ -16,13 +17,19 @@
 
   let {
     tab = null,
-    anchor,
+    anchor = null,
     defaultColor = TAB_COLORS[0],
+    spaceId = undefined,
+    centered = false,
+    embedded = false,
     onClose
   }: {
     tab?: Tab | null;
-    anchor: { x: number; y: number };
+    anchor?: { x: number; y: number } | null;
     defaultColor?: string;
+    spaceId?: number;
+    centered?: boolean;
+    embedded?: boolean;
     onClose: () => void;
   } = $props();
 
@@ -56,12 +63,14 @@
       tabIcons[0].component
   );
   let left = $derived(
-    Math.max(
-      12,
-      Math.min(anchor.x, (window?.innerWidth ?? 1280) - PANEL_WIDTH - 12)
-    )
+    anchor
+      ? Math.max(
+          12,
+          Math.min(anchor.x, (window?.innerWidth ?? 1280) - PANEL_WIDTH - 12)
+        )
+      : 0
   );
-  let top = $derived(anchor.y + 8);
+  let top = $derived(anchor ? anchor.y + 8 : 0);
 
   onMount(() => {
     void tick().then(() => {
@@ -112,15 +121,19 @@
     }
     saving = true;
     error = null;
-    const result = tab
-      ? await app.updateTab(tab.id, trimmedName, trimmedDescription, color, icon)
-      : await app.createTab(trimmedName, trimmedDescription, color, icon);
-    saving = false;
-    if (result) {
-      error = result;
-      return;
+    try {
+      if (tab) {
+        await api.updateTab(tab.id, trimmedName, trimmedDescription, color, icon, spaceId);
+      } else {
+        await api.createTab(trimmedName, trimmedDescription, color, icon, spaceId);
+      }
+      await app.refreshTabs();
+      saving = false;
+      onClose();
+    } catch (caught) {
+      saving = false;
+      error = caught instanceof Error ? caught.message : String(caught);
     }
-    onClose();
   }
 
   async function remove() {
@@ -128,26 +141,38 @@
     if (!window.confirm(`Delete the "${tab.name}" tab?`)) return;
     saving = true;
     error = null;
-    const result = await app.deleteTab(tab.id);
-    saving = false;
-    if (result) {
-      error = result;
-      return;
+    try {
+      await api.deleteTab(tab.id, spaceId);
+      await app.refreshTabs();
+      await app.reloadMessages();
+      saving = false;
+      onClose();
+    } catch (caught) {
+      saving = false;
+      error = caught instanceof Error ? caught.message : String(caught);
     }
-    onClose();
   }
 </script>
 
-<svelte:window onpointerdown={outside} onkeydown={onKeydown} />
+<svelte:window
+  onpointerdown={(event) => {
+    if (!embedded) outside(event);
+  }}
+  onkeydown={(event) => {
+    if (!embedded) onKeydown(event);
+  }}
+/>
 
 <div
   class="editor"
+  class:centered
+  class:embedded
   bind:this={editor}
-  role="dialog"
+  role={embedded ? "group" : "dialog"}
   aria-labelledby="tab-editor-title"
-  style:left={`${left}px`}
-  style:top={`${top}px`}
-  style:max-height={`calc(100vh - ${top + 12}px)`}
+  style:left={centered || embedded ? undefined : `${left}px`}
+  style:top={centered || embedded ? undefined : `${top}px`}
+  style:max-height={embedded ? undefined : centered ? "85vh" : `calc(100vh - ${top + 12}px)`}
   style:--tab-color={previewColor(color)}
 >
   <form onsubmit={save}>
@@ -318,6 +343,22 @@
     color: var(--text);
     animation: editor-in 140ms ease-out both;
   }
+  .editor.embedded {
+    position: static;
+    width: 100%;
+    max-width: none;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+    overflow: visible;
+  }
+  .editor.centered {
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+  }
   :global(html[data-theme-modern="true"]) .editor {
     background: var(--modern-raised);
     border-color: var(--modern-border);
@@ -456,6 +497,8 @@
     flex-wrap: wrap;
     gap: 7px;
     min-height: 28px;
+    /* Room for the outer ring of the selected swatch. */
+    padding: 4px 3px;
   }
   .swatch {
     position: relative;
