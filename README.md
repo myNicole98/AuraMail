@@ -1,6 +1,6 @@
 <h3 align="center">
   <img src="resources/logo/aura-mail-logo.svg" height="300" /><br>
-  <img src="assets/screenshots/main.png" />
+  <img src="assets/screenshots/hero.png" />
 </h3>
 
 ###### human made readme :)
@@ -10,6 +10,10 @@
 AuraMail is a cross platform email client built to be fast, modern, customizable and with powerful but unintrusive AI tools.
 
 The purpose of this project is to borrow UX elements and features from other clients, add my own ideas and combine them in a unified and cohesive experience.
+
+<h3 align="center">
+  <img src="assets/screenshots/mail_open.png" />
+</h3>
 
 
 ## Disclaimer
@@ -54,11 +58,11 @@ AuraAI is an optional companion ran through a local or an OpenAI cloud provider 
 * [x] System tray, notifications, send/receive sounds
 * [x] Signatures
 * [x] Support for local and cloud AI providers
-* [ ] Mail routing rules
+* [x] Mail routing rules and labels
 * [ ] CSD work
 * [x] WCAG 1.4.12 compliance
 * [ ] Localization support with human assisted translation
-* [~] Calendar and contacts
+* [x] Calendar and contacts
 
 ## License
 
