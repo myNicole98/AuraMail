@@ -394,7 +394,11 @@ function Replace-ItemWithRetry([string]$source, [string]$target) {
 }
 $stage = $null
 try {
-  Write-Log "waiting for process $ProcessId"
+  # Prove to the app that PowerShell actually executed this file before it
+  # exits. Without this the app can close into the void when the hand-off
+  # fails, with nothing but a spinning cursor to show for it.
+  Set-Content -Path (Join-Path $env:TEMP "auramail-update.started") -Value $PID
+  Write-Log ("helper started: waiting for process $ProcessId, zip=$Zip, exe=$Exe")
   $deadline = (Get-Date).AddSeconds(90)
   while ((Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 200
@@ -446,6 +450,7 @@ try {
 /// installed app with the staged update and relaunches it.
 pub fn install(staged: &Path) -> crate::error::AppResult<()> {
     use crate::error::AppError;
+    #[cfg(unix)]
     use std::process::{Command, Stdio};
 
     #[cfg(not(target_os = "linux"))]
@@ -493,30 +498,119 @@ pub fn install(staged: &Path) -> crate::error::AppResult<()> {
     {
         let script = script_dir.join("auramail-update.ps1");
         std::fs::write(&script, WINDOWS_HELPER)?;
-        let _ = std::fs::remove_file(std::env::temp_dir().join("auramail-update.log"));
-        let mut command = Command::new("powershell.exe");
-        command
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File"])
-            .arg(&script)
-            .arg("-ProcessId")
-            .arg(std::process::id().to_string())
-            .arg("-Zip")
-            .arg(staged)
-            .arg("-Exe")
-            .arg(&exe);
-        detach(&mut command, Stdio::null(), Stdio::null())?;
+        let _ = std::fs::remove_file(windows_log());
+        let _ = std::fs::remove_file(windows_marker());
+        append_windows_log(&format!(
+            "install: pid={} script={} zip={} exe={}",
+            std::process::id(),
+            script.display(),
+            staged.display(),
+            exe.display()
+        ));
+        if let Err(error) = spawn_windows_helper(&script, staged, &exe) {
+            append_windows_log(&format!("install: could not start powershell: {error}"));
+            return Err(AppError::Message(format!(
+                "AuraMail could not start the update helper ({error}), so nothing was changed. See %TEMP%\\auramail-update.log."
+            )));
+        }
+        if !wait_for_windows_helper(Duration::from_secs(5)) {
+            append_windows_log(
+                "install: powershell started but never ran the helper; see auramail-update.stderr.log",
+            );
+            return Err(AppError::Message(
+                "AuraMail could not hand the update to its helper, so nothing was changed. See %TEMP%\\auramail-update.log.".into(),
+            ));
+        }
+        append_windows_log("install: helper is running, exiting");
     }
 
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn windows_log() -> PathBuf {
+    std::env::temp_dir().join("auramail-update.log")
+}
+
+#[cfg(target_os = "windows")]
+fn windows_marker() -> PathBuf {
+    std::env::temp_dir().join("auramail-update.started")
+}
+
+#[cfg(target_os = "windows")]
+fn append_windows_log(message: &str) {
+    use std::io::Write as _;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(windows_log())
+    {
+        let _ = writeln!(file, "{message}");
+    }
+}
+
+/// Start the hidden PowerShell helper. `CREATE_NO_WINDOW` gives it a console
+/// with no window, which is what a console host such as PowerShell expects;
+/// `DETACHED_PROCESS` would leave it with no console at all, and combining the
+/// two silently drops `CREATE_NO_WINDOW`.
+#[cfg(target_os = "windows")]
+fn spawn_windows_helper(script: &Path, staged: &Path, exe: &Path) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let stdout = std::fs::File::create(std::env::temp_dir().join("auramail-update.stdout.log"))?;
+    let stderr = std::fs::File::create(std::env::temp_dir().join("auramail-update.stderr.log"))?;
+    let mut command = Command::new("powershell.exe");
+    command
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+        ])
+        .arg(script)
+        .arg("-ProcessId")
+        .arg(std::process::id().to_string())
+        .arg("-Zip")
+        .arg(staged)
+        .arg("-Exe")
+        .arg(exe)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    command.spawn()?;
+    Ok(())
+}
+
+/// Wait for the helper to confirm it ran by writing its start marker. The app
+/// must not exit until this succeeds, otherwise a failed hand-off looks
+/// exactly like a successful one.
+#[cfg(target_os = "windows")]
+fn wait_for_windows_helper(timeout: Duration) -> bool {
+    let marker = windows_marker();
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if marker.is_file() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    marker.is_file()
+}
+
+#[cfg(unix)]
 fn detach(
     command: &mut std::process::Command,
     stdout: std::process::Stdio,
     stderr: std::process::Stdio,
 ) -> std::io::Result<()> {
     command.stdin(std::process::Stdio::null()).stdout(stdout).stderr(stderr);
-    #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         unsafe {
@@ -525,13 +619,6 @@ fn detach(
                 Ok(())
             });
         }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
     }
     command.spawn()?;
     Ok(())
