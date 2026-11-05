@@ -11,10 +11,13 @@ AuraMail is a cross platform email client built to be fast, modern, customizable
 
 The purpose of this project is to borrow UX elements and features from other clients, add my own ideas and combine them in a unified and cohesive experience.
 
-<h3 align="center">
-  <img src="assets/screenshots/mail_open.png" />
-</h3>
+## Highlights
 
+- IMAP/SMTP accounts
+- Oauth support for Google and Microsoft
+- Calendar and Contacts through CalDAV/CarDAV
+- AI assisted compose and replies
+- Categories, labels and extensive rule settings
 
 ## Disclaimer
 
@@ -22,26 +25,29 @@ AuraMail is an independent project developed by one person. It is still young, m
 
 ## Made to be accessible
 
-AuraMail boasts an ever growing list of accessibility settings meant to facilitate use to all users:
-
-- UI scaling
-- High Contrast mode
-- Color blindness filters
-- Motion sickness mitigation
-- Dyslexic friendly text spacing
+AuraMail tries its best not to leave anyone behind. Under that premise, an ever growing list of accessibility settings have been implemented, from basic UI scaling to WCAG compliant text spacing to aid dyslexic people
 
 ## Highly customizable
 
-AuraMail brings to the table a high level of customization, from default neutrals to famous color palettes, with more to come. UI elements can also be customized to fit your style.
+AuraMail brings to the table a high level of customization, from default neutrals to famous color schemes. UI elements be customized to fit your style
 
 And yes, there's matugen support too. You can find the template in ~/.config/auramail/theme.json
+
+## Make space for spaces
+
+Spaces are sandboxed environments where you can partition your daily life into tidy little boxes. Wether it's your personal life or work life, each space allows you to configure specific mail addresses and per-space settings. This includes themes, general settings and notifications. 
+
+## Bring Proton with you
+
+Auramail features oauth support for major players, but its most distinguished feature is a native integration with Proton Mail. **No paid accounts required**, no external bridges needed. Auramail takes care of that for you, so that you can enjoy your favourite mail provider without the forced compromises (and "please buy me" nags) of a web interface
 
 ## AuraAI
 
 AuraAI is an optional companion ran through a local or an OpenAI cloud provider that can assist you in a variety of tasks:
 
-- Automatic email classification
-- Context and thread aware draft replies, with suggested responses and styles
+- Automatic and granular email classification
+- Context-aware reply drafting with integrated style and response suggestions
+- Composition assistance featuring instruction-based generation and grammar/syntax correction
 
 <h3 align="center">
   <img src="assets/screenshots/aura_reply.png" /><br>
