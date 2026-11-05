@@ -32,21 +32,21 @@
    blocks below override these with their hand-tuned values; named palettes and
    Matugen derive the same gentle steps from their own Base16 colors. */
 html[data-theme-dark="true"] {
-  --bg-app: color-mix(in srgb, var(--base00) 90%, #000);
-  --bg-raised: color-mix(in srgb, var(--base00) 88%, #fff);
-  --bg-sidebar: color-mix(in srgb, var(--base00) 94%, #000);
-  --bg-list: color-mix(in srgb, var(--base00) 97%, #000);
+  --bg-app: color-mix(in srgb, var(--bg) 90%, #000);
+  --bg-raised: color-mix(in srgb, var(--bg) 88%, #fff);
+  --bg-sidebar: color-mix(in srgb, var(--bg) 94%, #000);
+  --bg-list: color-mix(in srgb, var(--bg) 97%, #000);
   --accent-text: color-mix(in srgb, var(--accent) 72%, var(--text));
-  --muted-soft: color-mix(in srgb, var(--muted) 76%, var(--base00));
+  --muted-soft: color-mix(in srgb, var(--muted) 76%, var(--bg));
 }
 
 html[data-theme-dark="false"] {
-  --bg-app: color-mix(in srgb, var(--base00) 92%, #000);
-  --bg-raised: color-mix(in srgb, var(--base00) 40%, #fff);
-  --bg-sidebar: color-mix(in srgb, var(--base00) 94%, #000);
-  --bg-list: color-mix(in srgb, var(--base00) 97%, #000);
+  --bg-app: color-mix(in srgb, var(--bg) 92%, #000);
+  --bg-raised: color-mix(in srgb, var(--bg) 40%, #fff);
+  --bg-sidebar: color-mix(in srgb, var(--bg) 94%, #000);
+  --bg-list: color-mix(in srgb, var(--bg) 97%, #000);
   --accent-text: var(--accent);
-  --muted-soft: color-mix(in srgb, var(--muted) 82%, var(--base00));
+  --muted-soft: color-mix(in srgb, var(--muted) 82%, var(--bg));
 }
 
 html[data-theme-scheme="Aura Light"] {
@@ -69,22 +69,28 @@ html[data-theme-scheme="Matugen"] {
   --border: color-mix(in srgb, var(--base03) 70%, var(--base02));
 }
 
-/* Solid + Straight Matugen keeps its original single-gradient shell. */
-html[data-theme-scheme="Matugen"]:not([data-theme-modern="true"])[data-theme-panes="straight"] .shell {
-  background: linear-gradient(
-    145deg,
-    var(--bg),
-    color-mix(in srgb, var(--bg) 86%, var(--base02))
-  );
+/* Matugen's base00/base01 can be almost black; lift them a touch with the
+   text colour so both Solid and Modern read as surfaces, not voids. */
+html[data-theme-scheme="Matugen"] {
+  --bg: color-mix(in srgb, var(--base00) 92%, var(--base05));
+  --bg-raised: color-mix(in srgb, var(--base01) 92%, var(--base05));
+}
+
+/* Light Solid is one flat surface: the tint ladder read as a horizontal
+   gradient there. Dark keeps its visible surface steps. */
+html[data-theme-background="solid"][data-theme-dark="false"] {
+  --bg-app: var(--bg);
+  --bg-sidebar: var(--bg);
+  --bg-list: var(--bg);
 }
 
 /* Modern keeps translucent panes over the solid app background. The pane
    shape is controlled independently by data-theme-panes. */
 html[data-theme-modern="true"] {
   --modern-surface: color-mix(in srgb, var(--bg) 62%, transparent);
-  --modern-nav: color-mix(in srgb, var(--bg-raised) 52%, transparent);
-  --modern-list: color-mix(in srgb, var(--bg-raised) 50%, transparent);
-  --modern-reader: color-mix(in srgb, var(--bg) 56%, transparent);
+  --modern-nav: color-mix(in srgb, var(--bg) 62%, transparent);
+  --modern-list: color-mix(in srgb, var(--bg) 64%, transparent);
+  --modern-reader: color-mix(in srgb, var(--bg) 66%, transparent);
   --modern-raised: color-mix(in srgb, var(--bg-raised) 64%, transparent);
   --modern-hover: color-mix(in srgb, var(--bg-hover) 70%, transparent);
   --modern-edge: color-mix(in srgb, var(--text) 14%, transparent);
@@ -116,9 +122,9 @@ html[data-theme-modern="true"] body {
 
 html[data-theme-modern="true"][data-theme-dark="false"] {
   --modern-surface: color-mix(in srgb, var(--bg) 74%, transparent);
-  --modern-nav: color-mix(in srgb, var(--bg-raised) 68%, transparent);
-  --modern-list: color-mix(in srgb, var(--bg) 66%, transparent);
-  --modern-reader: color-mix(in srgb, var(--bg) 70%, transparent);
+  --modern-nav: color-mix(in srgb, var(--bg) 74%, transparent);
+  --modern-list: color-mix(in srgb, var(--bg) 76%, transparent);
+  --modern-reader: color-mix(in srgb, var(--bg) 78%, transparent);
   --modern-raised: color-mix(in srgb, var(--bg-raised) 78%, transparent);
   --modern-border: color-mix(in srgb, var(--text) 10%, transparent);
   --modern-highlight: inset 0 1px 0 color-mix(in srgb, #fff 50%, transparent);
@@ -357,15 +363,17 @@ html[data-theme-panes="rounded"] .shell {
   background: transparent;
 }
 
-/* Solid panes draw straight on the theme background; the modern variants get
-   a whisper of tint so the content still reads as a surface. */
+/* Rounded changes the pane shape, never the surface colours. */
 html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .shell > .sidebar {
-  background-color: var(--bg-raised);
+  background-color: var(--bg-sidebar);
 }
 
-html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .shell > .message-list,
+html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .shell > .message-list {
+  background-color: var(--bg-list);
+}
+
 html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .shell > .reader {
-  background-color: transparent;
+  background-color: var(--bg);
 }
 
 /* The mail surface is drawn straight on the theme background, so the panes
@@ -374,18 +382,6 @@ html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .shell > .reade
 html[data-theme-panes="rounded"] .shell > .message-list,
 html[data-theme-panes="rounded"] .shell > .reader {
   height: auto;
-}
-
-/* The modern overlay spans the whole shell, not just the mail panes: one
-   translucent background behind the floating cards, so no seam can appear at
-   the mail viewer's left edge. */
-html[data-theme-modern="true"][data-theme-panes="rounded"] .shell {
-  background-color: color-mix(in srgb, var(--bg-raised) 22%, transparent);
-}
-
-html[data-theme-modern="true"][data-theme-panes="rounded"] .shell > .message-list,
-html[data-theme-modern="true"][data-theme-panes="rounded"] .shell > .reader {
-  background-color: transparent;
 }
 
 html[data-theme-modern="true"] .shell > .sidebar,

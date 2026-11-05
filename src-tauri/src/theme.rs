@@ -195,7 +195,7 @@ fn ensure_config_at(dir: &Path) -> AppResult<()> {
 }
 
 fn valid_background(background: &str) -> bool {
-    matches!(background, "solid" | "glass")
+    matches!(background, "solid" | "modern" | "glass")
 }
 
 fn valid_panes(panes: &str) -> bool {
@@ -204,8 +204,8 @@ fn valid_panes(panes: &str) -> bool {
 
 fn legacy_theme_shape(style: Option<String>) -> (String, String) {
     match style.as_deref() {
-        Some("frosted") => ("glass".into(), "straight".into()),
-        Some("fancy") => ("glass".into(), "rounded".into()),
+        Some("frosted") => ("modern".into(), "straight".into()),
+        Some("fancy") => ("modern".into(), "rounded".into()),
         _ => ("solid".into(), "straight".into()),
     }
 }
@@ -291,6 +291,8 @@ pub fn load_settings(db: &Database, space_id: i64) -> AppResult<ThemeSettings> {
         .filter(|value| !value.trim().is_empty());
     let (legacy_background, legacy_panes) = legacy_theme_shape(db.setting(STYLE_KEY)?);
     let background = match db.setting(&scoped_key(space_id, BACKGROUND_KEY))? {
+        // "glass" is the pre-0.7 name for the same translucent-pane mode.
+        Some(background) if background == "glass" => "modern".into(),
         Some(background) if valid_background(&background) => background,
         Some(_) => DEFAULT_BACKGROUND.into(),
         None if default_space => legacy_background,
@@ -338,10 +340,12 @@ pub fn save_settings(
             .filter(|value| !value.is_empty())
             .unwrap_or(""),
     )?;
-    db.set_setting(
-        &scoped_key(space_id, BACKGROUND_KEY),
-        settings.background.trim(),
-    )?;
+    let background = if settings.background.trim() == "glass" {
+        "modern"
+    } else {
+        settings.background.trim()
+    };
+    db.set_setting(&scoped_key(space_id, BACKGROUND_KEY), background)?;
     db.set_setting(&scoped_key(space_id, PANES_KEY), settings.panes.trim())?;
     Ok(())
 }
@@ -532,7 +536,7 @@ mod tests {
             &ThemeSettings {
                 choice: "dark".into(),
                 accent: Some("#ff0000".into()),
-                background: "glass".into(),
+                background: "modern".into(),
                 panes: "rounded".into(),
             },
         )
@@ -540,7 +544,7 @@ mod tests {
         let work_settings = load_settings(&db, work.id).unwrap();
         let default_settings = load_settings(&db, default.id).unwrap();
         assert_eq!(work_settings.choice, "dark");
-        assert_eq!(work_settings.background, "glass");
+        assert_eq!(work_settings.background, "modern");
         assert_eq!(default_settings, ThemeSettings::default());
         assert!(!matugen_enabled(&db, work.id).unwrap());
     }
@@ -562,7 +566,7 @@ mod tests {
 
         let migrated = load_settings(&db, default.id).unwrap();
         assert_eq!(migrated.choice, "dark");
-        assert_eq!(migrated.background, "glass");
+        assert_eq!(migrated.background, "modern");
         assert_eq!(migrated.panes, "rounded");
         assert_eq!(load_settings(&db, work.id).unwrap(), ThemeSettings::default());
     }
@@ -575,7 +579,7 @@ mod tests {
         let settings = ThemeSettings {
             choice: "catppuccin".into(),
             accent: Some("red".into()),
-            background: "glass".into(),
+            background: "modern".into(),
             panes: "rounded".into(),
         };
         save_settings(&db, default_space(&db), &settings).unwrap();
@@ -617,8 +621,8 @@ mod tests {
     fn migrates_legacy_theme_styles_to_shape_choices() {
         for (style, background, panes) in [
             ("classic", "solid", "straight"),
-            ("frosted", "glass", "straight"),
-            ("fancy", "glass", "rounded"),
+            ("frosted", "modern", "straight"),
+            ("fancy", "modern", "rounded"),
         ] {
             let db = Database::open_memory().unwrap();
             db.set_setting(STYLE_KEY, style).unwrap();
