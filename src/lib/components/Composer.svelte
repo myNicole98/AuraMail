@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import {
     Bold,
     BrainCircuit,
@@ -243,6 +244,11 @@
   let changeCount = 0;
   let sending = $state(false);
   let saving = $state(false);
+  let dropping = $state(false);
+  let dragDepth = 0;
+  // Set once the native drop listener is attached: in the desktop app the OS
+  // drop never reaches the DOM, and the DOM handler must not act on it.
+  let nativeDrop = false;
   let closePending = false;
   let error = $state<string | null>(null);
   let fileInput: HTMLInputElement | null = null;
@@ -532,6 +538,25 @@
     }
   }
 
+  /// Attachments read from disk by the backend, for drops that only expose
+  /// file paths to the webview.
+  function addUploads(uploads: AttachmentUpload[]) {
+    let total = totalBytes;
+    const next = [...attachments];
+    for (const upload of uploads) {
+      const size = base64ByteLength(upload.data);
+      if (total + size > MAX_BYTES) {
+        error = "Attachments exceed the 25 MB limit.";
+        break;
+      }
+      next.push(upload);
+      total += size;
+    }
+    if (next.length === attachments.length) return;
+    attachments = next;
+    markDirty();
+  }
+
   async function onFileChange(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const files = Array.from(input.files ?? []);
@@ -562,6 +587,86 @@
     if (html) {
       event.preventDefault();
       insertHtml(captureImages(sanitizeComposeHtml(html)));
+    }
+  }
+
+  // Native file drops arrive as HTML5 drag events because the compose window
+  // disables Tauri's drag-drop bridge. WebKit often hands over only a
+  // `file://` URI list with no File objects, so paths are read back through
+  // Rust when that happens.
+  function dragTypes(event: DragEvent): string[] {
+    return event.dataTransfer ? Array.from(event.dataTransfer.types) : [];
+  }
+
+  function dragFiles(event: DragEvent): File[] {
+    return Array.from(event.dataTransfer?.files ?? []);
+  }
+
+  function isExternalDrag(event: DragEvent): boolean {
+    const types = dragTypes(event);
+    return (
+      dragFiles(event).length > 0 ||
+      types.includes("Files") ||
+      types.includes("text/uri-list")
+    );
+  }
+
+  function droppedPaths(event: DragEvent): string[] {
+    const list = event.dataTransfer?.getData("text/uri-list") ?? "";
+    return list
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.toLowerCase().startsWith("file://"))
+      .map((line) => {
+        try {
+          const url = new URL(line);
+          const path = decodeURIComponent(url.pathname);
+          // file:///C:/Users/me/a.pdf arrives as /C:/Users/me/a.pdf.
+          return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
+        } catch {
+          return "";
+        }
+      })
+      .filter((path) => path.length > 0);
+  }
+
+  function onDragEnter(event: DragEvent) {
+    if (!isExternalDrag(event)) return;
+    event.preventDefault();
+    dragDepth += 1;
+    dropping = true;
+  }
+
+  function onDragOver(event: DragEvent) {
+    if (!isExternalDrag(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  }
+
+  function onDragLeave(event: DragEvent) {
+    if (!isExternalDrag(event)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) dropping = false;
+  }
+
+  async function onDrop(event: DragEvent) {
+    if (nativeDrop) return;
+    const files = dragFiles(event);
+    const paths = files.length > 0 ? [] : droppedPaths(event);
+    dragDepth = 0;
+    dropping = false;
+    // A dropped link or text carries neither files nor paths: let the editor
+    // handle it as usual.
+    if (files.length === 0 && paths.length === 0) return;
+    event.preventDefault();
+    if (files.length > 0) {
+      await addFiles(files);
+      return;
+    }
+    try {
+      addUploads(await api.readAttachmentPaths(paths));
+    } catch (caught) {
+      error = errorMessage(caught);
     }
   }
 
@@ -773,9 +878,40 @@
         void saveDraft();
       }
     }, 5000);
+    let stopDragDrop: (() => void) | undefined;
+    if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+      // The compose window keeps Tauri's native drop handler, so the OS hands
+      // us real file paths instead of letting the webview open the file.
+      void getCurrentWebview()
+        .onDragDropEvent((event) => {
+          const payload = event.payload;
+          if (payload.type === "enter" || payload.type === "over") {
+            dropping = true;
+            return;
+          }
+          if (payload.type === "leave") {
+            dropping = false;
+            return;
+          }
+          dropping = false;
+          if (payload.paths.length === 0) return;
+          void (async () => {
+            try {
+              addUploads(await api.readAttachmentPaths(payload.paths));
+            } catch (caught) {
+              error = errorMessage(caught);
+            }
+          })();
+        })
+        .then((stop) => {
+          stopDragDrop = stop;
+          nativeDrop = true;
+        });
+    }
     return () => {
       clearInterval(timer);
       clearTimeout(contactTimer);
+      stopDragDrop?.();
     };
   });
 </script>
@@ -799,7 +935,15 @@
   }}
 />
 
-<section class="composer" aria-label="Compose message">
+<section
+  class="composer"
+  class:dropping
+  aria-label="Compose message"
+  ondragenter={onDragEnter}
+  ondragover={onDragOver}
+  ondragleave={onDragLeave}
+  ondrop={(event) => void onDrop(event)}
+>
   <header class="composer-head">
     <h2>{title}</h2>
     <div class="account-picker">
@@ -1151,16 +1295,39 @@
       <Paperclip size={16} />
     </button>
   </footer>
+  {#if dropping}
+    <div class="drop-hint" aria-hidden="true">
+      <Paperclip size={18} />
+      <span>Drop files to attach</span>
+    </div>
+  {/if}
 </section>
 
 <style>
   .composer {
+    position: relative;
     display: flex;
     flex-direction: column;
     width: 100%;
     height: 100%;
     min-width: 0;
     background: var(--bg);
+  }
+  .drop-hint {
+    position: absolute;
+    inset: 10px;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--bg) 84%, transparent);
+    color: var(--accent);
+    font-size: 12.5px;
+    font-weight: 550;
+    pointer-events: none;
   }
   .composer-head {
     display: flex;

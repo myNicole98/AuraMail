@@ -1030,6 +1030,39 @@ pub(crate) fn open_session(
     run(open_session_async(account, credential))
 }
 
+/// Upload a copy of a message to a folder. SMTP submission leaves no copy on
+/// the server for most providers, so a sent mail only exists in the
+/// recipient's mailbox until the client appends it to Sent.
+pub fn append_message(
+    account: &Account,
+    credential: &MailCredential,
+    folder_path: &str,
+    flags: &[&str],
+    raw: &[u8],
+) -> AppResult<()> {
+    let mut session = open_session(account, credential)?;
+    let result = append_to_session(&mut session, folder_path, flags, raw);
+    let _ = run(async { session.logout().await });
+    result
+}
+
+fn append_to_session(
+    session: &mut ImapSession,
+    folder_path: &str,
+    flags: &[&str],
+    raw: &[u8],
+) -> AppResult<()> {
+    // async-imap splices the flag argument verbatim, so the parentheses that
+    // make it an IMAP flag-list are ours to add.
+    let flag_list = format!("({})", flags.join(" "));
+    run(async {
+        session
+            .append(folder_path, Some(&flag_list), None, raw)
+            .await
+            .map_err(|error| AppError::Message(format!("IMAP append failed: {error}")))
+    })
+}
+
 async fn open_session_async(
     account: &Account,
     credential: &MailCredential,
@@ -1270,7 +1303,7 @@ mod tests {
     use super::*;
     use crate::accounts::{AccountAuth, MailSecurity};
     use async_imap::Authenticator;
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::thread;
 
@@ -1634,6 +1667,75 @@ mod tests {
             client.read_response().await.unwrap();
             client.login("me@example.com", "pass").await.ok().unwrap()
         })
+    }
+
+    /// Serves whatever precedes an APPEND, then swallows the literal payload
+    /// and acknowledges it, recording both the command and the bytes.
+    fn append_server() -> (u16, thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = thread::spawn(move || {
+            let (peer, _) = listener.accept().unwrap();
+            let mut writer = peer.try_clone().unwrap();
+            writer.write_all(b"* OK IMAP4rev1 ready\r\n").unwrap();
+            let mut reader = BufReader::new(peer);
+            let mut commands = Vec::new();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    break;
+                }
+                commands.push(line.trim_end().to_string());
+                let tag = line.split(' ').next().unwrap_or_default().to_string();
+                if line.to_ascii_uppercase().contains(" APPEND ") {
+                    let size = line
+                        .rsplit('{')
+                        .next()
+                        .and_then(|tail| tail.trim().trim_end_matches('}').parse().ok())
+                        .expect("APPEND must announce a literal size");
+                    writer.write_all(b"+ ready\r\n").unwrap();
+                    let mut body = vec![0u8; size];
+                    reader.read_exact(&mut body).unwrap();
+                    reader.read_exact(&mut [0u8; 2]).unwrap();
+                    commands.push(String::from_utf8_lossy(&body).to_string());
+                    writer
+                        .write_all(format!("{tag} OK APPEND completed\r\n").as_bytes())
+                        .unwrap();
+                    continue;
+                }
+                if line.starts_with(&format!("{tag} LOGOUT")) {
+                    writer
+                        .write_all(format!("{tag} OK LOGOUT completed\r\n").as_bytes())
+                        .unwrap();
+                    break;
+                }
+                writer
+                    .write_all(format!("{tag} OK completed\r\n").as_bytes())
+                    .unwrap();
+            }
+            commands
+        });
+        (port, handle)
+    }
+
+    #[test]
+    fn appends_the_sent_copy_to_the_requested_folder() {
+        let (port, handle) = append_server();
+        let mut session = connect_plain(port);
+        let raw = b"Subject: hi\r\n\r\nbody";
+        append_to_session(&mut session, "[Gmail]/Sent Mail", &["\\Seen"], raw).unwrap();
+        drop(session);
+        let commands = handle.join().unwrap();
+        let index = commands
+            .iter()
+            .position(|line| line.contains(" APPEND "))
+            .expect("an APPEND should be sent");
+        assert!(
+            commands[index].contains("APPEND \"[Gmail]/Sent Mail\" (\\Seen) {19}"),
+            "got {:?}",
+            commands[index]
+        );
+        assert_eq!(commands[index + 1], "Subject: hi\r\n\r\nbody");
     }
 
     #[test]

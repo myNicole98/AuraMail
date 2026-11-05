@@ -1488,7 +1488,6 @@ pub async fn open_compose_window(
     .inner_size(760.0, 720.0)
     .min_inner_size(520.0, 500.0)
     .center()
-    .disable_drag_drop_handler()
     .build()
     .map_err(|error| AppError::Message(format!("could not open compose window: {error}")))?;
     Ok(())
@@ -2880,18 +2879,97 @@ fn delete_messages_blocking(
     Ok(BulkReport { failed })
 }
 
+/// Read files dropped onto the compose window. WebKit only hands the page a
+/// `file://` URI list for a native drop, so the bytes have to be read here
+/// rather than in the webview.
+#[tauri::command]
+pub fn read_attachment_paths(
+    paths: Vec<String>,
+) -> AppResult<Vec<compose::AttachmentUpload>> {
+    use base64::Engine as _;
+
+    const MAX_DROPPED_FILES: usize = 20;
+    if paths.len() > MAX_DROPPED_FILES {
+        return Err(AppError::Message(
+            "Too many files were dropped at once.".into(),
+        ));
+    }
+    let mut total = 0usize;
+    let mut attachments = Vec::new();
+    for path in paths {
+        let path = PathBuf::from(path);
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        total = total
+            .checked_add(metadata.len() as usize)
+            .ok_or_else(|| AppError::Message("attachments exceed the 25 MB limit".into()))?;
+        if total > compose::MAX_ATTACHMENT_TOTAL {
+            return Err(AppError::Message(
+                "attachments exceed the 25 MB limit".into(),
+            ));
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let Some(name) = path.file_name().map(|name| name.to_string_lossy().to_string()) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        attachments.push(compose::AttachmentUpload {
+            mime_type: mime_guess::from_path(&path)
+                .first_or_octet_stream()
+                .essence_str()
+                .to_string(),
+            name,
+            data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        });
+    }
+    Ok(attachments)
+}
+
 #[tauri::command]
 pub async fn send_message(
+    app: AppHandle,
     state: State<'_, AppState>,
     input: ComposeInput,
     draft_id: Option<i64>,
 ) -> AppResult<()> {
     let db = Arc::clone(&state.db);
     let secrets = Arc::clone(&state.secrets);
+    let syncing = Arc::clone(&state.syncing);
     tauri::async_runtime::spawn_blocking(move || {
         let account = account_by_id(&db, input.account_id)?;
         let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
-        smtp::send(&account, &credential, &input)?;
+        let raw = smtp::send(&account, &credential, &input)?;
+        // SMTP submission does not store a copy on the provider, so the sent
+        // message would only exist for the recipient. Upload it to Sent and
+        // refresh that folder so it shows up locally as well.
+        if let Ok(Some(folder_id)) = mail::folder_id_by_role(&db, account.id, "sent") {
+            if let Ok(Some(folder)) = mail::folder_by_id(&db, folder_id) {
+                match crate::imap::client::append_message(
+                    &account,
+                    &credential,
+                    &folder.path,
+                    &["\\Seen"],
+                    &raw,
+                ) {
+                    Ok(()) => schedule_folder_sync(
+                        &app,
+                        Arc::clone(&db),
+                        Arc::clone(&secrets),
+                        Arc::clone(&syncing),
+                        folder_id,
+                    ),
+                    Err(error) => eprintln!("sent copy upload failed: {error}"),
+                }
+            }
+        }
         crate::desktop::play_sent_if_enabled(&db, account.space_id);
         if let Some(draft_id) = draft_id {
             let _ = compose::delete_draft(&db, draft_id);
@@ -3211,8 +3289,8 @@ mod tests {
     use super::{
         attachment_position, cached_attachment, delete_account_record, effective_full_body,
         ensure_trash_delete, error_kind, parse_color_scheme, parse_dms_mode, preview_data_url,
-        previewable_image, reply_mail_context, trash_destination, unique_download_path,
-        validate_move_target, voice_samples,
+        previewable_image, read_attachment_paths, reply_mail_context, trash_destination,
+        unique_download_path, validate_move_target, voice_samples,
     };
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -3463,6 +3541,24 @@ mod tests {
         let folder = dir.path().join("2-folder");
         std::fs::create_dir(&folder).unwrap();
         assert!(cached_attachment(&folder).is_err());
+    }
+
+    #[test]
+    fn reads_dropped_files_as_attachments() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("report.pdf");
+        std::fs::write(&file, b"hi").unwrap();
+
+        let files = read_attachment_paths(vec![
+            file.to_string_lossy().to_string(),
+            dir.path().join("missing.txt").to_string_lossy().to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, "report.pdf");
+        assert_eq!(files[0].mime_type, "application/pdf");
+        assert_eq!(files[0].data, "aGk=");
     }
 
     #[cfg(unix)]

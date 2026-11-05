@@ -277,6 +277,7 @@ pub fn run() {
             commands::get_sender_avatar,
             commands::get_mail_preferences,
             commands::set_mail_preferences,
+            commands::read_attachment_paths,
             commands::send_message,
             commands::save_draft,
             commands::list_drafts,

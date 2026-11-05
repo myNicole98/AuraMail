@@ -145,11 +145,13 @@ pub fn send(
     account: &Account,
     credential: &MailCredential,
     input: &ComposeInput,
-) -> AppResult<()> {
+) -> AppResult<Vec<u8>> {
     let message = compose::build(input, Some(&account.identity), &account.email)?;
     let transport = account_transport(account, credential, SEND_TIMEOUT)?;
     transport.send(&message).map_err(safe_smtp_error)?;
-    Ok(())
+    // The raw bytes are returned so the caller can append the same message to
+    // the account's Sent folder; SMTP alone leaves no copy there.
+    Ok(message.formatted())
 }
 
 fn safe_smtp_error(err: lettre::transport::smtp::Error) -> AppError {

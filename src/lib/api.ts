@@ -5,6 +5,7 @@ import type {
   AccountDiscovery,
   AccountInput,
   AttachmentPreview,
+  AttachmentUpload,
   BulkReport,
   CalendarAccount,
   CalendarAccountInput,
@@ -344,6 +345,8 @@ export const api = {
     invoke<AttachmentPreview | null>("attachment_preview", { attachmentId }),
   loadRemoteImages: (messageId: number) =>
     invoke<string>("load_remote_images", { messageId }),
+  readAttachmentPaths: (paths: string[]) =>
+    invoke<AttachmentUpload[]>("read_attachment_paths", { paths }),
   sendMessage: (input: ComposeInput, draftId?: number) =>
     invoke<void>("send_message", { input, draftId }),
   saveDraft: (input: ComposeInput, draftId?: number) =>

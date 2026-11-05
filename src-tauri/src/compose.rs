@@ -672,6 +672,25 @@ mod tests {
     }
 
     #[test]
+    fn attachment_messages_survive_a_full_parse() {
+        let mut input = valid_input();
+        input.html_body = Some("<p>Body</p>".into());
+        input.attachments = vec![upload("report.pdf", "application/pdf", b"hello")];
+        let raw = build_message(&input, "me@example.com").unwrap();
+        let parsed = mail_parser::MessageParser::default()
+            .parse(&raw)
+            .expect("the generated message should parse");
+        use mail_parser::MimeHeaders;
+        assert_eq!(parsed.subject(), Some("Hello"));
+        assert_eq!(parsed.body_text(0).as_deref(), Some("Body"));
+        let attachment = parsed
+            .attachments()
+            .find(|part| part.attachment_name() == Some("report.pdf"))
+            .expect("the attachment should be readable");
+        assert_eq!(attachment.contents(), b"hello");
+    }
+
+    #[test]
     fn rejects_attachments_over_the_total_limit() {
         let mut input = valid_input();
         input.attachments = vec![upload(
