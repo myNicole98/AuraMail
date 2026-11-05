@@ -18,6 +18,7 @@ The purpose of this project is to borrow UX elements and features from other cli
 - Calendar and Contacts through CalDAV/CarDAV
 - AI assisted compose and replies
 - Categories, labels and extensive rule settings
+- Spaces
 
 ## Disclaimer
 
