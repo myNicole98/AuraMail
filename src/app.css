@@ -32,6 +32,7 @@
    blocks below override these with their hand-tuned values; named palettes and
    Matugen derive the same gentle steps from their own Base16 colors. */
 html[data-theme-dark="true"] {
+  color-scheme: dark;
   --bg-app: color-mix(in srgb, var(--bg) 90%, #000);
   --bg-raised: color-mix(in srgb, var(--bg) 88%, #fff);
   --bg-sidebar: color-mix(in srgb, var(--bg) 94%, #000);
@@ -41,6 +42,7 @@ html[data-theme-dark="true"] {
 }
 
 html[data-theme-dark="false"] {
+  color-scheme: light;
   --bg-app: color-mix(in srgb, var(--bg) 92%, #000);
   --bg-raised: color-mix(in srgb, var(--bg) 40%, #fff);
   --bg-sidebar: color-mix(in srgb, var(--bg) 94%, #000);
@@ -92,6 +94,7 @@ html[data-theme-modern="true"] {
   --modern-list: color-mix(in srgb, var(--bg) 64%, transparent);
   --modern-reader: color-mix(in srgb, var(--bg) 66%, transparent);
   --modern-raised: color-mix(in srgb, var(--bg-raised) 64%, transparent);
+  --modern-popover: color-mix(in srgb, var(--bg-raised) 94%, transparent);
   --modern-hover: color-mix(in srgb, var(--bg-hover) 70%, transparent);
   --modern-edge: color-mix(in srgb, var(--text) 14%, transparent);
   --modern-border: var(--modern-edge);
@@ -126,6 +129,7 @@ html[data-theme-modern="true"][data-theme-dark="false"] {
   --modern-list: color-mix(in srgb, var(--bg) 76%, transparent);
   --modern-reader: color-mix(in srgb, var(--bg) 78%, transparent);
   --modern-raised: color-mix(in srgb, var(--bg-raised) 78%, transparent);
+  --modern-popover: color-mix(in srgb, var(--bg-raised) 97%, transparent);
   --modern-border: color-mix(in srgb, var(--text) 10%, transparent);
   --modern-highlight: inset 0 1px 0 color-mix(in srgb, #fff 50%, transparent);
   --modern-shadow:
@@ -160,6 +164,13 @@ html[data-theme-modern="true"] .shell > .reader {
   border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+/* The rail is a nav pane like the sidebar; it should follow the same
+   translucent surface instead of keeping its solid raised fill. */
+html[data-theme-modern="true"] .shell > .app-rail {
+  background-color: var(--modern-nav);
+  box-shadow: inset -1px 0 var(--modern-border);
 }
 
 html[data-theme-modern="true"] .shell > .sidebar {
@@ -258,32 +269,51 @@ html[data-theme-panes="rounded"] .calendar-main {
   overflow: hidden;
 }
 
-html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .calendar-sidebar {
+/* Contacts is a two-pane workspace too; keep the same rounded card language
+   as Calendar instead of leaving it edge-to-edge. */
+html[data-theme-panes="rounded"] .contacts-workspace {
+  gap: 5px;
+  background: transparent;
+}
+
+html[data-theme-panes="rounded"] .contacts-sidebar,
+html[data-theme-panes="rounded"] .contacts-main {
+  border: 1px solid var(--pane-border);
+  border-radius: 16px;
+  box-shadow: var(--pane-highlight), var(--pane-shadow);
+}
+
+html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .contacts-sidebar {
   background-color: var(--bg-raised);
 }
 
-html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .calendar-main {
+html[data-theme-panes="rounded"]:not([data-theme-modern="true"]) .contacts-main {
   background-color: color-mix(in srgb, var(--bg) 84%, var(--bg-raised));
 }
 
 html[data-high-contrast="true"][data-theme-panes="rounded"] .calendar-sidebar,
-html[data-high-contrast="true"][data-theme-panes="rounded"] .calendar-main {
+html[data-high-contrast="true"][data-theme-panes="rounded"] .calendar-main,
+html[data-high-contrast="true"][data-theme-panes="rounded"] .contacts-sidebar,
+html[data-high-contrast="true"][data-theme-panes="rounded"] .contacts-main {
   border-color: var(--border);
   box-shadow: none;
 }
 
-/* Calendar surfaces use the same translucent modern language as the mail
-   panes in every view, not just the month grid. */
-html[data-theme-modern="true"] .calendar-workspace {
+/* Calendar and Contacts are workspaces inside the shell; give them the same
+   translucent surfaces as the mail panes. */
+html[data-theme-modern="true"] .calendar-workspace,
+html[data-theme-modern="true"] .contacts-workspace {
   background: transparent;
 }
 
-html[data-theme-modern="true"] .calendar-sidebar {
+html[data-theme-modern="true"] .calendar-sidebar,
+html[data-theme-modern="true"] .contacts-sidebar {
   background-color: var(--modern-nav);
   border-color: var(--modern-border);
 }
 
-html[data-theme-modern="true"] .calendar-main {
+html[data-theme-modern="true"] .calendar-main,
+html[data-theme-modern="true"] .contacts-main {
   background-color: var(--modern-reader);
   border-color: var(--modern-border);
 }
@@ -340,7 +370,7 @@ html[data-theme-modern="true"] .add-calendar-button:hover {
 html[data-theme-modern="true"] .calendar-context-menu,
 html[data-theme-modern="true"] .date-picker,
 html[data-theme-modern="true"] .event-popover {
-  background: var(--modern-raised);
+  background: var(--modern-popover);
   border-color: var(--modern-border);
   -webkit-backdrop-filter: blur(var(--modern-blur-strong)) saturate(var(--modern-saturate));
   backdrop-filter: blur(var(--modern-blur-strong)) saturate(var(--modern-saturate));
@@ -350,7 +380,7 @@ html[data-theme-modern="true"] .event-popover {
 /* Keep the event editor free of backdrop-filter: it would become the
    containing block for the fixed date picker and clip it. */
 html[data-theme-modern="true"] .event-dialog {
-  background: var(--modern-raised);
+  background: var(--modern-popover);
   border-color: var(--modern-border);
   box-shadow: 0 18px 46px color-mix(in srgb, #000 26%, transparent);
 }
@@ -387,6 +417,9 @@ html[data-theme-panes="rounded"] .shell > .reader {
 html[data-theme-modern="true"] .shell > .sidebar,
 html[data-theme-modern="true"] .shell > .message-list,
 html[data-theme-modern="true"] .shell > .reader,
+html[data-theme-modern="true"] .shell > .app-rail,
+html[data-theme-modern="true"] .calendar-workspace,
+html[data-theme-modern="true"] .contacts-workspace,
 html[data-theme-modern="true"] .settings-root,
 html[data-theme-modern="true"] .composer,
 html[data-theme-modern="true"] .onboarding {
@@ -441,6 +474,20 @@ html[data-theme-modern="true"] .composer-foot {
 html[data-theme-modern="true"] .search {
   background: color-mix(in srgb, var(--bg) 34%, transparent);
   border-color: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+html[data-theme-modern="true"] .search:focus-within {
+  border-color: var(--accent);
+}
+
+/* Match the search field treatment for the app's custom selects. */
+html[data-theme-modern="true"] .themed-select .trigger {
+  background: color-mix(in srgb, var(--bg) 34%, transparent);
+  border-color: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+html[data-theme-modern="true"] .themed-select .trigger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
 html[data-theme-modern="true"] .bulk-bar {
@@ -549,7 +596,9 @@ html[data-theme-modern="true"] .settings-layer {
 }
 
 html[data-theme-modern="true"] .settings-root {
-  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  /* Settings is a full-screen layer: keep it opaque so the mail below never
+     ghosts through the translucent panes. Only the bars stay frosted. */
+  background: var(--bg);
 }
 
 html[data-theme-modern="true"] .settings-header,
@@ -575,8 +624,15 @@ html[data-theme-modern="true"] .color-menu,
 html[data-theme-modern="true"] .ai-popover,
 html[data-theme-modern="true"] .reply-menu,
 html[data-theme-modern="true"] .theme-toast,
-html[data-theme-modern="true"] .toast {
-  background: var(--modern-raised);
+html[data-theme-modern="true"] .toast,
+html[data-theme-modern="true"] .menu,
+html[data-theme-modern="true"] .link-popover,
+html[data-theme-modern="true"] .sender-menu,
+html[data-theme-modern="true"] .dialog-panel,
+html[data-theme-modern="true"] .contact-dialog,
+html[data-theme-modern="true"] .rule-dialog,
+html[data-theme-modern="true"] .modal {
+  background: var(--modern-popover);
   border-color: var(--modern-border);
   -webkit-backdrop-filter: blur(24px) saturate(var(--modern-saturate));
   backdrop-filter: blur(24px) saturate(var(--modern-saturate));
@@ -595,6 +651,7 @@ html[data-theme-modern="true"][data-high-contrast="true"] {
   --modern-list: var(--bg);
   --modern-reader: var(--bg);
   --modern-raised: var(--bg-raised);
+  --modern-popover: var(--bg-raised);
   --modern-hover: var(--bg-hover);
   --modern-edge: var(--border);
   --modern-border: var(--border);
@@ -686,6 +743,15 @@ img {
 }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { border: 0; background: none; cursor: pointer; }
+/* Native option lists are painted by the platform, not by the panel that
+   opened them. Keep them on the active theme everywhere, not just in
+   Settings and the event editor. */
+select { color-scheme: inherit; }
+select option,
+select optgroup {
+  background-color: var(--bg-raised);
+  color: var(--text);
+}
 a { color: var(--accent); }
 ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 input:focus-visible,

@@ -257,7 +257,7 @@
         onclick={() => activateTab(tab.id)}
       >
         <span class="settings-tab-icon">
-          <Icon size={15} />
+          <Icon size={17} />
           {#if tab.id === "updates" && update}
             <span class="update-dot" aria-hidden="true"></span>
           {/if}

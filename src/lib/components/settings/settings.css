@@ -58,10 +58,10 @@
   display: flex;
   align-items: stretch;
   justify-content: center;
-  gap: 14px;
+  gap: 10px;
   flex: none;
   min-width: 0;
-  padding: 10px 24px 9px;
+  padding: 12px 24px 10px;
   overflow-x: auto;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   background: color-mix(in srgb, var(--bg-raised) 72%, var(--bg));
@@ -75,14 +75,16 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  flex: 0 0 92px;
-  width: 92px;
-  min-width: 92px;
-  padding: 0 4px 1px;
-  color: var(--muted);
-  font-size: 10.5px;
-  font-weight: 560;
+  gap: 6px;
+  flex: 0 0 100px;
+  width: 100px;
+  min-width: 100px;
+  padding: 0 4px 2px;
+  /* Mixing towards text keeps inactive tabs legible in palettes whose
+     base04 is very close to the background colour. */
+  color: color-mix(in srgb, var(--text) 68%, var(--muted));
+  font-size: 11.5px;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -90,19 +92,23 @@
   position: relative;
   display: grid;
   place-items: center;
-  width: 31px;
-  height: 31px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-hover) 72%, transparent);
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-hover) 85%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 12%, transparent);
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease;
 }
-
 
 .settings-tab-icon .update-dot {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 7px;
-  height: 7px;
+  top: 3px;
+  left: 3px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--danger);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg-raised) 92%, transparent);
@@ -110,7 +116,13 @@
 
 .settings-tab:hover,
 .settings-tab:focus-visible {
-  color: var(--text);
+  color: var(--text-strong);
+}
+
+.settings-tab:hover .settings-tab-icon,
+.settings-tab:focus-visible .settings-tab-icon {
+  background: color-mix(in srgb, var(--bg-hover) 100%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 22%, transparent);
 }
 
 .settings-tab.active {
@@ -118,14 +130,14 @@
 }
 
 .settings-tab.active .settings-tab-icon {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 .settings-tab.active::after {
   content: "";
-  width: 12px;
+  width: 16px;
   height: 2px;
   border-radius: 2px;
   background: var(--accent);
