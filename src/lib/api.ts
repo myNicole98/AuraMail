@@ -57,6 +57,7 @@ import type {
   ProtonAuthStatus,
   Space,
   SpaceUnread,
+  StartupPreferences,
   Tab,
   TabUnreadCounts,
   ThreadMessage,
@@ -322,6 +323,9 @@ export const api = {
       preferences,
       spaceId
     }),
+  getStartupPreferences: () => invoke<StartupPreferences>("get_startup_preferences"),
+  setStartupPreferences: (preferences: StartupPreferences) =>
+    invoke<StartupPreferences>("set_startup_preferences", { preferences }),
   setActiveSpace: (spaceId = currentSpaceId()) =>
     invoke<void>("set_active_space", { spaceId }),
   refreshTrayUnread: () => invoke<void>("refresh_tray_unread"),

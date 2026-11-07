@@ -308,6 +308,12 @@ export type DesktopPreferences = {
   minimizeAction: DesktopMinimizeAction;
 };
 
+export type StartupPreferences = {
+  supported: boolean;
+  launchAtLogin: boolean;
+  startHidden: boolean;
+};
+
 export type Tab = {
   id: number;
   space_id: number;

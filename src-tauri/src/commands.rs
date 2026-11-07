@@ -1803,6 +1803,23 @@ pub fn set_desktop_preferences(
 }
 
 #[tauri::command]
+pub fn get_startup_preferences(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<crate::startup::StartupPreferences> {
+    crate::startup::preferences(&app, &state.db)
+}
+
+#[tauri::command]
+pub fn set_startup_preferences(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    preferences: crate::startup::StartupPreferences,
+) -> AppResult<crate::startup::StartupPreferences> {
+    crate::startup::set_preferences(&app, &state.db, preferences)
+}
+
+#[tauri::command]
 pub fn set_active_space(state: State<'_, AppState>, space_id: i64) -> AppResult<()> {
     crate::spaces::by_id(&state.db, space_id)?;
     crate::desktop::set_active_space(space_id);

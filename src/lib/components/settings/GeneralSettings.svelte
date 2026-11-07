@@ -17,7 +17,8 @@
     DesktopMinimizeAction,
     DesktopPreferences,
     MessageOrder,
-    SpaceGeneral
+    SpaceGeneral,
+    StartupPreferences
   } from "../../types";
   import ToggleSwitch from "../ToggleSwitch.svelte";
   import SegmentedControl from "./SegmentedControl.svelte";
@@ -33,6 +34,8 @@
   let desktopPreferences = $state<DesktopPreferences>(
     desktopFromGeneral(defaultSpaceGeneral())
   );
+  let startup = $state<StartupPreferences | null>(null);
+  let startupSaving = $state(false);
 
   const editingActiveSpace = $derived(
     editingSpaceId === (app.activeSpaceId ?? activeSpaceId())
@@ -109,6 +112,39 @@
     }
   }
 
+  function desktopRuntime(): boolean {
+    return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  }
+
+  const startupVisible = $derived(
+    startup !== null && startup.supported && desktopRuntime()
+  );
+
+  async function loadStartup(): Promise<void> {
+    if (!desktopRuntime()) return;
+    try {
+      startup = await api.getStartupPreferences();
+    } catch (error) {
+      preferenceError = errorMessage(error);
+    }
+  }
+
+  async function updateStartup(patch: Partial<StartupPreferences>): Promise<void> {
+    if (!startup || startupSaving) return;
+    const previous = startup;
+    startup = { ...startup, ...patch };
+    startupSaving = true;
+    try {
+      startup = await api.setStartupPreferences({ ...startup, ...patch });
+      preferenceError = null;
+    } catch (error) {
+      startup = previous;
+      preferenceError = errorMessage(error);
+    } finally {
+      startupSaving = false;
+    }
+  }
+
   function setClockFormat(format: TimeFormat) {
     persistGeneral({ time_format: format });
     if (editingActiveSpace) appearance.setTimeFormat(format);
@@ -162,6 +198,7 @@
 
   onMount(() => {
     void loadDesktopPreferences();
+    void loadStartup();
   });
 
   async function updateDesktop(patch: Partial<DesktopPreferences>) {
@@ -234,6 +271,28 @@
 
   {#if preferenceError}
     <p class="alert" role="alert"><CircleAlert size={14} />{preferenceError}</p>
+  {/if}
+
+  {#if startupVisible && startup}
+    <SettingsSection title="Startup">
+      <SettingsRow label="Launch at login">
+        <ToggleSwitch
+          checked={startup.launchAtLogin}
+          label="Launch at login"
+          disabled={startupSaving}
+          onchange={(value) => void updateStartup({ launchAtLogin: value })}
+        />
+      </SettingsRow>
+      <SettingsRow label="Start hidden in tray" indent>
+        <ToggleSwitch
+          checked={startup.startHidden}
+          label="Start hidden in tray"
+          small
+          disabled={startupSaving || !startup.launchAtLogin}
+          onchange={(value) => void updateStartup({ startHidden: value })}
+        />
+      </SettingsRow>
+    </SettingsSection>
   {/if}
 
   <SettingsSection title="Notifications">

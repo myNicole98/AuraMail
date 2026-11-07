@@ -23,6 +23,7 @@ mod rules;
 mod secrets;
 mod smtp;
 mod spaces;
+mod startup;
 mod tabs;
 mod theme;
 mod update;
@@ -55,7 +56,7 @@ pub fn run() {
         graphics::apply_graphics_workarounds();
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // Must be registered before other plugins. A launch from a second
         // process focuses the existing instance instead of creating another.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -66,7 +67,16 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_notification::init());
+
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_autostart::Builder::new()
+            .args([startup::AUTOSTART_FLAG])
+            .build(),
+    );
+
+    builder
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let database = Arc::new(db::Database::open(&data_dir.join("auramail.db"))?);
@@ -146,6 +156,9 @@ pub fn run() {
             #[cfg(not(target_os = "linux"))]
             desktop::install_tray(app.handle())?;
             desktop::refresh_tray_unread(app.handle(), &database);
+            if let Err(error) = startup::apply_window_visibility(app.handle(), &database) {
+                eprintln!("window visibility failed: {error}");
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -236,6 +249,8 @@ pub fn run() {
             commands::set_fast_sync_interval,
             commands::get_desktop_preferences,
             commands::set_desktop_preferences,
+            commands::get_startup_preferences,
+            commands::set_startup_preferences,
             commands::set_active_space,
             commands::refresh_tray_unread,
             commands::sync_account,
