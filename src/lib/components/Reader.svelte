@@ -8,9 +8,11 @@
     Download,
     FolderOpen,
     Forward,
+    Moon,
     MoreHorizontal,
     Reply,
     ReplyAll,
+    Sun,
     UserPlus
   } from "lucide-svelte";
   import { api } from "../api";
@@ -34,10 +36,9 @@
   } from "../reader";
   import {
     loadPreferences,
-    prefersDarkScheme,
     savePreferences,
     senderIsTrusted,
-    watchSystemTheme
+    updatePreferences
   } from "../settings";
   import { app } from "../stores/app.svelte";
   import { appearance } from "../stores/appearance.svelte";
@@ -110,11 +111,13 @@
   });
   let themeColors = $state<ThemeColors>(readThemeColors());
   let darkEmailPreference = $state(loadPreferences().dark_email);
-  let themeChoice = $state(loadPreferences().theme_choice);
-  let systemDark = $state(prefersDarkScheme());
-  let darkEmail = $derived(
-    emailDarkEnabled(darkEmailPreference, themeChoice, systemDark)
-  );
+  let darkEmail = $derived(emailDarkEnabled(darkEmailPreference));
+
+  function toggleEmailDark(): void {
+    if (!message) return;
+    updatePreferences({ dark_email: !darkEmail });
+    window.dispatchEvent(new CustomEvent("auramail:preferences-changed"));
+  }
   let emailHtml = $derived(
     detail?.html_body
       ? allowImages && cachedImageHtml
@@ -306,16 +309,11 @@
     const refreshPreferences = () => {
       const preferences = loadPreferences();
       darkEmailPreference = preferences.dark_email;
-      themeChoice = preferences.theme_choice;
       preferencesVersion += 1;
     };
-    const stopSystemTheme = watchSystemTheme((dark) => {
-      systemDark = dark;
-    });
     window.addEventListener("auramail:preferences-changed", refreshPreferences);
     return () => {
       observer.disconnect();
-      stopSystemTheme();
       window.removeEventListener("auramail:preferences-changed", refreshPreferences);
     };
   });
@@ -499,6 +497,21 @@
       </button>
       <h1>{subject}</h1>
       <div class="actions">
+        <button
+          class="icon-btn"
+          type="button"
+          aria-label="Email dark mode"
+          aria-pressed={darkEmail}
+          title={darkEmail ? "Turn off email dark mode" : "Turn on email dark mode"}
+          disabled={!message}
+          onclick={toggleEmailDark}
+        >
+          {#if darkEmail}
+            <Moon size={15} />
+          {:else}
+            <Sun size={15} />
+          {/if}
+        </button>
         <button
           class="icon-btn aura-toggle"
           class:active={app.auraRailOpen}

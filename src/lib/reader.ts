@@ -1,7 +1,5 @@
 const SAFE_SCHEMES = new Set(["http:", "https:", "mailto:"]);
 
-import type { ThemeChoice } from "./theme/catalog";
-
 export type ThemeColors = {
   background: string;
   backgroundRaised: string;
@@ -9,17 +7,10 @@ export type ThemeColors = {
   link: string;
 };
 
-/// Themes that follow the live palette should also decide when mail bodies
-/// are rendered dark. Fixed light/dark themes keep the explicit preference.
-export function emailDarkEnabled(
-  preference: boolean,
-  themeChoice: ThemeChoice,
-  themeDark: boolean
-): boolean {
-  if (!preference) return false;
-  return themeChoice === "matugen" || themeChoice === "system"
-    ? themeDark
-    : true;
+/// The stored preference decides alone: the reader's sun/moon shortcut and the
+/// Settings toggle must mean the same thing in every theme.
+export function emailDarkEnabled(preference: boolean): boolean {
+  return preference;
 }
 
 export function bodyCsp(): string {
