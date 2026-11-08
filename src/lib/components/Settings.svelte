@@ -80,11 +80,11 @@
   let tabElements: (HTMLButtonElement | undefined)[] = [];
   let previousFocus: HTMLElement | null = null;
 
-  async function runUpdateCheck(): Promise<void> {
+  async function runUpdateCheck(force = false): Promise<void> {
     if (checking || downloading) return;
     checking = true;
     try {
-      const result = await api.checkUpdate();
+      const result = await api.checkUpdate(force);
       if (result?.version !== update?.version) {
         stagedPath = null;
         progress = null;
@@ -299,7 +299,7 @@
         {progress}
         staged={stagedPath !== null}
         error={updateError}
-        onCheck={() => void runUpdateCheck()}
+        onCheck={() => void runUpdateCheck(true)}
         onDownload={() => void downloadUpdate()}
         onInstall={() => void installUpdate()}
         onOpen={openUpdate}

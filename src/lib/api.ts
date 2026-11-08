@@ -207,7 +207,8 @@ export const api = {
   contactForEmail: (spaceId: number, email: string) =>
     invoke<ContactRecord | null>("contact_for_email", { spaceId, email }),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
-  checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
+  checkUpdate: (force = false) =>
+    invoke<UpdateInfo | null>("check_update", { force }),
   downloadUpdate: (input: {
     version: string;
     url: string;

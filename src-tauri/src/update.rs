@@ -1,7 +1,8 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -94,6 +95,49 @@ pub fn check(current: &str) -> Option<UpdateInfo> {
         checksum,
         can_install,
     })
+}
+
+/// How long a successful or failed check is reused before asking the release
+/// server again. Opening Settings must not turn into an update request every
+/// time; the explicit Check button bypasses this interval.
+const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+#[derive(Default)]
+struct CheckCache {
+    entry: Option<(Instant, Option<UpdateInfo>)>,
+}
+
+impl CheckCache {
+    fn get(
+        &mut self,
+        now: Instant,
+        force: bool,
+        run: impl FnOnce() -> Option<UpdateInfo>,
+    ) -> Option<UpdateInfo> {
+        if !force {
+            if let Some((checked_at, info)) = &self.entry {
+                if now.saturating_duration_since(*checked_at) < CHECK_INTERVAL {
+                    return info.clone();
+                }
+            }
+        }
+        let info = run();
+        self.entry = Some((now, info.clone()));
+        info
+    }
+}
+
+static CHECK_CACHE: OnceLock<Mutex<CheckCache>> = OnceLock::new();
+
+/// Cached wrapper around [`check`]. A failed check is cached too, so an
+/// unreachable release server does not make every Settings open wait for the
+/// timeout.
+pub fn check_cached(current: &str, force: bool) -> Option<UpdateInfo> {
+    let cache = CHECK_CACHE.get_or_init(|| Mutex::new(CheckCache::default()));
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.get(Instant::now(), force, || check(current))
 }
 
 fn latest_release() -> Option<Release> {
@@ -342,6 +386,74 @@ mod tests {
         assert!(!safe_file_name("../auramail"));
         assert!(!safe_file_name("a/b"));
         assert!(!safe_file_name(".."));
+    }
+
+    #[test]
+    fn reuses_update_checks_for_an_hour_unless_forced() {
+        use super::CheckCache;
+        use std::cell::Cell;
+        use std::time::{Duration, Instant};
+
+        let mut cache = CheckCache::default();
+        let start = Instant::now();
+        let calls = Cell::new(0);
+
+        let mut run = || {
+            calls.set(calls.get() + 1);
+            None
+        };
+
+        assert_eq!(cache.get(start, false, &mut run), None);
+        assert_eq!(calls.get(), 1);
+
+        assert_eq!(
+            cache.get(start + Duration::from_secs(59 * 60), false, &mut run),
+            None
+        );
+        assert_eq!(
+            calls.get(),
+            1,
+            "a second open within the hour must not refetch"
+        );
+
+        assert_eq!(
+            cache.get(start + Duration::from_secs(61 * 60), false, &mut run),
+            None
+        );
+        assert_eq!(calls.get(), 2, "the cached answer expires after an hour");
+
+        assert_eq!(
+            cache.get(start + Duration::from_secs(62 * 60), true, &mut run),
+            None
+        );
+        assert_eq!(calls.get(), 3, "the Check button must bypass the cache");
+    }
+
+    #[test]
+    fn caches_the_found_update_too() {
+        use super::{CheckCache, UpdateInfo};
+        use std::time::Instant;
+
+        let info = UpdateInfo {
+            version: "0.9.0".into(),
+            page_url: "https://example.com/releases/v0.9.0".into(),
+            download_url: None,
+            checksums_url: None,
+            asset_name: None,
+            checksum: None,
+            can_install: false,
+        };
+        let mut cache = CheckCache::default();
+        let start = Instant::now();
+
+        assert_eq!(
+            cache.get(start, false, || Some(info.clone())),
+            Some(info.clone())
+        );
+        assert_eq!(
+            cache.get(start, false, || panic!("cached result must not refetch")),
+            Some(info)
+        );
     }
 }
 

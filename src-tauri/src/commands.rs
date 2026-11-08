@@ -2500,11 +2500,13 @@ pub fn install_update(
 }
 
 #[tauri::command]
-pub async fn check_update(app: AppHandle) -> AppResult<Option<crate::update::UpdateInfo>> {
+pub async fn check_update(app: AppHandle, force: bool) -> AppResult<Option<crate::update::UpdateInfo>> {
     let current = app.package_info().version.to_string();
-    tauri::async_runtime::spawn_blocking(move || Ok(crate::update::check(&current)))
-        .await
-        .map_err(|_| blocking_error())?
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(crate::update::check_cached(&current, force))
+    })
+    .await
+    .map_err(|_| blocking_error())?
 }
 
 #[tauri::command]
