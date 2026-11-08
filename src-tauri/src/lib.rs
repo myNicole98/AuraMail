@@ -20,6 +20,7 @@ mod mail_auth;
 mod oauth;
 mod proton;
 mod rules;
+mod secret_migration;
 mod secrets;
 mod smtp;
 mod spaces;
@@ -35,7 +36,7 @@ use tauri::Manager;
 
 use crate::oauth::flow::OAuthFlowState;
 pub use error::AppError;
-use secrets::{KeyringStore, MemoryStore, SecretStore};
+use secrets::{FileStore, MemoryStore, SecretStore};
 
 pub struct AppState {
     pub db: Arc<db::Database>,
@@ -84,7 +85,17 @@ pub fn run() {
                 if std::env::var_os("AURAMAIL_MEMORY_SECRETS").is_some() {
                     Arc::new(MemoryStore::default())
                 } else {
-                    Arc::new(KeyringStore)
+                    let store = FileStore::open(data_dir.join("secrets.json"))?;
+                    match secret_migration::run(
+                        &store,
+                        &database,
+                        &secret_migration::KeyringLookup,
+                        std::time::Duration::from_secs(15),
+                    ) {
+                        Ok(report) => eprintln!("secret migration: {report:?}"),
+                        Err(error) => eprintln!("secret migration failed: {error}"),
+                    }
+                    Arc::new(store)
                 };
             let syncing = Arc::new(Mutex::new(HashSet::new()));
             let oauth_flow = Arc::new(OAuthFlowState::new());
