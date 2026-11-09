@@ -14,11 +14,15 @@ The purpose of this project is to borrow UX elements and features from other cli
 ## Highlights
 
 - IMAP/SMTP accounts
-- Oauth support for Google and Microsoft
+- Oauth support for Google and Microsoft*
 - Calendar and Contacts through CalDAV/CarDAV
 - AI assisted compose and replies
 - Categories, labels and extensive rule settings
 - Spaces
+
+### *There are currently major blockers for both Google and Microsoft 
+- Microsoft verification requires a publisher name behind this project, which Auramail currently doesn't have. Microsoft oauth will work, but school/work accounts require admin approval.
+- Google verification has passed all basic checks, but as a final requirements it needs an ADA-CASA CL1 certification, which costs almost 700$. Given the size and popularity of this project, for now it's not an amount of money I'm willing to spend. I may open a crowdfunding in the future
 
 ## Disclaimer
 
