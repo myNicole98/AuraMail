@@ -33,7 +33,7 @@ mail-parser = "0.10"
 mime_guess = "2"
 ammonia = "4"
 html-escape = "0.2"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "stream"] }
 notify = "8"
 base64 = "0.22"
 libloading = "0.8"

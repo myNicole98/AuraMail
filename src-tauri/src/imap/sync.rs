@@ -369,6 +369,7 @@ pub fn schedule_auto_rail(
                 message_id,
                 None,
                 full_body,
+                None,
             )
             .await
             {

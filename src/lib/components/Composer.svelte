@@ -261,6 +261,7 @@
   let aiInstruction = $state("");
   let aiBusy = $state(false);
   let aiError = $state<string | null>(null);
+  let aiPreview = $state("");
   let linkOpen = $state(false);
   let linkUrl = $state("");
   let linkError = $state<string | null>(null);
@@ -761,14 +762,21 @@
     if (aiBusy) return;
     aiBusy = true;
     aiError = null;
+    aiPreview = "";
     try {
       const signature = currentSignature();
-      const response = await api.aiCompose({
-        mode: aiMode,
-        instruction,
-        text: textWithoutSignature(),
-        subject
-      });
+      const response = await api.aiCompose(
+        {
+          mode: aiMode,
+          instruction,
+          text: textWithoutSignature(),
+          subject
+        },
+        undefined,
+        (delta) => {
+          if (delta.path === "text") aiPreview += delta.text;
+        }
+      );
       if (aiMode === "fix") {
         bodyHtml = appendSignature(textToHtml(response.text), signature);
         if (bodyInput) bodyInput.innerHTML = bodyHtml;
@@ -789,6 +797,7 @@
       }
     } finally {
       aiBusy = false;
+      aiPreview = "";
     }
   }
 
@@ -1189,7 +1198,15 @@
             }
           }}
         ></textarea>
+        {#if aiBusy && aiPreview}
+          <p class="ai-preview" aria-live="polite">{aiPreview}</p>
+        {/if}
         {#if aiError}<p class="ai-error" role="alert">{aiError}</p>{/if}
+      </div>
+    {/if}
+    {#if aiBusy && aiPreview && !aiOpen}
+      <div class="ai-popover ai-stream-popover" role="status" aria-live="polite">
+        <p class="ai-preview">{aiPreview}</p>
       </div>
     {/if}
     {#if linkOpen && linkPosition}
@@ -1597,6 +1614,20 @@
     background: var(--bg-raised);
     box-shadow: 0 16px 40px color-mix(in srgb, #000 26%, transparent);
   }
+  .ai-preview {
+    max-height: 140px;
+    margin: 8px 0 0;
+    padding: 8px 9px;
+    overflow-y: auto;
+    border: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--bg) 55%, transparent);
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+  }
+
   .ai-popover textarea {
     width: 100%;
     min-height: 62px;

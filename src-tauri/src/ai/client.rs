@@ -1,12 +1,16 @@
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 
+use crate::ai::stream::{is_chat_chunk, is_error_chunk, parse_chunk, SseJsonDecoder};
 use crate::ai::AiConfig;
 use crate::error::{AppError, AppResult};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const ANTHROPIC_HOST: &str = "api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_ANTHROPIC_MAX_TOKENS: u32 = 2048;
@@ -54,6 +58,8 @@ struct ChatRequest<'a> {
     messages: &'a [ChatMessage],
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +135,7 @@ struct EmbeddingItem {
 
 pub struct AiClient {
     http: reqwest::Client,
+    stream_http: reqwest::Client,
     base_url: String,
     endpoint: String,
     model: String,
@@ -221,6 +228,62 @@ fn parse_anthropic_response(body: &str) -> AppResult<String> {
     Ok(content)
 }
 
+fn empty_response_error(finish_reason: Option<String>) -> AppError {
+    let detail = finish_reason
+        .map(|reason| format!(" (finish reason: {reason})"))
+        .unwrap_or_default();
+    AppError::Message(format!("AI response was empty{detail}"))
+}
+
+fn apply_chunk(
+    json: &str,
+    text: &mut String,
+    finish_reason: &mut Option<String>,
+    saw_chunk: &mut bool,
+    on_delta: &mut (dyn FnMut(&str) + Send),
+) {
+    let Some(chunk) = parse_chunk(json) else {
+        if is_chat_chunk(json) {
+            *saw_chunk = true;
+        }
+        return;
+    };
+    *saw_chunk = true;
+    if let Some(content) = chunk.content {
+        text.push_str(&content);
+        on_delta(&content);
+    }
+    if chunk.finish_reason.is_some() {
+        *finish_reason = chunk.finish_reason;
+    }
+}
+
+fn decode_streamed_body(body: &str) -> (String, Option<String>, bool) {
+    let mut decoder = SseJsonDecoder::new();
+    let mut text = String::new();
+    let mut finish_reason = None;
+    let mut saw_chunk = false;
+    for json in decoder.push(body.as_bytes()) {
+        apply_chunk(
+            &json,
+            &mut text,
+            &mut finish_reason,
+            &mut saw_chunk,
+            &mut |_| {},
+        );
+    }
+    for json in decoder.finish() {
+        apply_chunk(
+            &json,
+            &mut text,
+            &mut finish_reason,
+            &mut saw_chunk,
+            &mut |_| {},
+        );
+    }
+    (text, finish_reason, saw_chunk)
+}
+
 pub fn validate_extra_headers(headers: &[(String, String)]) -> AppResult<()> {
     for (name, value) in headers {
         HeaderName::from_bytes(name.trim().as_bytes())
@@ -279,9 +342,14 @@ impl AiClient {
             .timeout(TIMEOUT)
             .build()
             .map_err(|_| AppError::Message("AI client is unavailable".into()))?;
+        let stream_http = reqwest::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()
+            .map_err(|_| AppError::Message("AI client is unavailable".into()))?;
 
         Ok(Self {
             http,
+            stream_http,
             base_url: base_url.to_string(),
             endpoint,
             model: config.model.trim().to_string(),
@@ -356,9 +424,7 @@ impl AiClient {
         let mut vectors = Vec::with_capacity(parsed.data.len());
         for item in parsed.data {
             if item.embedding.is_empty() {
-                return Err(AppError::Message(
-                    "Embedding response was empty".into(),
-                ));
+                return Err(AppError::Message("Embedding response was empty".into()));
             }
             vectors.push(item.embedding);
         }
@@ -385,6 +451,7 @@ impl AiClient {
             model: &self.model,
             messages,
             max_tokens,
+            stream: None,
         };
         let response = self
             .http
@@ -409,25 +476,140 @@ impl AiClient {
             )));
         }
 
-        let parsed = response
-            .json::<ChatResponse>()
+        let body = response
+            .text()
             .await
             .map_err(|_| AppError::Message("AI response was invalid".into()))?;
-        let choice = parsed.choices.into_iter().next();
-        let finish_reason = choice
-            .as_ref()
-            .and_then(|choice| choice.finish_reason.clone());
-        let content = choice
-            .and_then(|choice| choice.message)
-            .and_then(|message| message.content)
-            .map(|content| content.trim().to_string())
-            .filter(|content| !content.is_empty());
-        content.ok_or_else(|| {
-            let detail = finish_reason
-                .map(|reason| format!(" (finish reason: {reason})"))
-                .unwrap_or_default();
-            AppError::Message(format!("AI response was empty{detail}"))
-        })
+        let mut serde_parsed = false;
+        let mut serde_finish_reason = None;
+        if let Ok(parsed) = serde_json::from_str::<ChatResponse>(&body) {
+            serde_parsed = true;
+            let choice = parsed.choices.into_iter().next();
+            serde_finish_reason = choice
+                .as_ref()
+                .and_then(|choice| choice.finish_reason.clone());
+            let content = choice
+                .and_then(|choice| choice.message)
+                .and_then(|message| message.content)
+                .map(|content| content.trim().to_string())
+                .filter(|content| !content.is_empty());
+            if let Some(content) = content {
+                return Ok(content);
+            }
+        }
+
+        let (text, finish_reason, saw_chunk) = decode_streamed_body(&body);
+        if !text.trim().is_empty() {
+            return Ok(text.trim().to_string());
+        }
+        if serde_parsed {
+            return Err(empty_response_error(serde_finish_reason));
+        }
+        if saw_chunk {
+            return Err(empty_response_error(finish_reason));
+        }
+        Err(AppError::Message("AI response was invalid".into()))
+    }
+
+    /// Sends a streaming request and forwards each content delta to `on_delta`.
+    ///
+    /// Providers that ignore `stream` and answer with one JSON body produce a
+    /// single delta. Anthropic keeps its buffered protocol and also produces a
+    /// single delta.
+    pub async fn chat_stream(
+        &self,
+        messages: &[ChatMessage],
+        on_delta: &mut (dyn FnMut(&str) + Send),
+    ) -> AppResult<String> {
+        if self.flavor == ApiFlavor::Anthropic {
+            let text = self.complete_anthropic(messages, None).await?;
+            on_delta(&text);
+            return Ok(text);
+        }
+
+        let body = ChatRequest {
+            model: &self.model,
+            messages,
+            max_tokens: None,
+            stream: Some(true),
+        };
+        let request = self
+            .stream_http
+            .post(&self.endpoint)
+            .headers(self.headers.clone())
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .json(&body)
+            .send();
+        let response = tokio::time::timeout(TIMEOUT, request)
+            .await
+            .map_err(|_| AppError::Message("AI request timed out".into()))?
+            .map_err(|error| {
+                if error.is_timeout() {
+                    AppError::Message("AI request timed out".into())
+                } else {
+                    AppError::Message("AI request failed".into())
+                }
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(AppError::Message(format!(
+                "AI request failed ({})",
+                status.as_u16()
+            )));
+        }
+
+        let mut stream = Box::pin(response.bytes_stream());
+        let mut decoder = SseJsonDecoder::new();
+        let mut text = String::new();
+        let mut finish_reason = None;
+        let mut saw_chunk = false;
+
+        loop {
+            let next = tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()).await;
+            let bytes = match next {
+                Err(_) => return Err(AppError::Message("AI request timed out".into())),
+                Ok(None) => break,
+                Ok(Some(Err(_))) => return Err(AppError::Message("AI request failed".into())),
+                Ok(Some(Ok(bytes))) => bytes,
+            };
+            for json in decoder.push(&bytes) {
+                if is_error_chunk(&json) {
+                    return Err(AppError::Message("AI request failed".into()));
+                }
+                apply_chunk(
+                    &json,
+                    &mut text,
+                    &mut finish_reason,
+                    &mut saw_chunk,
+                    on_delta,
+                );
+            }
+        }
+        for json in decoder.finish() {
+            if is_error_chunk(&json) {
+                return Err(AppError::Message("AI request failed".into()));
+            }
+            apply_chunk(
+                &json,
+                &mut text,
+                &mut finish_reason,
+                &mut saw_chunk,
+                on_delta,
+            );
+        }
+
+        if decoder.saw_data() && !decoder.finished() && finish_reason.is_none() {
+            return Err(AppError::Message("AI request failed".into()));
+        }
+
+        if text.trim().is_empty() {
+            if !saw_chunk {
+                return Err(AppError::Message("AI response was invalid".into()));
+            }
+            return Err(empty_response_error(finish_reason));
+        }
+        Ok(text.trim().to_string())
     }
 
     async fn complete_anthropic(
@@ -658,7 +840,9 @@ mod tests {
     #[test]
     fn detects_anthropic_from_its_host() {
         assert!(super::is_anthropic_base_url("https://api.anthropic.com/v1"));
-        assert!(super::is_anthropic_base_url("https://api.anthropic.com/v1/"));
+        assert!(super::is_anthropic_base_url(
+            "https://api.anthropic.com/v1/"
+        ));
         assert!(!super::is_anthropic_base_url("https://api.openai.com/v1"));
         assert!(!super::is_anthropic_base_url("not a url"));
     }
@@ -708,25 +892,22 @@ mod tests {
 
     #[test]
     fn reports_anthropic_stop_reason_when_no_text_is_returned() {
-        let error = super::parse_anthropic_response(
-            r#"{"content": [], "stop_reason": "max_tokens"}"#,
-        )
-        .unwrap_err()
-        .to_string();
+        let error =
+            super::parse_anthropic_response(r#"{"content": [], "stop_reason": "max_tokens"}"#)
+                .unwrap_err()
+                .to_string();
 
         assert_eq!(error, "AI response was empty (stop reason: max_tokens)");
     }
 
     #[test]
     fn uses_anthropic_auth_headers_instead_of_bearer_auth() {
-        let headers =
-            super::provider_headers("https://api.anthropic.com/v1", "secret").unwrap();
+        let headers = super::provider_headers("https://api.anthropic.com/v1", "secret").unwrap();
         assert_eq!(headers.get("x-api-key").unwrap(), "secret");
         assert_eq!(headers.get("anthropic-version").unwrap(), "2023-06-01");
         assert!(!headers.contains_key(reqwest::header::AUTHORIZATION));
 
-        let headers =
-            super::provider_headers("https://api.openai.com/v1", "secret").unwrap();
+        let headers = super::provider_headers("https://api.openai.com/v1", "secret").unwrap();
         assert_eq!(
             headers.get(reqwest::header::AUTHORIZATION).unwrap(),
             "Bearer secret"
@@ -753,5 +934,232 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert_eq!(error, "Anthropic does not provide an embeddings API");
+    }
+
+    async fn collect_stream(client: &AiClient) -> (String, Vec<String>) {
+        let mut deltas = Vec::new();
+        let text = client
+            .chat_stream(&messages(), &mut |delta| deltas.push(delta.to_string()))
+            .await
+            .unwrap();
+        (text, deltas)
+    }
+
+    #[tokio::test]
+    async fn chat_recovers_from_a_streamed_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"choices":[{"message":{"content":"Hello"}}]}data: [DONE]"#,
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = AiClient::new(config(&server), "secret");
+        assert_eq!(client.chat(&messages()).await.unwrap(), "Hello");
+    }
+
+    #[tokio::test]
+    async fn streams_content_deltas_and_returns_the_joined_text() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({"stream": true})))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n\
+                 data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
+                 data: [DONE]\n\n",
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = AiClient::new(config(&server), "secret");
+        let (text, deltas) = collect_stream(&client).await;
+        assert_eq!(text, "Hello");
+        assert_eq!(deltas, vec!["Hel", "lo"]);
+    }
+
+    #[tokio::test]
+    async fn streams_a_plain_json_body_as_one_delta() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({"stream": true})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"message": {"content": "Hello"}}]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AiClient::new(config(&server), "secret");
+        let (text, deltas) = collect_stream(&client).await;
+        assert_eq!(text, "Hello");
+        assert_eq!(deltas, vec!["Hello"]);
+    }
+
+    #[tokio::test]
+    async fn stream_without_content_reports_empty() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "data: {\"choices\":[{\"delta\":{}}]}\n\ndata: [DONE]\n\n",
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = AiClient::new(config(&server), "secret");
+        let mut deltas: Vec<String> = Vec::new();
+        let error = client
+            .chat_stream(&messages(), &mut |delta| deltas.push(delta.to_string()))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "AI response was empty");
+        assert!(deltas.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stream_with_unparseable_body_is_invalid() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("not json at all", "text/plain"))
+            .mount(&server)
+            .await;
+
+        let client = AiClient::new(config(&server), "secret");
+        let error = client
+            .chat_stream(&messages(), &mut |_| {})
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "AI response was invalid");
+    }
+
+    #[tokio::test]
+    async fn stream_with_finish_reason_and_no_content_reports_empty() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n\
+                 data: [DONE]\n\n",
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = AiClient::new(config(&server), "secret");
+        let error = client
+            .chat_stream(&messages(), &mut |_| {})
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "AI response was empty (finish reason: length)");
+    }
+
+    #[tokio::test]
+    async fn chat_recovers_from_a_plain_delta_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"delta": {"content": "  Hello  "}}]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AiClient::new(config(&server), "secret");
+        assert_eq!(client.chat(&messages()).await.unwrap(), "Hello");
+    }
+
+    #[tokio::test]
+    async fn stream_reports_an_in_band_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n\
+                 data: {\"error\":{\"message\":\"bad key\"}}\n\n\
+                 data: [DONE]\n\n",
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = AiClient::new(config(&server), "secret");
+        let error = client
+            .chat_stream(&messages(), &mut |_| {})
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "AI request failed");
+    }
+
+    #[tokio::test]
+    async fn stream_without_done_or_finish_is_a_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n",
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = AiClient::new(config(&server), "secret");
+        let error = client
+            .chat_stream(&messages(), &mut |_| {})
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "AI request failed");
+    }
+
+    #[tokio::test]
+    async fn stream_with_empty_choices_reports_empty() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "data: {\"choices\":[]}\n\ndata: [DONE]\n\n",
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = AiClient::new(config(&server), "secret");
+        let error = client
+            .chat_stream(&messages(), &mut |_| {})
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "AI response was empty");
+    }
+
+    #[tokio::test]
+    async fn stream_trims_padding_from_the_final_text() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"}}]}\n\n\
+                 data: {\"choices\":[{\"delta\":{\"content\":\"\\n\"}}]}\n\n\
+                 data: [DONE]\n\n",
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = AiClient::new(config(&server), "secret");
+        let (text, deltas) = collect_stream(&client).await;
+        assert_eq!(text, "Hello");
+        assert_eq!(deltas, vec!["Hello ", "\n"]);
     }
 }

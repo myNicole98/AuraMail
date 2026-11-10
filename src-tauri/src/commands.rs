@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::accounts::{self, Account, AccountAuth, AccountInput, MailSecurity};
@@ -17,6 +18,7 @@ use crate::ai::{
     AiComposeResponse, AiConfig, AiConfigInput, AiConfigStatus, AiDraft, AiPreferences, MailContext,
 };
 use crate::ai::semantic::SemanticStatus;
+use crate::ai::stream::JsonProseScanner;
 use crate::ai::voice::AiVoiceProfile;
 use crate::compose::{self, ComposeInput, Draft, DraftSummary};
 use crate::contacts::{
@@ -997,12 +999,90 @@ pub async fn test_ai(
     Ok("ok".into())
 }
 
+#[derive(Clone, Serialize)]
+pub struct AiStreamEvent {
+    pub path: String,
+    pub text: String,
+}
+
+const STREAM_FLUSH_CHARS: usize = 32;
+
+/// Coalesces model deltas before sending them over the IPC channel.
+struct StreamEmitter {
+    channel: Channel<AiStreamEvent>,
+    scanner: Option<JsonProseScanner>,
+    pending: Vec<(String, String)>,
+    pending_len: usize,
+}
+
+impl StreamEmitter {
+    fn text(channel: Channel<AiStreamEvent>) -> Self {
+        Self {
+            channel,
+            scanner: None,
+            pending: Vec::new(),
+            pending_len: 0,
+        }
+    }
+
+    fn json(channel: Channel<AiStreamEvent>) -> Self {
+        Self {
+            channel,
+            scanner: Some(JsonProseScanner::new()),
+            pending: Vec::new(),
+            pending_len: 0,
+        }
+    }
+
+    fn push(&mut self, chunk: &str) {
+        match &mut self.scanner {
+            Some(scanner) => {
+                for (path, text) in scanner.push(chunk) {
+                    self.buffer(path, text);
+                }
+            }
+            None => self.buffer("text".into(), chunk.to_string()),
+        }
+    }
+
+    fn buffer(&mut self, path: String, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        let newline = text.contains('\n');
+        self.pending_len += text.len();
+        if let Some((_, existing)) = self.pending.iter_mut().find(|(key, _)| *key == path) {
+            existing.push_str(&text);
+        } else {
+            self.pending.push((path, text));
+        }
+        if newline || self.pending_len >= STREAM_FLUSH_CHARS {
+            self.flush();
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.pending.is_empty() {
+            return;
+        }
+        self.pending_len = 0;
+        for (path, text) in self.pending.drain(..) {
+            let _ = self.channel.send(AiStreamEvent { path, text });
+        }
+    }
+
+    fn finish(mut self) {
+        self.flush();
+    }
+}
+
 #[tauri::command]
 pub async fn ai_reply(
     state: State<'_, AppState>,
     message_id: i64,
     guidance: Option<String>,
     full_body: Option<bool>,
+    on_delta: Channel<AiStreamEvent>,
 ) -> AppResult<AiDraft> {
     let requested_full_body = full_body.unwrap_or(false);
     let db = Arc::clone(&state.db);
@@ -1028,7 +1108,11 @@ pub async fn ai_reply(
     .map_err(|_| blocking_error())??;
 
     let prompt = prompts::reply_prompt_with_privacy(&mail, guidance.as_deref(), full_body);
-    let text = client.chat(&prompt).await?;
+    let mut emitter = StreamEmitter::text(on_delta);
+    let text = client
+        .chat_stream(&prompt, &mut |chunk| emitter.push(chunk))
+        .await?;
+    emitter.finish();
     Ok(AiDraft { text })
 }
 
@@ -1058,6 +1142,7 @@ pub(crate) async fn generate_aura_rail(
     message_id: i64,
     answer: Option<String>,
     requested_full_body: bool,
+    on_delta: Option<Channel<AiStreamEvent>>,
 ) -> AppResult<AiAuraRail> {
     let answer = answer.filter(|value| !value.trim().is_empty());
     let cacheable = answer.is_none();
@@ -1133,7 +1218,17 @@ pub(crate) async fn generate_aura_rail(
             voice,
         } => {
             let prompt = prompts::aura_rail_prompt(&thread, answer.as_deref(), voice.as_deref());
-            let raw = client.chat(&prompt).await?;
+            let raw = match on_delta {
+                Some(channel) => {
+                    let mut emitter = StreamEmitter::json(channel);
+                    let raw = client
+                        .chat_stream(&prompt, &mut |chunk| emitter.push(chunk))
+                        .await?;
+                    emitter.finish();
+                    raw
+                }
+                None => client.chat(&prompt).await?,
+            };
             let rail = ai::aura::parse_aura_rail(&raw, total, answer.is_some())?;
             if cacheable {
                 ai::rail_cache::store(
@@ -1157,6 +1252,7 @@ pub async fn ai_aura_rail(
     message_id: i64,
     answer: Option<String>,
     full_body: Option<bool>,
+    on_delta: Channel<AiStreamEvent>,
 ) -> AppResult<AiAuraRail> {
     generate_aura_rail(
         Arc::clone(&state.db),
@@ -1164,6 +1260,7 @@ pub async fn ai_aura_rail(
         message_id,
         answer,
         full_body.unwrap_or(false),
+        Some(on_delta),
     )
     .await
 }
@@ -1176,6 +1273,7 @@ pub async fn ai_aura_ask(
     history: Vec<ChatMessage>,
     existing: Vec<String>,
     full_body: Option<bool>,
+    on_delta: Channel<AiStreamEvent>,
 ) -> AppResult<AiAuraAskResponse> {
     let question = question.trim().to_string();
     if question.is_empty() {
@@ -1272,7 +1370,11 @@ pub async fn ai_aura_ask(
         voice.as_deref(),
         &related,
     );
-    let raw = client.chat(&prompt).await?;
+    let mut emitter = StreamEmitter::json(on_delta);
+    let raw = client
+        .chat_stream(&prompt, &mut |chunk| emitter.push(chunk))
+        .await?;
+    emitter.finish();
     ai::aura::parse_aura_ask(&raw)
 }
 
@@ -1281,6 +1383,7 @@ pub async fn ai_compose(
     state: State<'_, AppState>,
     space_id: i64,
     request: AiComposeRequest,
+    on_delta: Channel<AiStreamEvent>,
 ) -> AppResult<AiComposeResponse> {
     let mode = request.mode.trim().to_ascii_lowercase();
     if mode != "fix" && mode != "rewrite" && mode != "generate" {
@@ -1304,7 +1407,11 @@ pub async fn ai_compose(
     .map_err(|_| blocking_error())??;
     let prompt =
         prompts::compose_prompt(&mode, &request.instruction, &request.text, &request.subject);
-    let text = client.chat(&prompt).await?;
+    let mut emitter = StreamEmitter::text(on_delta);
+    let text = client
+        .chat_stream(&prompt, &mut |chunk| emitter.push(chunk))
+        .await?;
+    emitter.finish();
     Ok(AiComposeResponse { text })
 }
 
@@ -1498,6 +1605,7 @@ pub async fn ai_chat(
     state: State<'_, AppState>,
     space_id: i64,
     request: AiChatRequest,
+    on_delta: Channel<AiStreamEvent>,
 ) -> AppResult<AiChatResponse> {
     let question = request.question.trim().to_string();
     if question.is_empty() {
@@ -1580,7 +1688,11 @@ pub async fn ai_chat(
     .map_err(|_| blocking_error())??;
 
     let prompt = prompts::ask_prompt_with_history(&context, &question, &history);
-    let answer = client.chat(&prompt).await?;
+    let mut emitter = StreamEmitter::text(on_delta);
+    let answer = client
+        .chat_stream(&prompt, &mut |chunk| emitter.push(chunk))
+        .await?;
+    emitter.finish();
     Ok(AiChatResponse { answer })
 }
 

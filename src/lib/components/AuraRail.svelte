@@ -14,7 +14,13 @@
   import { loadPreferences } from "../settings";
   import { app } from "../stores/app.svelte";
   import { appearance } from "../stores/appearance.svelte";
-  import type { AiAuraDraft, AiAuraRail, ChatMessage, MessageDetail } from "../types";
+  import type {
+    AiAuraDraft,
+    AiAuraRail,
+    AiStreamDelta,
+    ChatMessage,
+    MessageDetail
+  } from "../types";
 
   type MessageEntry = ChatMessage & { kind: "message" };
   type ReplyEntry = { kind: "replies"; drafts: AiAuraDraft[] };
@@ -86,6 +92,78 @@
   let usingDraft = $state<string | null>(null);
   let draftError = $state<string | null>(null);
   let conversationEnd = $state<HTMLDivElement | null>(null);
+  let streamAnswerIndex = $state(-1);
+  let streamRepliesIndex = $state(-1);
+  let railStreaming = false;
+  let railTones: Record<number, string> = {};
+  let railTexts: Record<number, string> = {};
+
+  function railShell(): AiAuraRail {
+    return {
+      summary: "",
+      ask: "",
+      deadline: null,
+      tone: null,
+      question: null,
+      options: [],
+      drafts: [],
+      messageCount: 0
+    };
+  }
+
+  function toneFrom(raw: string): AiAuraDraft["tone"] {
+    const value = raw.trim().toLowerCase();
+    if (value.includes("warm") || value.includes("friendly")) return "warm";
+    if (
+      value.includes("concise") ||
+      value.includes("short") ||
+      value.includes("brief")
+    ) {
+      return "concise";
+    }
+    return "direct";
+  }
+
+  function draftsFrom(
+    tones: Record<number, string>,
+    texts: Record<number, string>
+  ): AiAuraDraft[] {
+    return Object.keys(texts)
+      .map(Number)
+      .sort((left, right) => left - right)
+      .map((index) => ({
+        tone: toneFrom(tones[index] ?? ""),
+        text: texts[index] ?? ""
+      }));
+  }
+
+  function applyRailDelta(delta: AiStreamDelta): void {
+    if (!railStreaming) {
+      rail = railShell();
+      railStreaming = true;
+      railTones = {};
+      railTexts = {};
+    }
+    const [field, index, part] = delta.path.split(".");
+    if (field === "summary") {
+      rail!.summary += delta.text;
+    } else if (field === "ask") {
+      rail!.ask += delta.text;
+    } else if (field === "question") {
+      rail!.question = (rail!.question ?? "") + delta.text;
+    } else if (field === "options") {
+      const at = Number(index);
+      rail!.options[at] = (rail!.options[at] ?? "") + delta.text;
+    } else if (field === "drafts") {
+      const at = Number(index);
+      if (part === "tone") {
+        railTones[at] = (railTones[at] ?? "") + delta.text;
+      } else {
+        railTexts[at] = (railTexts[at] ?? "") + delta.text;
+      }
+      rail!.drafts = draftsFrom(railTones, railTexts);
+    }
+  }
 
   $effect(() => {
     const id = detail.message.id;
@@ -111,6 +189,11 @@
     askRequest += 1;
     draftError = null;
     usingDraft = null;
+    streamAnswerIndex = -1;
+    streamRepliesIndex = -1;
+    railStreaming = false;
+    railTones = {};
+    railTexts = {};
     void load();
   });
 
@@ -130,11 +213,17 @@
     errorDetail = null;
     draftError = null;
     usingDraft = null;
+    railStreaming = false;
+    railTones = {};
+    railTexts = {};
     try {
       const result = await api.aiAuraRail(
         detail.message.id,
         nextAnswer ?? undefined,
-        loadPreferences().full_body_context
+        loadPreferences().full_body_context,
+        (delta) => {
+          if (token === request) applyRailDelta(delta);
+        }
       );
       if (token !== request) return;
       rail = result;
@@ -174,28 +263,84 @@
     askInput = "";
     askBusy = true;
     askError = null;
+    streamAnswerIndex = -1;
+    streamRepliesIndex = -1;
+    const tones: Record<number, string> = {};
+    const texts: Record<number, string> = {};
+    const applyDelta = (delta: AiStreamDelta) => {
+      if (token !== askRequest) return;
+      const [field, index, part] = delta.path.split(".");
+      if (field === "answer") {
+        if (streamAnswerIndex < 0) {
+          thread = [
+            ...thread,
+            { kind: "message", role: "assistant", content: "" }
+          ];
+          streamAnswerIndex = thread.length - 1;
+        }
+        const entry = thread[streamAnswerIndex];
+        if (entry && entry.kind === "message") entry.content += delta.text;
+      } else if (field === "drafts") {
+        const at = Number(index);
+        if (part === "tone") {
+          tones[at] = (tones[at] ?? "") + delta.text;
+        } else {
+          texts[at] = (texts[at] ?? "") + delta.text;
+        }
+        if (streamRepliesIndex < 0) {
+          thread = [...thread, { kind: "replies", drafts: [] }];
+          streamRepliesIndex = thread.length - 1;
+        }
+        const entry = thread[streamRepliesIndex];
+        if (entry && entry.kind === "replies") {
+          entry.drafts = draftsFrom(tones, texts);
+        }
+      }
+    };
     try {
       const response = await api.aiAuraAsk(
         detail.message.id,
         question,
         history,
         existing,
-        loadPreferences().full_body_context
+        loadPreferences().full_body_context,
+        applyDelta
       );
       if (token !== askRequest) return;
-      const additions: ConversationEntry[] = [
-        { kind: "message", role: "assistant", content: response.answer }
-      ];
-      if (response.drafts.length > 0) {
-        additions.push({ kind: "replies", drafts: response.drafts });
+      if (streamAnswerIndex >= 0) {
+        const entry = thread[streamAnswerIndex];
+        if (entry && entry.kind === "message") entry.content = response.answer;
+      } else {
+        thread = [
+          ...thread,
+          { kind: "message", role: "assistant", content: response.answer }
+        ];
       }
-      thread = [...thread, ...additions];
-      if (response.drafts.length > 0 && rail) {
-        answer = null;
-        rail = { ...rail, question: null, options: [] };
+      if (response.drafts.length > 0) {
+        if (streamRepliesIndex >= 0) {
+          const entry = thread[streamRepliesIndex];
+          if (entry && entry.kind === "replies") entry.drafts = response.drafts;
+        } else {
+          thread = [
+            ...thread,
+            { kind: "replies", drafts: response.drafts }
+          ];
+        }
+        if (rail) {
+          answer = null;
+          rail = { ...rail, question: null, options: [] };
+        }
+      } else if (streamRepliesIndex >= 0) {
+        thread = thread.filter((_, index) => index !== streamRepliesIndex);
       }
     } catch {
       if (token === askRequest) {
+        if (streamRepliesIndex >= 0 || streamAnswerIndex >= 0) {
+          thread = thread.filter(
+            (_, index) =>
+              index !== streamRepliesIndex && index !== streamAnswerIndex
+          );
+        }
         askError = "Aura couldn't answer that.";
       }
     } finally {
@@ -204,7 +349,7 @@
   }
 
   async function useDraft(draft: AiAuraDraft, key: string): Promise<void> {
-    if (usingDraft !== null) return;
+    if (usingDraft !== null || askBusy) return;
     usingDraft = key;
     draftError = null;
     try {
@@ -417,7 +562,7 @@
           {/if}
         </div>
 
-        {#if loading}
+        {#if rail.drafts.length === 0 && loading}
           <div class="draft-loading" role="status">
             <span class="loading-spinner"><LoaderCircle size={14} /></span>
             Drafting replies…
@@ -463,7 +608,7 @@
                     type="button"
                     class="draft {draft.tone}"
                     aria-label={`Use ${toneLabel(draft.tone)} reply`}
-                    disabled={usingDraft !== null || loading}
+                    disabled={usingDraft !== null || loading || askBusy}
                     onclick={() =>
                       void useDraft(draft, `chat:${index}:${draftIndex}`)}
                   >
@@ -485,7 +630,7 @@
               </div>
             {/if}
           {/each}
-          {#if askBusy}
+          {#if askBusy && streamAnswerIndex < 0 && streamRepliesIndex < 0}
             <div class="bubble-row">
               <div class="bubble thinking" aria-label="Aura is thinking">
                 <span></span><span></span><span></span>

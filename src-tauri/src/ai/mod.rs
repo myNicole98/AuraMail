@@ -5,6 +5,7 @@ pub mod discovery;
 pub mod prompts;
 pub mod rail_cache;
 pub mod semantic;
+pub mod stream;
 pub mod voice;
 
 use base64::Engine;

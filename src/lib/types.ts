@@ -276,6 +276,11 @@ export type AiAuraAskResponse = {
   drafts: AiAuraDraft[];
 };
 
+export type AiStreamDelta = {
+  path: string;
+  text: string;
+};
+
 export type AiPreferences = {
   auto_classify: boolean;
   auto_rail: boolean;

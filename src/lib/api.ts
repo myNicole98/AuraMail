@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type {
   Account,
@@ -21,6 +21,7 @@ import type {
   AiConfigInput,
   AiDraft,
   AiPreferences,
+  AiStreamDelta,
   AiVoiceProfile,
   SemanticStatus,
   Classification,
@@ -69,6 +70,14 @@ import { activeSpaceId } from "./spaces";
 
 function currentSpaceId(): number {
   return activeSpaceId() ?? 0;
+}
+
+function streamChannel(
+  onDelta?: (delta: AiStreamDelta) => void
+): Channel<AiStreamDelta> {
+  const channel = new Channel<AiStreamDelta>();
+  if (onDelta) channel.onmessage = onDelta;
+  return channel;
 }
 
 export const api = {
@@ -148,28 +157,66 @@ export const api = {
   testAi: (spaceId = currentSpaceId()) => invoke<string>("test_ai", { spaceId }),
   aiStatus: (spaceId = currentSpaceId()) =>
     invoke<boolean>("ai_status", { spaceId }),
-  aiReply: (messageId: number, guidance?: string | null, fullBody = false) =>
-    invoke<AiDraft>("ai_reply", { messageId, guidance, fullBody }),
-  aiAuraRail: (messageId: number, answer?: string | null, fullBody = false) =>
-    invoke<AiAuraRail>("ai_aura_rail", { messageId, answer, fullBody }),
+  aiReply: (
+    messageId: number,
+    guidance?: string | null,
+    fullBody = false,
+    onDelta?: (delta: AiStreamDelta) => void
+  ) =>
+    invoke<AiDraft>("ai_reply", {
+      messageId,
+      guidance,
+      fullBody,
+      onDelta: streamChannel(onDelta)
+    }),
+  aiAuraRail: (
+    messageId: number,
+    answer?: string | null,
+    fullBody = false,
+    onDelta?: (delta: AiStreamDelta) => void
+  ) =>
+    invoke<AiAuraRail>("ai_aura_rail", {
+      messageId,
+      answer,
+      fullBody,
+      onDelta: streamChannel(onDelta)
+    }),
   aiAuraAsk: (
     messageId: number,
     question: string,
     history: ChatMessage[],
     existing: string[],
-    fullBody = false
+    fullBody = false,
+    onDelta?: (delta: AiStreamDelta) => void
   ) =>
     invoke<AiAuraAskResponse>("ai_aura_ask", {
       messageId,
       question,
       history,
       existing,
-      fullBody
+      fullBody,
+      onDelta: streamChannel(onDelta)
     }),
-  aiChat: (request: AiChatRequest, spaceId = currentSpaceId()) =>
-    invoke<AiChatResponse>("ai_chat", { request, spaceId }),
-  aiCompose: (request: AiComposeRequest, spaceId = currentSpaceId()) =>
-    invoke<AiDraft>("ai_compose", { request, spaceId }),
+  aiChat: (
+    request: AiChatRequest,
+    spaceId = currentSpaceId(),
+    onDelta?: (delta: AiStreamDelta) => void
+  ) =>
+    invoke<AiChatResponse>("ai_chat", {
+      request,
+      spaceId,
+      onDelta: streamChannel(onDelta)
+    }),
+  aiCompose: (
+    request: AiComposeRequest,
+    spaceId = currentSpaceId(),
+    onDelta?: (delta: AiStreamDelta) => void
+  ) =>
+    invoke<AiDraft>("ai_compose", {
+      request,
+      spaceId,
+      onDelta: streamChannel(onDelta)
+    }),
   listContacts: (spaceId: number, query?: string, limit?: number) =>
     invoke<Contact[]>("list_contacts", { spaceId, query, limit }),
   listContactAccounts: (spaceId: number) =>
