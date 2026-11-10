@@ -108,8 +108,12 @@ export function normalizeMarkReadDelay(value: unknown): number {
 
 let matugenPalette: Base16 | null = null;
 
+export type AccountLogin = "email" | "username";
+
 export type AccountForm = {
   display_name: string;
+  email: string;
+  login: AccountLogin;
   username: string;
   password: string;
   imap_host: string;
@@ -591,10 +595,16 @@ function portProblem(value: string): string | null {
 
 export function validateAccountForm(
   form: AccountForm,
-  passwordRequired = true
+  passwordRequired = true,
+  requireEmail = true
 ): Record<string, string> {
   const errors: Record<string, string> = {};
-  if (!EMAIL.test(form.username.trim())) errors.username = "Enter a valid email address.";
+  if (requireEmail && !EMAIL.test(form.email.trim())) {
+    errors.email = "Enter a valid email address.";
+  }
+  if (form.login === "username" && !form.username.trim()) {
+    errors.username = "Username is required.";
+  }
   if (passwordRequired && !form.password) errors.password = "Password is required.";
   if (!form.imap_host.trim()) errors.imap_host = "IMAP host is required.";
   if (!form.smtp_host.trim()) errors.smtp_host = "SMTP host is required.";

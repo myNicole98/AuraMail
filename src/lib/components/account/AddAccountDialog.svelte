@@ -50,6 +50,8 @@
   function blankForm(): AccountForm {
     return {
       display_name: "",
+      email: "",
+      login: "email",
       username: "",
       password: "",
       imap_host: "",
@@ -87,15 +89,15 @@
   }
 
   async function autodetect(): Promise<void> {
-    if (!form.username.includes("@")) {
-      manualError = "Enter an email address first.";
+    if (!form.email.includes("@")) {
+      manualError = "Autodetect needs an email address.";
       return;
     }
     discovering = true;
     detected = false;
     manualError = null;
     try {
-      const found = await api.discoverAccountSettings(form.username.trim());
+      const found = await api.discoverAccountSettings(form.email.trim());
       form = {
         ...form,
         imap_host: found.imap_host,
@@ -124,8 +126,11 @@
       const input: AccountInput = {
         display_name: form.display_name.trim(),
         identity: "",
-        email: form.username.trim(),
-        username: form.username.trim(),
+        email: form.email.trim(),
+        username:
+          form.login === "username"
+            ? form.username.trim()
+            : form.email.trim(),
         password: form.password,
         imap_host: form.imap_host.trim(),
         imap_port: Number(form.imap_port),
@@ -277,14 +282,14 @@
         }}
       >
         <label class="field">
-          <span>Email</span>
+          <span>Email address</span>
           <div class="with-action">
             <input
               type="email"
-              bind:value={form.username}
-              autocomplete="username"
+              bind:value={form.email}
+              autocomplete="email"
               onblur={() => {
-                if (!form.imap_host.trim() && form.username.includes("@")) {
+                if (!form.imap_host.trim() && form.email.includes("@")) {
                   void autodetect();
                 }
               }}
@@ -310,8 +315,28 @@
               {/if}
             </div>
           </div>
-          {#if errors.username}<small class="error">{errors.username}</small>{/if}
+          {#if errors.email}<small class="error">{errors.email}</small>{/if}
         </label>
+        <div class="field">
+          <span>Sign in with</span>
+          <ThemedSelect
+            value={form.login}
+            options={[
+              { value: "email", label: "Email address" },
+              { value: "username", label: "Username" }
+            ]}
+            ariaLabel="Sign in with"
+            onchange={(value) =>
+              (form.login = value === "username" ? "username" : "email")}
+          />
+        </div>
+        {#if form.login === "username"}
+          <label class="field">
+            <span>Username</span>
+            <input bind:value={form.username} autocomplete="username" />
+            {#if errors.username}<small class="error">{errors.username}</small>{/if}
+          </label>
+        {/if}
         <label class="field">
           <span>Password</span>
           <input type="password" bind:value={form.password} autocomplete="new-password" />

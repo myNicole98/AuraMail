@@ -112,6 +112,8 @@
     if (!oauth && !proton) {
       const form: AccountForm = {
         display_name: displayName,
+        email: account.email,
+        login: "username",
         username,
         password: password === SAVED_PASSWORD_MASK ? "" : password,
         imap_host: imapHost,
@@ -122,7 +124,7 @@
         smtp_security: smtpSecurity,
         color
       };
-      const found = validateAccountForm(form, false);
+      const found = validateAccountForm(form, false, false);
       errors = found;
       if (Object.keys(found).length > 0) {
         setupOpen = true;
@@ -179,7 +181,7 @@
 
   async function autodetect(): Promise<void> {
     if (!username.includes("@")) {
-      error = "Enter an email address first.";
+      error = "Autodetect needs an email address.";
       return;
     }
     discovering = true;

@@ -3,6 +3,7 @@
   import { accountColorLabel, accountColorTokens, accountColorValue } from "../../../accountColors";
   import { api } from "../../../api";
   import { validateAccountForm, type AccountForm } from "../../../settings";
+  import ThemedSelect from "../../ThemedSelect.svelte";
   import { activeSpaceId } from "../../../spaces";
   import { app } from "../../../stores/app.svelte";
   import { appearance } from "../../../stores/appearance.svelte";
@@ -42,6 +43,8 @@
 
   const blank = (): AccountForm => ({
     display_name: "",
+    email: "",
+    login: "email",
     username: "",
     password: "",
     imap_host: "",
@@ -69,12 +72,12 @@
   }
 
   async function discover() {
-    if (!form.username.includes("@")) return;
+    if (!form.email.includes("@")) return;
     discovering = true;
     failure = null;
     notice = null;
     try {
-      const found = await api.discoverAccountSettings(form.username.trim());
+      const found = await api.discoverAccountSettings(form.email.trim());
       form = {
         ...form,
         imap_host: found.imap_host,
@@ -115,8 +118,11 @@
       const input: AccountInput = {
         display_name: form.display_name.trim(),
         identity: "",
-        email: form.username.trim(),
-        username: form.username.trim(),
+        email: form.email.trim(),
+        username:
+          form.login === "username"
+            ? form.username.trim()
+            : form.email.trim(),
         password: form.password,
         imap_host: form.imap_host.trim(),
         imap_port: Number(form.imap_port),
@@ -216,11 +222,11 @@
         <div class="with-action">
           <input
             type="email"
-            bind:value={form.username}
-            class:invalid={Boolean(errors.username)}
-            aria-invalid={Boolean(errors.username)}
-            autocomplete="username"
-            oninput={() => clearError("username")}
+            bind:value={form.email}
+            class:invalid={Boolean(errors.email)}
+            aria-invalid={Boolean(errors.email)}
+            autocomplete="email"
+            oninput={() => clearError("email")}
             onblur={() => { if (!form.imap_host && !form.smtp_host) void discover(); }}
           />
           <button class="tiny" type="button" disabled={discovering} onclick={() => void discover()}>
@@ -228,8 +234,34 @@
             {discovering ? "Detecting…" : "Autodetect"}
           </button>
         </div>
-        {#if errors.username}<small class="field-error">{errors.username}</small>{/if}
+        {#if errors.email}<small class="field-error">{errors.email}</small>{/if}
       </label>
+      <div class="field">
+        <span>Sign in with</span>
+        <ThemedSelect
+          value={form.login}
+          options={[
+            { value: "email", label: "Email address" },
+            { value: "username", label: "Username" }
+          ]}
+          ariaLabel="Sign in with"
+          onchange={(value) =>
+            (form.login = value === "username" ? "username" : "email")}
+        />
+      </div>
+      {#if form.login === "username"}
+        <label class="field">
+          <span>Username</span>
+          <input
+            bind:value={form.username}
+            class:invalid={Boolean(errors.username)}
+            aria-invalid={Boolean(errors.username)}
+            autocomplete="username"
+            oninput={() => clearError("username")}
+          />
+          {#if errors.username}<small class="field-error">{errors.username}</small>{/if}
+        </label>
+      {/if}
       <label class="field">
         <span>Password</span>
         <input

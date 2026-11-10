@@ -34,6 +34,8 @@
   function blankAccount(): AccountForm {
     return {
       display_name: "",
+      email: "",
+      login: "email",
       username: "",
       password: "",
       imap_host: "",
@@ -211,6 +213,8 @@
     accountEditingId = account.id;
     accountForm = {
       display_name: account.display_name,
+      email: account.email,
+      login: "username",
       username: account.username,
       password: SAVED_PASSWORD_MASK,
       imap_host: account.imap_host,
@@ -237,15 +241,15 @@
   }
 
   async function discoverAccount() {
-    if (!accountForm.username.includes("@")) {
-      accountError = "Enter an email address first.";
+    if (!accountForm.email.includes("@")) {
+      accountError = "Autodetect needs an email address.";
       return;
     }
     accountDiscovering = true;
     accountError = null;
     accountNotice = null;
     try {
-      const found = await api.discoverAccountSettings(accountForm.username.trim());
+      const found = await api.discoverAccountSettings(accountForm.email.trim());
       accountForm = {
         ...accountForm,
         imap_host: found.imap_host,
@@ -289,8 +293,11 @@
       const input: AccountInput = {
         display_name: accountForm.display_name.trim(),
         identity: "",
-        email: accountForm.username.trim(),
-        username: accountForm.username.trim(),
+        email: accountForm.email.trim(),
+        username:
+          accountForm.login === "username"
+            ? accountForm.username.trim()
+            : accountForm.email.trim(),
         password:
           accountForm.password === SAVED_PASSWORD_MASK ? "" : accountForm.password,
         imap_host: accountForm.imap_host.trim(),
