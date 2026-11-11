@@ -229,10 +229,12 @@
   let cc = $state(initialCc());
   let subject = $state(initialSubject());
   let body = $state(initialBody());
-  const initialMarkup = initialHtml();
+  // Declared before initialHtml(): a signature with an inline image is captured
+  // while the initial markup is built, so the state must already exist.
   let inlineImages = $state<InlineImageUpload[]>(
     untrack(() => draft?.inlineImages.map((image) => ({ ...image })) ?? [])
   );
+  const initialMarkup = initialHtml();
   let bodyHtml = $state(captureImages(initialMarkup));
   let attachments = $state<AttachmentUpload[]>(
     untrack(() =>
