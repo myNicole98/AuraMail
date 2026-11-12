@@ -125,6 +125,8 @@ pub fn run() {
                 proton_sidecar,
             )));
 
+            #[cfg(target_os = "windows")]
+            desktop::register_notification_app_id(app.handle());
             desktop::install_notification_actions(app.handle());
             if let Err(error) = theme::ensure_config(app.handle()) {
                 eprintln!("theme config initialization failed: {error}");

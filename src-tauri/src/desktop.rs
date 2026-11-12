@@ -244,7 +244,7 @@ fn notify_impl(app: &AppHandle, db: &Database, account: &Account, message_ids: &
             format!("{sender} · {subject} · {}", account.display_name),
         )
     };
-    let _ = app
+    if let Err(error) = app
         .notification()
         .builder()
         .title(title)
@@ -252,7 +252,88 @@ fn notify_impl(app: &AppHandle, db: &Database, account: &Account, message_ids: &
         .action_type_id("auramail.mail")
         .extra("spaceId", account.space_id)
         .extra("messageId", first.id)
-        .show();
+        .show()
+    {
+        eprintln!("could not show the new mail notification: {error}");
+    }
+}
+
+/// Windows silently drops notifications whose AppUserModelID is not
+/// registered. The plugin sends them under the bundle identifier, so an
+/// unpackaged build has to publish that id once per launch: an installed app
+/// may not have a shortcut carrying it, and an in-app update replaces the
+/// executable without touching the installer registration.
+#[cfg(target_os = "windows")]
+pub fn register_notification_app_id(app: &AppHandle) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_WRITE,
+        REG_OPTION_NON_VOLATILE, REG_SZ,
+    };
+
+    let config = app.config();
+    let display_name = config.product_name.as_deref().unwrap_or("AuraMail");
+    let exe = std::env::current_exe().ok();
+    let (subkey, values) =
+        notification_app_id_entries(&config.identifier, display_name, exe.as_deref());
+
+    let wide = |value: &str| -> Vec<u16> {
+        OsStr::new(value)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    };
+    let subkey = wide(&subkey);
+    let mut key: HKEY = std::ptr::null_mut();
+    unsafe {
+        if RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            subkey.as_ptr(),
+            0,
+            std::ptr::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_WRITE,
+            std::ptr::null(),
+            &mut key,
+            std::ptr::null_mut(),
+        ) != 0
+        {
+            return;
+        }
+        for (name, value) in values.into_iter().filter(|(_, value)| !value.is_empty()) {
+            let name = wide(name);
+            let value = wide(&value);
+            RegSetValueExW(
+                key,
+                name.as_ptr(),
+                0,
+                REG_SZ,
+                value.as_ptr() as *const u8,
+                (value.len() * std::mem::size_of::<u16>()) as u32,
+            );
+        }
+        RegCloseKey(key);
+    }
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn notification_app_id_entries(
+    identifier: &str,
+    display_name: &str,
+    icon: Option<&Path>,
+) -> (String, Vec<(&'static str, String)>) {
+    (
+        format!("Software\\Classes\\AppUserModelId\\{identifier}"),
+        vec![
+            ("DisplayName", display_name.to_string()),
+            (
+                "IconUri",
+                icon.map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            ),
+        ],
+    )
 }
 
 #[derive(Clone, Serialize)]
@@ -569,5 +650,34 @@ mod tests {
             ..next
         };
         assert!(set(&db, invalid).is_err());
+    }
+
+    #[test]
+    fn notification_app_id_publishes_the_plugin_identifier() {
+        let (subkey, values) = notification_app_id_entries(
+            "dev.auramail.app",
+            "AuraMail",
+            Some(Path::new(r"C:\Program Files\AuraMail\AuraMail.exe")),
+        );
+
+        assert_eq!(subkey, r"Software\Classes\AppUserModelId\dev.auramail.app");
+        assert_eq!(
+            values,
+            vec![
+                ("DisplayName", "AuraMail".to_string()),
+                (
+                    "IconUri",
+                    r"C:\Program Files\AuraMail\AuraMail.exe".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn notification_app_id_without_an_executable_still_names_the_app() {
+        let (_, values) = notification_app_id_entries("dev.auramail.app", "AuraMail", None);
+
+        assert_eq!(values[0], ("DisplayName", "AuraMail".to_string()));
+        assert_eq!(values[1], ("IconUri", String::new()));
     }
 }
