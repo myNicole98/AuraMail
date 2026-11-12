@@ -164,6 +164,54 @@
     return message.from_name.trim() || message.from_addr || "Unknown sender";
   }
 
+  let sentFolderIds = $derived(
+    new Set(
+      app.folders
+        .filter((folder) => folder.role === "sent")
+        .map((folder) => folder.id)
+    )
+  );
+
+  function sentRecipients(
+    message: Message
+  ): { prefix: "To" | "Cc"; addresses: string[] } | null {
+    if (!sentFolderIds.has(message.folder_id)) return null;
+    const to = message.to_addrs.map((address) => address.trim()).filter(Boolean);
+    if (to.length > 0) return { prefix: "To", addresses: to };
+    const cc = message.cc_addrs.map((address) => address.trim()).filter(Boolean);
+    return { prefix: "Cc", addresses: cc };
+  }
+
+  function rowSender(message: Message): string {
+    const recipients = sentRecipients(message);
+    if (!recipients) return sender(message);
+    if (recipients.addresses.length === 0) return "No recipient";
+    const extra =
+      recipients.addresses.length > 1
+        ? ` +${recipients.addresses.length - 1}`
+        : "";
+    return `${recipients.prefix}: ${recipients.addresses[0]}${extra}`;
+  }
+
+  function rowTitle(message: Message): string | null {
+    const recipients = sentRecipients(message);
+    if (!recipients) return null;
+    if (recipients.addresses.length === 0) return "No recipient";
+    const to = message.to_addrs.map((address) => address.trim()).filter(Boolean);
+    const cc = message.cc_addrs.map((address) => address.trim()).filter(Boolean);
+    const parts: string[] = [];
+    if (to.length > 0) parts.push(`to ${to.join(", ")}`);
+    if (cc.length > 0) parts.push(`cc ${cc.join(", ")}`);
+    return parts.join(" · ");
+  }
+
+  function rowAvatar(message: Message): { name: string; email: string } {
+    const address = sentRecipients(message)?.addresses[0];
+    return address
+      ? { name: address, email: address }
+      : { name: sender(message), email: message.from_addr };
+  }
+
   function subject(message: Message): string {
     return message.subject.trim() || "(no subject)";
   }
@@ -609,7 +657,7 @@
         <button
           type="button"
           class="row-open"
-          aria-label={`${sender(message)}: ${subject(message)}`}
+          aria-label={`${rowSender(message)}: ${subject(message)}`}
           aria-pressed={selected.has(message.id)}
           onclick={(event) => onRowClick(event, message.id)}
         >
@@ -617,10 +665,11 @@
             <span class="unread-dot" aria-hidden="true"></span>
           {/if}
           {#if appearance.listAvatars}
+            {@const avatar = rowAvatar(message)}
             <span class="row-avatar" class:unread={!message.is_seen}>
               <SenderAvatar
-                name={sender(message)}
-                email={message.from_addr}
+                name={avatar.name}
+                email={avatar.email}
                 enabled={profilePictures}
                 size={36}
               />
@@ -641,7 +690,7 @@
                   {/if}
                 </span>
               {/if}
-              <span class="sender">{sender(message)}</span>
+              <span class="sender" title={rowTitle(message)}>{rowSender(message)}</span>
               {#if message.thread_count > 1}
                 <span class="thread-count" title={`${message.thread_count} messages in this thread`}>
                   {message.thread_count}
