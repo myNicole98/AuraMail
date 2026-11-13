@@ -1327,6 +1327,22 @@ impl Database {
             }
             conn.pragma_update(None, "user_version", 41)?;
         }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 42 {
+            // Older builds dropped parts marked `Content-Disposition: inline`,
+            // which hid real attachments (Apple Mail marks PDFs and documents
+            // that way). Those messages were cached with no attachment rows, so
+            // clear their body cache and parse them again on next open.
+            conn.execute_batch(
+                "update messages
+                 set body_cached = 0
+                 where body_cached = 1
+                   and not exists (
+                     select 1 from attachments a where a.message_id = messages.id
+                   );",
+            )?;
+            conn.pragma_update(None, "user_version", 42)?;
+        }
         let renamed: i64 = conn.query_row(
             "select count(*) from settings where key = 'contact-local-book-named'",
             [],
@@ -1482,7 +1498,7 @@ mod tests {
             .unwrap()
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 42);
         for space in spaces::list(&db).unwrap() {
             let conn = db.conn.lock().unwrap();
             let accounts: i64 = conn
@@ -1514,6 +1530,37 @@ mod tests {
             })
             .unwrap();
         assert_eq!(again as usize, spaces::list(&db).unwrap().len());
+    }
+
+    #[test]
+    fn migration_42_invalidates_cached_bodies_without_attachments() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auramail.db");
+        let db = Database::open(&path).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(
+                "insert into accounts (id, display_name, email, username, imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security, space_id, created_at)
+                 values (1, 'Me', 'me@example.com', 'me', 'imap', 993, 'tls', 'smtp', 465, 'tls', 1, 0);
+                 insert into folders (id, account_id, path, name) values (1, 1, 'INBOX', 'Inbox');
+                 insert into messages (id, account_id, folder_id, uid, body_cached) values (1, 1, 1, 10, 1);
+                 insert into messages (id, account_id, folder_id, uid, body_cached) values (2, 1, 1, 11, 1);
+                 insert into attachments (message_id, filename, mime_type, size) values (2, 'a.pdf', 'application/pdf', 1);
+                 insert into messages (id, account_id, folder_id, uid, body_cached) values (3, 1, 1, 12, 0);
+                 pragma user_version = 41;",
+            )
+            .unwrap();
+        }
+        db.migrate().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let cached: Vec<(i64, i64)> = conn
+            .prepare("select id, body_cached from messages order by id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(cached, vec![(1, 0), (2, 1), (3, 0)]);
     }
 
     #[test]
@@ -1562,7 +1609,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 42);
         let tabs: i64 = conn
             .query_row("select count(*) from tabs", [], |row| row.get(0))
             .unwrap();
@@ -1718,7 +1765,7 @@ mod tests {
             .unwrap();
         assert_eq!(bodies, 0);
         assert_eq!(cached, 0);
-        assert_eq!(version, 41);
+        assert_eq!(version, 42);
     }
 
     #[test]
@@ -1745,7 +1792,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table, 1);
-        assert_eq!(version, 41);
+        assert_eq!(version, 42);
     }
 
     #[test]
@@ -1772,7 +1819,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(cached, 0);
-        assert_eq!(version, 41);
+        assert_eq!(version, 42);
     }
 
     #[test]
@@ -1815,7 +1862,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 42);
     }
 
     #[test]
@@ -1896,7 +1943,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!((auth_type, provider, version), (1, 1, 41));
+        assert_eq!((auth_type, provider, version), (1, 1, 42));
     }
 
     #[test]

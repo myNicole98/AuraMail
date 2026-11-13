@@ -225,7 +225,7 @@ fn remove_inline_attachments(
         .cloned()
         .collect::<std::collections::HashSet<_>>();
     attachments.retain(|attachment| {
-        if attachment.is_inline {
+        if parse::is_inline_body_part(&attachment.mime_type, attachment.is_inline) {
             return false;
         }
         attachment
@@ -333,6 +333,24 @@ mod tests {
             Some("image/webp")
         );
         assert_eq!(image_mime(None, "https://example.com/a.html"), None);
+    }
+
+    #[test]
+    fn keeps_inline_document_attachments_and_hides_inline_images() {
+        let mut attachments = vec![
+            ParsedAttachment {
+                filename: "Preventivo 18 Pro Max.pdf".into(),
+                mime_type: "application/pdf".into(),
+                size: 586_000,
+                content_id: None,
+                is_inline: true,
+                data: vec![1, 2, 3],
+            },
+            attachment("logo.png", Some("logo@example")),
+        ];
+        remove_inline_attachments(&mut attachments, &[]);
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].filename, "Preventivo 18 Pro Max.pdf");
     }
 
     #[test]

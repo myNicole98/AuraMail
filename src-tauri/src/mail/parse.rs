@@ -70,6 +70,11 @@ pub fn parse_headers_with_preview(raw: &[u8], preview: &[u8]) -> ParsedHeaders {
         return headers;
     };
     headers.has_attachments |= has_attachment_hint(&combined);
+    // Images may be inline bodies, so only non-image parts can prove an
+    // attachment from the truncated preview.
+    headers.has_attachments |= message
+        .attachments()
+        .any(|part| !mime_type(part).starts_with("image/"));
     let text = message
         .body_text(0)
         .map(|body| body.into_owned())
@@ -268,6 +273,14 @@ fn mime_type(part: &mail_parser::MessagePart<'_>) -> String {
         .unwrap_or_else(|| "application/octet-stream".to_string())
 }
 
+/// Apple Mail and some CRMs mark genuine attachments (PDFs, documents) as
+/// `Content-Disposition: inline`, so the disposition alone cannot tell a body
+/// part from an attachment. Only inline images are treated as parts of the
+/// rendered body.
+pub fn is_inline_body_part(mime_type: &str, is_inline: bool) -> bool {
+    is_inline && mime_type.starts_with("image/")
+}
+
 fn has_attachment_hint(raw: &[u8]) -> bool {
     let text = String::from_utf8_lossy(raw).to_ascii_lowercase();
     text.contains("content-disposition: attachment")
@@ -306,6 +319,14 @@ mod tests {
     fn preview_detects_attachment_parts_without_trusting_multipart_alone() {
         let raw = b"From: Ada <ada@example.com>\r\nSubject: Files\r\nContent-Type: multipart/mixed; boundary=\"b\"\r\n\r\n";
         let preview = b"--b\r\nContent-Type: text/plain\r\n\r\nHello\r\n--b\r\nContent-Type: application/pdf; name=\"report.pdf\"\r\nContent-Disposition: attachment; filename=\"report.pdf\"\r\n\r\n";
+        let headers = parse_headers_with_preview(raw, preview);
+        assert!(headers.has_attachments);
+    }
+
+    #[test]
+    fn preview_detects_inline_document_attachment_from_apple_mail() {
+        let raw = b"From: Ada <ada@example.com>\r\nSubject: Files\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"Apple-Mail=_1\"\r\n\r\n";
+        let preview = b"--Apple-Mail=_1\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBuongiorno\r\n--Apple-Mail=_1\r\nContent-Disposition: inline;\r\n\tfilename=Preventivo 18 Pro Max.pdf\r\nContent-Type: application/pdf;\r\n\tx-unix-mode=0644;\r\n\tname=\"Preventivo 18 Pro Max.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\n";
         let headers = parse_headers_with_preview(raw, preview);
         assert!(headers.has_attachments);
     }

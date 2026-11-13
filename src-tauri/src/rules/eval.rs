@@ -276,7 +276,11 @@ pub fn apply_raw(facts: &mut Facts, raw: &[u8]) {
             .map(parse::html_body_to_text)
             .unwrap_or_default()
     };
-    if parsed.attachments.iter().any(|part| !part.is_inline) {
+    if parsed
+        .attachments
+        .iter()
+        .any(|part| !parse::is_inline_body_part(&part.mime_type, part.is_inline))
+    {
         facts.has_attachments = true;
     }
     facts.raw = Some(raw.to_vec());
@@ -554,6 +558,14 @@ mod tests {
         let mut facts = facts();
         apply_raw(&mut facts, raw);
         assert_eq!(facts.body.as_deref(), Some("hello"));
+        assert!(facts.has_attachments);
+    }
+
+    #[test]
+    fn inline_document_attachments_count_for_attachment_rules() {
+        let raw = b"From: a@b.c\r\nSubject: hi\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"Apple-Mail=_1\"\r\n\r\n--Apple-Mail=_1\r\nContent-Type: text/plain\r\n\r\nhello\r\n--Apple-Mail=_1\r\nContent-Disposition: inline;\r\n\tfilename=Preventivo.pdf\r\nContent-Type: application/pdf;\r\n\tname=\"Preventivo.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQK\r\n--Apple-Mail=_1--\r\n";
+        let mut facts = facts();
+        apply_raw(&mut facts, raw);
         assert!(facts.has_attachments);
     }
 }
