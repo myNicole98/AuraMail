@@ -3213,6 +3213,54 @@ pub fn read_attachment_paths(
     Ok(attachments)
 }
 
+/// Splice the original attachments of a forwarded message into the send input
+/// without routing bytes through the composer: match the stored metadata rows
+/// to the raw MIME parts fetched from the server.
+fn forwarded_attachment_uploads(
+    attachments: &[mail::Attachment],
+    parsed: &[parse::ParsedAttachment],
+    excluded: &[i64],
+) -> AppResult<Vec<compose::AttachmentUpload>> {
+    use base64::Engine as _;
+
+    let mut uploads = Vec::new();
+    for attachment in attachments {
+        if excluded.contains(&attachment.id) || attachment.size > MAX_ATTACHMENT_SIZE {
+            continue;
+        }
+        let contents = attachment_position(parsed, attachment)
+            .and_then(|index| parsed.get(index))
+            .ok_or_else(|| {
+                AppError::Message("the original attachments are no longer available".into())
+            })?;
+        uploads.push(compose::AttachmentUpload {
+            mime_type: attachment.mime_type.clone(),
+            name: attachment.filename.clone(),
+            data: base64::engine::general_purpose::STANDARD.encode(&contents.data),
+        });
+    }
+    Ok(uploads)
+}
+
+/// Fetch the source message once and splice every carried attachment; the
+/// bytes never reach the webview.
+fn forward_attachment_uploads(
+    db: &Database,
+    secrets: &dyn SecretStore,
+    message_id: i64,
+    excluded: &[i64],
+) -> AppResult<Vec<compose::AttachmentUpload>> {
+    let listed = mail::list_attachments(db, message_id)?;
+    if listed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (message, folder, account) = message_context(db, message_id)?;
+    let credential = crate::mail_auth::credential_for(&account, secrets)?;
+    let raw = client::fetch_message(&account, &credential, &folder.path, message.uid)?;
+    let parsed = parse::parse_message(&raw);
+    forwarded_attachment_uploads(&listed, &parsed.attachments, excluded)
+}
+
 #[tauri::command]
 pub async fn send_message(
     app: AppHandle,
@@ -3224,6 +3272,12 @@ pub async fn send_message(
     let secrets = Arc::clone(&state.secrets);
     let syncing = Arc::clone(&state.syncing);
     tauri::async_runtime::spawn_blocking(move || {
+        let mut input = input;
+        if let Some(source_id) = input.forward_from {
+            let excluded = input.forward_excluded.clone();
+            let carried = forward_attachment_uploads(&db, secrets.as_ref(), source_id, &excluded)?;
+            input.attachments.extend(carried);
+        }
         let account = account_by_id(&db, input.account_id)?;
         let credential = crate::mail_auth::credential_for(&account, secrets.as_ref())?;
         let raw = smtp::send(&account, &credential, &input)?;
@@ -3568,9 +3622,10 @@ pub fn reload_theme(app: AppHandle) -> AppResult<Option<Base16Palette>> {
 mod tests {
     use super::{
         attachment_position, cached_attachment, delete_account_record, effective_full_body,
-        ensure_trash_delete, error_kind, parse_color_scheme, parse_dms_mode, preview_data_url,
-        previewable_image, read_attachment_paths, reply_mail_context, trash_destination,
-        unique_download_path, validate_move_target, voice_samples,
+        ensure_trash_delete, error_kind, forwarded_attachment_uploads, parse_color_scheme,
+        parse_dms_mode, preview_data_url, previewable_image, read_attachment_paths,
+        reply_mail_context, trash_destination, unique_download_path, validate_move_target,
+        voice_samples, MAX_ATTACHMENT_SIZE,
     };
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -3643,6 +3698,71 @@ mod tests {
             is_inline: false,
             data: Vec::new(),
         }
+    }
+
+    fn spliced(filename: &str, data: &[u8]) -> parse::ParsedAttachment {
+        parse::ParsedAttachment {
+            filename: filename.into(),
+            mime_type: "application/octet-stream".into(),
+            size: data.len(),
+            content_id: None,
+            is_inline: false,
+            data: data.to_vec(),
+        }
+    }
+
+    #[test]
+    fn forwarded_attachments_are_spliced_from_the_raw_parts() {
+        use base64::Engine as _;
+
+        let attachments = vec![attachment("report.pdf", 2, None)];
+        let uploads =
+            forwarded_attachment_uploads(&attachments, &[spliced("report.pdf", b"hi")], &[]).unwrap();
+
+        assert_eq!(uploads.len(), 1);
+        assert_eq!(uploads[0].name, "report.pdf");
+        assert_eq!(
+            uploads[0].data,
+            base64::engine::general_purpose::STANDARD.encode(b"hi")
+        );
+    }
+
+    #[test]
+    fn forwarded_attachments_honor_per_chip_removals() {
+        let mut kept = attachment("a.bin", 2, None);
+        kept.id = 1;
+        let mut removed = attachment("b.bin", 2, None);
+        removed.id = 2;
+        let uploads = forwarded_attachment_uploads(
+            &[kept, removed],
+            &[spliced("a.bin", b"hi"), spliced("b.bin", b"ok")],
+            &[2],
+        )
+        .unwrap();
+
+        assert_eq!(uploads.len(), 1);
+        assert_eq!(uploads[0].name, "a.bin");
+    }
+
+    #[test]
+    fn forwarded_attachments_skip_oversized_files() {
+        let attachments = vec![attachment("big.bin", MAX_ATTACHMENT_SIZE + 1, None)];
+
+        // Even with no matching raw part, an oversized file is skipped silently:
+        // the composer would reject it anyway.
+        let uploads = forwarded_attachment_uploads(&attachments, &[], &[]).unwrap();
+
+        assert!(uploads.is_empty());
+    }
+
+    #[test]
+    fn forwarded_attachments_error_when_the_parts_are_gone() {
+        let attachments = vec![attachment("report.pdf", 2, None)];
+        let result = forwarded_attachment_uploads(&attachments, &[spliced("other.pdf", b"hi")], &[]);
+
+        let error = result.unwrap_err();
+        assert!(matches!(error, AppError::Message(message)
+            if message.contains("no longer available")));
     }
 
     fn message() -> Message {

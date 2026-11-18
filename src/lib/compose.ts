@@ -98,7 +98,9 @@ export function replyDraftInput(
     inlineImages: [],
     inReplyTo,
     references: replyReferences(inReplyTo, message.references),
-    attachments: []
+    attachments: [],
+    forwardFrom: null,
+    forwardExcluded: []
   };
 }
 

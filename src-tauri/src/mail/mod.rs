@@ -840,35 +840,43 @@ pub fn unclassified_message_ids_before(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
-pub fn get_message_detail(db: &Database, message_id: i64) -> AppResult<MessageDetail> {
+pub fn list_attachments(db: &Database, message_id: i64) -> AppResult<Vec<Attachment>> {
     let conn = db.read();
-    let sql = format!("select {MESSAGE_COLUMNS} from messages m where m.id = ?1");
-    let message = conn
-        .query_row(&sql, params![message_id], row_to_message)
-        .optional()?
-        .ok_or_else(|| AppError::Message("message not found".into()))?;
-    let body: Option<(Option<String>, Option<String>, Option<String>)> = conn
-        .query_row(
-            "select text_body, html_body, image_html from message_bodies where message_id = ?1",
-            params![message_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .optional()?;
     let mut attachments = conn.prepare(
         "select id, message_id, filename, mime_type, size, content_id from attachments where message_id = ?1 order by id",
     )?;
-    let attachments = attachments
-        .query_map(params![message_id], |row| {
-            Ok(Attachment {
-                id: row.get(0)?,
-                message_id: row.get(1)?,
-                filename: row.get(2)?,
-                mime_type: row.get(3)?,
-                size: row.get(4)?,
-                content_id: row.get(5)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+    let rows = attachments.query_map(params![message_id], |row| {
+        Ok(Attachment {
+            id: row.get(0)?,
+            message_id: row.get(1)?,
+            filename: row.get(2)?,
+            mime_type: row.get(3)?,
+            size: row.get(4)?,
+            content_id: row.get(5)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn get_message_detail(db: &Database, message_id: i64) -> AppResult<MessageDetail> {
+    let message;
+    let body: Option<(Option<String>, Option<String>, Option<String>)>;
+    {
+        let conn = db.read();
+        let sql = format!("select {MESSAGE_COLUMNS} from messages m where m.id = ?1");
+        message = conn
+            .query_row(&sql, params![message_id], row_to_message)
+            .optional()?
+            .ok_or_else(|| AppError::Message("message not found".into()))?;
+        body = conn
+            .query_row(
+                "select text_body, html_body, image_html from message_bodies where message_id = ?1",
+                params![message_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+    }
+    let attachments = list_attachments(db, message_id)?;
 
     Ok(MessageDetail {
         message,

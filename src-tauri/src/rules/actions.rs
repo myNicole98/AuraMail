@@ -309,6 +309,8 @@ impl<'a> Engine<'a> {
             in_reply_to: None,
             references: None,
             attachments,
+            forward_from: None,
+            forward_excluded: Vec::new(),
         };
         match smtp::send(self.account, self.credential, &input) {
             Ok(sent) => {

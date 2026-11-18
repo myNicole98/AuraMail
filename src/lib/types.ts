@@ -642,6 +642,8 @@ export type ComposeInput = {
   inReplyTo: string | null;
   references: string | null;
   attachments: AttachmentUpload[];
+  forwardFrom: number | null;
+  forwardExcluded: number[];
 };
 
 export type Draft = {
@@ -656,6 +658,9 @@ export type Draft = {
   inReplyTo: string | null;
   references: string | null;
   attachments: AttachmentUpload[];
+  forwardFrom: number | null;
+  forwardExcluded: number[];
+  forwardAttachments: Attachment[];
   updatedAt: number;
 };
 

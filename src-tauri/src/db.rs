@@ -126,6 +126,8 @@ create table drafts (
   body_html text,
   inline_images text not null default '[]',
   attachments text not null default '[]',
+  forward_source integer,
+  forward_excluded text not null default '[]',
   updated_at integer not null
 );
 
@@ -1343,6 +1345,31 @@ impl Database {
             )?;
             conn.pragma_update(None, "user_version", 42)?;
         }
+        let version: i64 = conn.query_row("pragma user_version", [], |row| row.get(0))?;
+        if version < 43 {
+            // Forwards carry a reference to the source message instead of
+            // copies of its attachment bytes; removals are tracked per chip.
+            let has_forward: i64 = conn.query_row(
+                "select count(*) from pragma_table_info('drafts') where name = 'forward_source'",
+                [],
+                |row| row.get(0),
+            )?;
+            if has_forward == 0 {
+                conn.execute("alter table drafts add column forward_source integer", [])?;
+            }
+            let has_excluded: i64 = conn.query_row(
+                "select count(*) from pragma_table_info('drafts') where name = 'forward_excluded'",
+                [],
+                |row| row.get(0),
+            )?;
+            if has_excluded == 0 {
+                conn.execute(
+                    "alter table drafts add column forward_excluded text not null default '[]'",
+                    [],
+                )?;
+            }
+            conn.pragma_update(None, "user_version", 43)?;
+        }
         let renamed: i64 = conn.query_row(
             "select count(*) from settings where key = 'contact-local-book-named'",
             [],
@@ -1498,7 +1525,7 @@ mod tests {
             .unwrap()
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         for space in spaces::list(&db).unwrap() {
             let conn = db.conn.lock().unwrap();
             let accounts: i64 = conn
@@ -1609,7 +1636,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         let tabs: i64 = conn
             .query_row("select count(*) from tabs", [], |row| row.get(0))
             .unwrap();
@@ -1765,7 +1792,7 @@ mod tests {
             .unwrap();
         assert_eq!(bodies, 0);
         assert_eq!(cached, 0);
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
     }
 
     #[test]
@@ -1792,7 +1819,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(table, 1);
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
     }
 
     #[test]
@@ -1819,7 +1846,7 @@ mod tests {
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(cached, 0);
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
     }
 
     #[test]
@@ -1862,7 +1889,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
     }
 
     #[test]
@@ -1943,7 +1970,7 @@ mod tests {
         let version: i64 = conn
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!((auth_type, provider, version), (1, 1, 42));
+        assert_eq!((auth_type, provider, version), (1, 1, 43));
     }
 
     #[test]

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::{self, Database};
 use crate::error::{AppError, AppResult};
+use crate::mail;
 
 pub const MAX_ATTACHMENT_TOTAL: usize = 25 * 1024 * 1024;
 
@@ -41,6 +42,12 @@ pub struct ComposeInput {
     pub in_reply_to: Option<String>,
     pub references: Option<String>,
     pub attachments: Vec<AttachmentUpload>,
+    /// Source message of a forward whose original attachments are spliced at
+    /// send time; only the reference is kept, never the bytes.
+    #[serde(default)]
+    pub forward_from: Option<i64>,
+    #[serde(default)]
+    pub forward_excluded: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -57,6 +64,11 @@ pub struct Draft {
     pub in_reply_to: Option<String>,
     pub references: Option<String>,
     pub attachments: Vec<AttachmentUpload>,
+    pub forward_from: Option<i64>,
+    pub forward_excluded: Vec<i64>,
+    /// Metadata rows of the carried forwarded attachments (removals already
+    /// filtered out) so the composer shows chips without fetching bytes.
+    pub forward_attachments: Vec<mail::Attachment>,
     pub updated_at: i64,
 }
 
@@ -267,6 +279,7 @@ pub fn save_draft(db: &Database, input: &ComposeInput, draft_id: Option<i64>) ->
     let cc_addrs = serde_json::to_string(&input.cc)?;
     let attachments = encode_attachments(&input.attachments)?;
     let inline_images = serde_json::to_string(&input.inline_images)?;
+    let forward_excluded = serde_json::to_string(&input.forward_excluded)?;
     let now = db::now();
 
     let id = {
@@ -274,7 +287,7 @@ pub fn save_draft(db: &Database, input: &ComposeInput, draft_id: Option<i64>) ->
         match draft_id {
             Some(id) => {
                 let updated = conn.execute(
-                    "update drafts set account_id = ?1, in_reply_to = ?2, references_header = ?3, to_addrs = ?4, cc_addrs = ?5, subject = ?6, body = ?7, body_html = ?8, inline_images = ?9, attachments = ?10, updated_at = ?11 where id = ?12",
+                    "update drafts set account_id = ?1, in_reply_to = ?2, references_header = ?3, to_addrs = ?4, cc_addrs = ?5, subject = ?6, body = ?7, body_html = ?8, inline_images = ?9, attachments = ?10, forward_source = ?11, forward_excluded = ?12, updated_at = ?13 where id = ?14",
                     params![
                         input.account_id,
                         input.in_reply_to,
@@ -286,6 +299,8 @@ pub fn save_draft(db: &Database, input: &ComposeInput, draft_id: Option<i64>) ->
                         input.html_body,
                         inline_images,
                         attachments,
+                        input.forward_from,
+                        forward_excluded,
                         now,
                         id,
                     ],
@@ -297,7 +312,7 @@ pub fn save_draft(db: &Database, input: &ComposeInput, draft_id: Option<i64>) ->
             }
             None => {
                 conn.execute(
-                    "insert into drafts (account_id, in_reply_to, references_header, to_addrs, cc_addrs, subject, body, body_html, inline_images, attachments, updated_at) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    "insert into drafts (account_id, in_reply_to, references_header, to_addrs, cc_addrs, subject, body, body_html, inline_images, attachments, forward_source, forward_excluded, updated_at) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     params![
                         input.account_id,
                         input.in_reply_to,
@@ -309,6 +324,8 @@ pub fn save_draft(db: &Database, input: &ComposeInput, draft_id: Option<i64>) ->
                         input.html_body,
                         inline_images,
                         attachments,
+                        input.forward_from,
+                        forward_excluded,
                         now,
                     ],
                 )?;
@@ -340,7 +357,7 @@ fn list_drafts_in_scope(
 ) -> AppResult<Vec<DraftSummary>> {
     let conn = db.read();
     let mut stmt = conn.prepare(
-        "select id, account_id, to_addrs, cc_addrs, subject, substr(body, 1, 200), case when substr(attachments, 1, 1) = '[' then case when attachments = '[]' then 0 else 1 end else -1 end, updated_at from drafts d where (?1 is null or d.account_id = ?1) and (?2 is null or d.account_id in (select id from accounts where space_id = ?2)) order by d.updated_at desc, d.id desc",
+        "select id, account_id, to_addrs, cc_addrs, subject, substr(body, 1, 200), case when substr(attachments, 1, 1) <> '[' then -1 when attachments <> '[]' then 1 when forward_source is not null then 1 else 0 end, updated_at from drafts d where (?1 is null or d.account_id = ?1) and (?2 is null or d.account_id in (select id from accounts where space_id = ?2)) order by d.updated_at desc, d.id desc",
     )?;
     let rows = stmt
         .query_map(params![account_id, space_id], |row| {
@@ -390,16 +407,24 @@ pub fn delete_draft(db: &Database, draft_id: i64) -> AppResult<()> {
 }
 
 fn draft_by_id(db: &Database, draft_id: i64) -> AppResult<Draft> {
-    let conn = db.read();
-    let row = conn
-        .query_row(
-            "select id, account_id, to_addrs, cc_addrs, subject, body, body_html, inline_images, in_reply_to, references_header, attachments, updated_at from drafts where id = ?1",
+    let row = {
+        let conn = db.read();
+        conn.query_row(
+            "select id, account_id, to_addrs, cc_addrs, subject, body, body_html, inline_images, in_reply_to, references_header, attachments, forward_source, forward_excluded, updated_at from drafts where id = ?1",
             params![draft_id],
             draft_columns,
         )
         .optional()?
-        .ok_or_else(|| AppError::Message("draft not found".into()))?;
-    draft_from_columns(row)
+        .ok_or_else(|| AppError::Message("draft not found".into()))?
+    };
+    let mut draft = draft_from_columns(row)?;
+    if let Some(source_id) = draft.forward_from {
+        draft.forward_attachments = mail::list_attachments(db, source_id)?
+            .into_iter()
+            .filter(|attachment| !draft.forward_excluded.contains(&attachment.id))
+            .collect();
+    }
+    Ok(draft)
 }
 
 type DraftColumns = (
@@ -413,6 +438,8 @@ type DraftColumns = (
     String,
     Option<String>,
     Option<String>,
+    String,
+    Option<i64>,
     String,
     i64,
 );
@@ -431,6 +458,8 @@ fn draft_columns(row: &Row<'_>) -> rusqlite::Result<DraftColumns> {
         row.get(9)?,
         row.get(10)?,
         row.get(11)?,
+        row.get(12)?,
+        row.get(13)?,
     ))
 }
 
@@ -447,6 +476,8 @@ fn draft_from_columns(row: DraftColumns) -> AppResult<Draft> {
         in_reply_to,
         references,
         attachments,
+        forward_from,
+        forward_excluded,
         updated_at,
     ) = row;
     Ok(Draft {
@@ -461,6 +492,9 @@ fn draft_from_columns(row: DraftColumns) -> AppResult<Draft> {
         in_reply_to,
         references,
         attachments: decode_attachments(&attachments)?,
+        forward_from,
+        forward_excluded: serde_json::from_str(&forward_excluded).map_err(|_| corrupt_draft())?,
+        forward_attachments: Vec::new(),
         updated_at,
     })
 }
@@ -562,6 +596,8 @@ mod tests {
             in_reply_to: Some("<1@example.com>".into()),
             references: Some("<1@example.com>".into()),
             attachments: vec![],
+            forward_from: None,
+            forward_excluded: Vec::new(),
         };
         let raw = build_message(&input, "me@example.com").unwrap();
         let text = String::from_utf8_lossy(&raw);
@@ -582,6 +618,8 @@ mod tests {
             in_reply_to: None,
             references: None,
             attachments: vec![],
+            forward_from: None,
+            forward_excluded: Vec::new(),
         }
     }
 
@@ -747,6 +785,8 @@ mod tests {
             in_reply_to: Some("<1@example.com>".into()),
             references: Some("<1@example.com>".into()),
             attachments: vec![upload("note.txt", "text/plain", b"payload")],
+            forward_from: None,
+            forward_excluded: Vec::new(),
         };
 
         let draft = save_draft(&db, &input, None).unwrap();
@@ -766,6 +806,58 @@ mod tests {
             attachment_bytes(&loaded.attachments[0]).unwrap(),
             b"payload"
         );
+    }
+
+    fn seed_forward_source(db: &Database, account: i64) -> i64 {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "insert into folders (account_id, path, name) values (?1, 'INBOX', 'Inbox')",
+            params![account],
+        )
+        .unwrap();
+        conn.execute(
+            "insert into messages (account_id, folder_id, uid, subject, date, snippet, has_attachments, body_cached) values (?1, 1, 7, 'Hello', 1, 'Hi', 1, 1)",
+            params![account],
+        )
+        .unwrap();
+        let message_id = conn.last_insert_rowid();
+        conn.execute(
+            "insert into attachments (message_id, filename, mime_type, size) values (?1, 'invoice.pdf', 'application/pdf', 2)",
+            params![message_id],
+        )
+        .unwrap();
+        conn.execute(
+            "insert into attachments (message_id, filename, mime_type, size) values (?1, 'photo.jpg', 'image/jpeg', 3)",
+            params![message_id],
+        )
+        .unwrap();
+        message_id
+    }
+
+    #[test]
+    fn drafts_store_a_forward_reference_reopened_as_metadata_chips() {
+        let db = Database::open_memory().unwrap();
+        let account = seed_account(&db);
+        let source = seed_forward_source(&db, account);
+        let mut input = valid_input();
+        input.account_id = account;
+        input.forward_from = Some(source);
+        input.forward_excluded = vec![2];
+
+        let draft = save_draft(&db, &input, None).unwrap();
+        assert_eq!(draft.forward_from, Some(source));
+        assert_eq!(draft.forward_excluded, vec![2]);
+        assert_eq!(draft.forward_attachments.len(), 1);
+        assert_eq!(draft.forward_attachments[0].filename, "invoice.pdf");
+
+        let loaded = get_draft(&db, draft.id).unwrap();
+        assert_eq!(loaded.forward_from, Some(source));
+        assert_eq!(loaded.forward_excluded, vec![2]);
+        assert_eq!(loaded.forward_attachments.len(), 1);
+        assert_eq!(loaded.forward_attachments[0].size, 2);
+
+        let listed = list_drafts(&db, Some(account)).unwrap();
+        assert!(listed[0].has_attachments);
     }
 
     #[test]
@@ -809,6 +901,8 @@ mod tests {
             in_reply_to: None,
             references: None,
             attachments: vec![upload("big.bin", "application/octet-stream", b"payload")],
+            forward_from: None,
+            forward_excluded: Vec::new(),
         };
         save_draft(&db, &input, None).unwrap();
 

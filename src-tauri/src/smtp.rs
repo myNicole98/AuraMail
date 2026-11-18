@@ -261,6 +261,8 @@ mod tests {
             in_reply_to: None,
             references: None,
             attachments: vec![],
+            forward_from: None,
+            forward_excluded: Vec::new(),
         }
     }
 

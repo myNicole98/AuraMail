@@ -44,6 +44,7 @@
   import { appearance } from "../stores/appearance.svelte";
   import type {
     Account,
+    Attachment,
     AttachmentUpload,
     ComposeInput,
     ComposeMode,
@@ -237,8 +238,24 @@
   const initialMarkup = initialHtml();
   let bodyHtml = $state(captureImages(initialMarkup));
   let attachments = $state<AttachmentUpload[]>(
+    untrack(() => draft?.attachments.map((attachment) => ({ ...attachment })) ?? [])
+  );
+  /// A forward carries the source message's files by reference only: chips
+  /// render the metadata rows instantly, removals accumulate in
+  /// `forwardExcluded`, and the backend splices the raw MIME parts at send.
+  let forwardFrom = $state<number | null>(
     untrack(() =>
-      draft ? draft.attachments.map((attachment) => ({ ...attachment })) : []
+      draft ? draft.forwardFrom : mode === "forward" ? (sourceMessage?.id ?? null) : null
+    )
+  );
+  let forwardExcluded = $state<number[]>(untrack(() => draft?.forwardExcluded ?? []));
+  let carried = $state<Attachment[]>(
+    untrack(() =>
+      draft
+        ? draft.forwardAttachments.map((attachment) => ({ ...attachment }))
+        : mode === "forward" && source
+          ? source.attachments.map((attachment) => ({ ...attachment }))
+          : []
     )
   );
   let draftId = $state<number | null>(untrack(() => draft?.id ?? null));
@@ -292,7 +309,8 @@
       (sum, attachment) => sum + base64ByteLength(attachment.data),
       0
     ) +
-      inlineImages.reduce((sum, image) => sum + base64ByteLength(image.data), 0)
+      inlineImages.reduce((sum, image) => sum + base64ByteLength(image.data), 0) +
+      carried.reduce((sum, attachment) => sum + attachment.size, 0)
   );
   let currentAccount = $derived(
     accounts.find((account) => account.id === accountId) ?? null
@@ -343,7 +361,9 @@
       inlineImages,
       inReplyTo,
       references,
-      attachments
+      attachments,
+      forwardFrom,
+      forwardExcluded
     };
   }
 
@@ -678,6 +698,14 @@
     markDirty();
   }
 
+  function removeCarried(index: number) {
+    const removed = carried[index];
+    if (!removed) return;
+    carried = carried.filter((_, position) => position !== index);
+    forwardExcluded = [...forwardExcluded, removed.id];
+    markDirty();
+  }
+
   async function saveDraft(): Promise<boolean> {
     if (saving || sending) return false;
     if (!accountId) {
@@ -738,7 +766,8 @@
         subject.trim() ||
         editorText().trim() ||
         attachments.length > 0 ||
-        inlineImages.length > 0
+        inlineImages.length > 0 ||
+        carried.length > 0
     );
   }
 
@@ -1268,6 +1297,26 @@
           aria-label={`Remove ${attachment.name}`}
           title="Remove attachment"
           onclick={() => removeAttachment(index)}
+        >
+          <X size={12} />
+        </button>
+      </span>
+    {/each}
+    {#each carried as attachment, index (attachment.id)}
+      <span class="chip">
+        <AttachmentIcon
+          filename={attachment.filename}
+          mimeType={attachment.mime_type}
+          size={13}
+        />
+        <span class="chip-name">{attachment.filename}</span>
+        <span class="chip-size">{formatBytes(attachment.size)}</span>
+        <button
+          type="button"
+          class="chip-remove"
+          aria-label={`Remove ${attachment.filename}`}
+          title="Remove attachment"
+          onclick={() => removeCarried(index)}
         >
           <X size={12} />
         </button>
