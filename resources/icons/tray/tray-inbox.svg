@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AuraMail system tray icon (read state): grey-blue badge, white envelope.
+     Regenerate: rsvg-convert -w 64 -h 64 tray-inbox.svg -o ../../../src-tauri/assets/tray-inbox.png -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="tray-g" x1="6" y1="32" x2="58" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B9C1CF"/>
+      <stop offset="1" stop-color="#5B6478"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="58" height="58" rx="14" fill="url(#tray-g)" stroke="#14161C" stroke-width="1.6"/>
+  <rect x="17" y="23" width="30" height="19" rx="4.5" fill="none" stroke="#FFFFFF" stroke-width="3.4"/>
+  <polyline points="18,25 32,36 46,25" fill="none" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
